@@ -1,0 +1,164 @@
+import OpenAI from "openai";
+import { requireSessionUser } from "@/lib/auth";
+
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+function stripCodeFences(value: string) {
+  return value.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+}
+
+export async function POST(req: Request) {
+  try {
+    const { response: authResponse } = await requireSessionUser();
+    if (authResponse) {
+      return authResponse;
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return Response.json(
+        { error: "Missing OPENAI_API_KEY in .env.local" },
+        { status: 500 }
+      );
+    }
+
+    const { rankLevel, allCategories, bulletsByCategory } = (await req.json()) as {
+      rankLevel?: string;
+      allCategories?: string[];
+      bulletsByCategory?: Record<string, string[]>;
+    };
+
+    if (
+      !allCategories ||
+      !Array.isArray(allCategories) ||
+      !bulletsByCategory ||
+      typeof bulletsByCategory !== "object"
+    ) {
+      return Response.json({ error: "Missing required fields." }, { status: 400 });
+    }
+
+    const totalBullets = Object.values(bulletsByCategory).reduce(
+      (sum, arr) => sum + arr.length,
+      0
+    );
+
+    if (totalBullets === 0) {
+      return Response.json({
+        underrepresentedCategories: [],
+        bulletsLackingResults: [],
+        preCloseActions: [],
+        repetitionGroups: [],
+      });
+    }
+
+    const prompt = `You are an expert advisor helping a U.S. military service member strengthen their evaluation (EER/OER) before marks close.
+
+Current rank: ${rankLevel || "Not specified"}
+
+Full list of EER categories:
+${allCategories.join("\n")}
+
+Current bullets by category (categories with empty arrays have 0 bullets):
+${JSON.stringify(bulletsByCategory, null, 2)}
+
+Analyze the above and return a JSON object with exactly these four fields:
+
+1. "underrepresentedCategories": Array of categories that have 0 or 1 bullets. For each entry provide:
+   - "category": the category name (string)
+   - "bulletCount": how many bullets it currently has (number)
+   - "suggestedAction": one specific, realistic action the service member can take to strengthen this category before marks close (string, 1-2 sentences)
+
+2. "bulletsLackingResults": Array of bullets that state an action but do NOT include any measurable or quantifiable outcome (no numbers, percentages, ranks, or concrete scope). For each entry provide:
+   - "bullet": the original bullet text (string)
+   - "category": its category name (string)
+  - "suggestedImprovement": a rewritten version of the bullet that adds a realistic measurable result; use bracketed placeholders if the exact figure is unknown (string)
+
+3. "preCloseActions": Exactly 4-5 specific, realistic things this service member can still do before evaluation marks close to strengthen their overall record. Base suggestions on gaps in their current bullets. For each entry provide:
+   - "action": the specific suggestion (string, 1 sentence)
+   - "feasibility": an integer 0-100 representing the percentage likelihood this action is achievable in the time remaining before marks close, given typical military schedules and lead times
+
+4. "repetitionGroups": Groups of bullets (across any categories) that repeat the same underlying theme or accomplishment with minimal differentiation. Only flag groups of 2 or more bullets. For each group provide:
+   - "theme": 3-6 word label describing the repeated theme (string)
+   - "bullets": array of the repeated bullet texts (string[])
+   - "category": primary category these bullets belong to (string)
+   - "suggestion": one sentence advising how to consolidate or differentiate these bullets to maximize scoring impact (string)
+
+Rules:
+- Return only valid JSON — no markdown, no prose outside the JSON object.
+- If a field has no findings, return an empty array [] for it.
+- Do not invent bullets or events that are not in the input data.
+- "bulletsLackingResults" should only flag bullets that truly have no numbers, rates, counts, or scope descriptors.
+
+Measurable-results guidance for "suggestedImprovement" (important):
+- Prefer concrete non-percentage metrics first: counts, quantities, frequency, timelines, readiness status, inspection outcomes, qualifications completed, personnel trained, equipment availability, missions supported.
+- Use placeholders like [N personnel], [N hours], [N qualifications], [N inspections], [N missions], [N items], [N days], [N tasks] whenever possible.
+- Avoid percentage placeholders by default. Only use [X%] when the underlying accomplishment is naturally percentage-based (e.g., pass rate, completion rate, error rate, availability rate) or when no other realistic measurable format fits.
+- Do not use vague percentages when a count/time/volume metric is more credible.`;
+
+    const completion = await client.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.3,
+      max_tokens: 2000,
+    });
+
+    const rawOutput = completion.choices[0]?.message?.content?.trim() || "{}";
+
+    let parsed: {
+      underrepresentedCategories?: Array<{
+        category: string;
+        bulletCount: number;
+        suggestedAction: string;
+      }>;
+      bulletsLackingResults?: Array<{
+        bullet: string;
+        category: string;
+        suggestedImprovement: string;
+      }>;
+      preCloseActions?: Array<{ action: string; feasibility: number }>;
+      repetitionGroups?: Array<{
+        theme: string;
+        bullets: string[];
+        category: string;
+        suggestion: string;
+      }>;
+    };
+
+    try {
+      parsed = JSON.parse(stripCodeFences(rawOutput));
+    } catch {
+      return Response.json(
+        { error: "AI could not generate insights at this time." },
+        { status: 500 }
+      );
+    }
+
+    const clampFeasibility = (v: unknown) =>
+      typeof v === "number" && !Number.isNaN(v)
+        ? Math.max(0, Math.min(100, Math.round(v)))
+        : 50;
+
+    return Response.json({
+      underrepresentedCategories: (parsed.underrepresentedCategories ?? []).filter(
+        (e) => typeof e.category === "string" && typeof e.suggestedAction === "string"
+      ),
+      bulletsLackingResults: (parsed.bulletsLackingResults ?? []).filter(
+        (e) => typeof e.bullet === "string" && typeof e.suggestedImprovement === "string"
+      ),
+      preCloseActions: (parsed.preCloseActions ?? [])
+        .filter((e) => typeof e.action === "string")
+        .map((e) => ({ action: e.action, feasibility: clampFeasibility(e.feasibility) })),
+      repetitionGroups: (parsed.repetitionGroups ?? []).filter(
+        (e) =>
+          typeof e.theme === "string" &&
+          Array.isArray(e.bullets) &&
+          e.bullets.length >= 2 &&
+          typeof e.suggestion === "string"
+      ),
+    });
+  } catch (error: unknown) {
+    console.error("Smart insights error:", error);
+    return Response.json({ error: "AI insights unavailable." }, { status: 500 });
+  }
+}
