@@ -27,7 +27,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} flex min-h-screen flex-col antialiased`}
       >
-        <div className="w-full bg-green-500 py-1 text-center text-xs font-semibold tracking-wide text-black">
+        <div className="flex h-(--unclassified-bar-height) w-full items-center justify-center bg-green-500 text-center text-xs font-semibold tracking-wide text-black">
           UNCLASSIFIED
         </div>
         <main className="flex-1">{children}</main>

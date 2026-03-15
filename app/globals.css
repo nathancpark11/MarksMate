@@ -3,6 +3,8 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --unclassified-bar-height: 2rem;
+  --tab-bar-top-offset: calc(env(safe-area-inset-top) + var(--unclassified-bar-height) + 0.75rem);
 }
 
 @theme inline {

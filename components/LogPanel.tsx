@@ -286,8 +286,8 @@ export default function LogPanel({
 
       {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
 
-      <div className="mt-5 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
+      <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => void handleSave()}
             className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
@@ -304,11 +304,11 @@ export default function LogPanel({
           </button>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex w-full flex-col items-stretch gap-2 sm:w-auto sm:flex-row sm:items-center">
           <button
             type="button"
             onClick={() => setShowFilterMenu((prev) => !prev)}
-            className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-100"
+            className="self-start rounded-md border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-100"
           >
             Sort by
           </button>
@@ -317,7 +317,7 @@ export default function LogPanel({
             <select
               value={sortOrder}
               onChange={(e) => setSortOrder(e.target.value)}
-              className="rounded-md border border-gray-300 px-2 py-1.5 text-xs"
+              className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-xs sm:w-auto"
             >
               <option>Date (Oldest to Newest)</option>
               <option>Date (Newest to Oldest)</option>
@@ -334,15 +334,15 @@ export default function LogPanel({
         {activeEntries.map(({ entry, index }) => (
             <div
               key={`${entry.date || entry.dates?.join("|") || "no-date"}-${index}`}
-              role="button"
-              tabIndex={0}
-              onClick={() => onPullEntry?.(index)}
-              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onPullEntry?.(index); }}
-              title="Click to use in Generator"
-              className="cursor-pointer rounded-lg border border-gray-200 p-3 transition-colors hover:border-blue-300 hover:bg-blue-50"
+              className="rounded-lg border border-gray-200 p-3 transition-colors hover:border-blue-300 hover:bg-blue-50"
             >
               <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
+                <button
+                  type="button"
+                  onClick={() => onPullEntry?.(index)}
+                  title="Tap to use in Generator"
+                  className="min-w-0 flex-1 touch-manipulation text-left"
+                >
                   <p className="text-sm text-gray-900">{entry.text}</p>
                   {((entry.dates && entry.dates.length > 0) || entry.date) && (
                     <p className="mt-1 text-xs text-gray-500">
@@ -351,7 +351,7 @@ export default function LogPanel({
                         : new Date(entry.date).toLocaleDateString()}
                     </p>
                   )}
-                </div>
+                </button>
                 <button
                   onClick={(e) => { e.stopPropagation(); onDeleteEntry(index); }}
                   className="rounded-md px-2 py-1 text-sm font-semibold text-gray-500 hover:bg-gray-100 hover:text-red-600"

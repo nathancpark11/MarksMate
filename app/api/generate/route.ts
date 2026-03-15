@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { requireSessionUser } from "@/lib/auth";
 
 const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: process.env.OPENAI_API_KEY ?? "missing-openai-api-key",
 });
 
 function getCategoryGuidance(category: string) {
@@ -39,6 +39,18 @@ function getCategoryGuidance(category: string) {
 }
 
 function getRankGuidance(rankLevel: string) {
+  if (["E1", "E2", "E3"].includes(rankLevel)) {
+    return "Use language appropriate for an early-career service member. Highlight dependability, growth, initiative, execution, and contribution to the team.";
+  }
+
+  if (["E4", "E5", "E6"].includes(rankLevel)) {
+    return "Use language appropriate for a frontline supervisor. Highlight leadership, accountability, training, ownership, and mission execution.";
+  }
+
+  if (["E7", "E8", "E9"].includes(rankLevel)) {
+    return "Use language appropriate for a senior enlisted leader. Highlight strategic influence, mentorship, readiness, standards, and organizational impact.";
+  }
+
   switch (rankLevel) {
     case "Junior Enlisted":
       return "Use language appropriate for an early-career service member. Highlight dependability, growth, initiative, execution, and contribution to the team.";
@@ -62,7 +74,7 @@ export async function POST(req: Request) {
 
     if (!process.env.OPENAI_API_KEY) {
       return Response.json(
-        { error: "Missing OPENAI_API_KEY in .env.local" },
+        { error: "Server misconfiguration: OPENAI_API_KEY is not set." },
         { status: 500 }
       );
     }
@@ -86,7 +98,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const categoryValue = category || "Leadership";
+    const categoryValue = category || "Quality of Work";
     const rankValue = rankLevel || "E4";
     const ratingValue = rating || "Undesignated";
     const bulletStyleValue = bulletStyle || "Standard";

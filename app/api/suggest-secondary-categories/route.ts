@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { requireSessionUser } from "@/lib/auth";
 
 const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: process.env.OPENAI_API_KEY ?? "missing-openai-api-key",
 });
 
 function stripCodeFences(raw: string) {
@@ -34,7 +34,10 @@ export async function POST(req: Request) {
     if (authResponse) return authResponse;
 
     if (!process.env.OPENAI_API_KEY) {
-      return Response.json({ error: "Missing OPENAI_API_KEY" }, { status: 500 });
+      return Response.json(
+        { error: "Server misconfiguration: OPENAI_API_KEY is not set." },
+        { status: 500 }
+      );
     }
 
     const { bullet, action, primaryCategory } = (await req.json()) as {

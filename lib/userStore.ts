@@ -1,6 +1,5 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { sql, ensureSchema } from "./db";
 
 export type UserRecord = {
   id: string;
@@ -11,46 +10,6 @@ export type UserRecord = {
   hasCompletedTutorial: boolean;
 };
 
-type UserStore = {
-  users: UserRecord[];
-};
-
-const DATA_DIR = path.join(process.cwd(), "data");
-const USERS_FILE = path.join(DATA_DIR, "users.json");
-
-async function ensureUsersFile() {
-  await mkdir(DATA_DIR, { recursive: true });
-
-  try {
-    await readFile(USERS_FILE, "utf-8");
-  } catch {
-    const initial: UserStore = { users: [] };
-    await writeFile(USERS_FILE, JSON.stringify(initial, null, 2), "utf-8");
-  }
-}
-
-async function readStore(): Promise<UserStore> {
-  await ensureUsersFile();
-  const raw = await readFile(USERS_FILE, "utf-8");
-  const parsed = JSON.parse(raw) as UserStore;
-
-  if (!parsed || !Array.isArray(parsed.users)) {
-    return { users: [] };
-  }
-
-  return {
-    users: parsed.users.map((user) => ({
-      ...user,
-      hasCompletedTutorial:
-        typeof user.hasCompletedTutorial === "boolean" ? user.hasCompletedTutorial : true,
-    })),
-  };
-}
-
-async function writeStore(store: UserStore) {
-  await writeFile(USERS_FILE, JSON.stringify(store, null, 2), "utf-8");
-}
-
 export function sanitizeUsername(username: string) {
   return username.trim();
 }
@@ -59,59 +18,62 @@ export function toUsernameLower(username: string) {
   return sanitizeUsername(username).toLowerCase();
 }
 
-export async function findUserByUsername(username: string) {
-  const usernameLower = toUsernameLower(username);
-  const store = await readStore();
-  return store.users.find((user) => user.usernameLower === usernameLower) ?? null;
+function rowToUser(row: Record<string, unknown>): UserRecord {
+  return {
+    id: row.id as string,
+    username: row.username as string,
+    usernameLower: row.username_lower as string,
+    passwordHash: row.password_hash as string,
+    createdAt: row.created_at as string,
+    hasCompletedTutorial: row.has_completed_tutorial as boolean,
+  };
 }
 
-export async function findUserById(id: string) {
-  const store = await readStore();
-  return store.users.find((user) => user.id === id) ?? null;
+export async function findUserByUsername(username: string): Promise<UserRecord | null> {
+  await ensureSchema();
+  const usernameLower = toUsernameLower(username);
+  const result = await sql`SELECT * FROM users WHERE username_lower = ${usernameLower}`;
+  return result.rows.length > 0 ? rowToUser(result.rows[0]) : null;
+}
+
+export async function findUserById(id: string): Promise<UserRecord | null> {
+  await ensureSchema();
+  const result = await sql`SELECT * FROM users WHERE id = ${id}`;
+  return result.rows.length > 0 ? rowToUser(result.rows[0]) : null;
 }
 
 export async function createUser(input: {
   username: string;
   passwordHash: string;
-}) {
+}): Promise<UserRecord> {
+  await ensureSchema();
   const username = sanitizeUsername(input.username);
   const usernameLower = toUsernameLower(username);
-  const store = await readStore();
 
-  const existing = store.users.find((user) => user.usernameLower === usernameLower);
-  if (existing) {
+  const existing = await sql`SELECT id FROM users WHERE username_lower = ${usernameLower}`;
+  if (existing.rows.length > 0) {
     throw new Error("USER_EXISTS");
   }
 
-  const user: UserRecord = {
-    id: randomUUID(),
-    username,
-    usernameLower,
-    passwordHash: input.passwordHash,
-    createdAt: new Date().toISOString(),
-    hasCompletedTutorial: false,
-  };
+  const id = randomUUID();
+  const createdAt = new Date().toISOString();
 
-  store.users.push(user);
-  await writeStore(store);
-  return user;
+  await sql`
+    INSERT INTO users (id, username, username_lower, password_hash, created_at, has_completed_tutorial)
+    VALUES (${id}, ${username}, ${usernameLower}, ${input.passwordHash}, ${createdAt}, FALSE)
+  `;
+
+  return { id, username, usernameLower, passwordHash: input.passwordHash, createdAt, hasCompletedTutorial: false };
 }
 
-export async function markTutorialCompleted(id: string) {
-  const store = await readStore();
-  const user = store.users.find((entry) => entry.id === id);
-
-  if (!user) {
-    return null;
-  }
-
-  user.hasCompletedTutorial = true;
-  await writeStore(store);
-  return user;
+export async function markTutorialCompleted(id: string): Promise<UserRecord | null> {
+  await ensureSchema();
+  await sql`UPDATE users SET has_completed_tutorial = TRUE WHERE id = ${id}`;
+  return findUserById(id);
 }
 
-export async function deleteUserById(id: string) {
-  const store = await readStore();
-  const next = store.users.filter((user) => user.id !== id);
-  await writeStore({ users: next });
+export async function deleteUserById(id: string): Promise<void> {
+  await ensureSchema();
+  // CASCADE in user_data FK deletes all user data rows automatically.
+  await sql`DELETE FROM users WHERE id = ${id}`;
 }

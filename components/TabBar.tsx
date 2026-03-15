@@ -5,7 +5,7 @@ type TabBarProps = {
 
 export default function TabBar({ activeTab, setActiveTab }: TabBarProps) {
   return (
-    <div className="sticky top-3 z-20 flex flex-wrap gap-2 rounded-xl bg-white/95 p-2 shadow-md backdrop-blur supports-backdrop-filter:bg-white/80 sm:top-6">
+    <div className="sticky top-(--tab-bar-top-offset) z-20 flex flex-wrap gap-2 rounded-xl bg-white/95 p-2 shadow-md backdrop-blur supports-backdrop-filter:bg-white/80 sm:top-6">
       <button
         onClick={() => setActiveTab("log")}
         className={`min-w-[48%] flex-1 rounded-md px-3 py-2 text-sm sm:min-w-0 sm:text-base ${

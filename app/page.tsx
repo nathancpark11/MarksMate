@@ -3,7 +3,7 @@
 // ======================================================
 // IMPORTS
 // ======================================================
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import GeneratorPanel from "../components/GeneratorPanel";
 import HistoryPanel from "../components/HistoryPanel";
 import TabBar from "../components/TabBar";
@@ -60,6 +60,7 @@ export default function Home() {
   type LogEntry = { text: string; date: string; dates?: string[]; group?: string };
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
+  const [pendingLogPull, setPendingLogPull] = useState<number | null>(null);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [pulledLogDate, setPulledLogDate] = useState<string | null>(null);
   const [wasCategoryUserSelected, setWasCategoryUserSelected] = useState(false);
@@ -120,13 +121,13 @@ export default function Home() {
   const [signupUserUnit, setSignupUserUnit] = useState("");
   const [signupBulletStyle, setSignupBulletStyle] = useState("Standard");
 
-  const historyStorageKey = authUser ? `bulletHistory:${authUser.id}` : "bulletHistory";
-  const settingsStorageKey = authUser ? `appSettings:${authUser.id}` : "appSettings";
-  const logStorageKey = authUser ? `dailyLog:${authUser.id}` : "dailyLog";
-
   // ======================================================
   // AUTH SESSION
   // ======================================================
+  // Prevent load-triggered state changes from firing API save effects.
+  const historyJustLoadedRef = useRef(false);
+  const logJustLoadedRef = useRef(false);
+  const settingsJustLoadedRef = useRef(false);
   useEffect(() => {
     let cancelled = false;
 
@@ -206,19 +207,26 @@ export default function Home() {
     }
   };
 
-  const handleSignupProfileComplete = () => {
+  const handleSignupProfileComplete = async () => {
     if (!pendingUser) return;
-    const settingsKey = `appSettings:${pendingUser.id}`;
-    localStorage.setItem(
-      settingsKey,
-      JSON.stringify({
-        rankLevel: signupRankLevel,
-        rating: signupRating,
-        userName: signupUserName,
-        userUnit: signupUserUnit,
-        bulletStyle: signupBulletStyle,
-      })
-    );
+    try {
+      await fetch("/api/user-data", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          key: "settings",
+          value: {
+            rankLevel: signupRankLevel,
+            rating: signupRating,
+            userName: signupUserName,
+            userUnit: signupUserUnit,
+            bulletStyle: signupBulletStyle,
+          },
+        }),
+      });
+    } catch {
+      // Non-blocking; the reactive save effect will persist settings once logged in.
+    }
     setRankLevel(signupRankLevel);
     setRating(signupRating);
     setUserName(signupUserName);
@@ -266,13 +274,6 @@ export default function Home() {
       return;
     }
 
-    // Clear all local storage for this account before signing out
-    if (authUser) {
-      localStorage.removeItem(`bulletHistory:${authUser.id}`);
-      localStorage.removeItem(`appSettings:${authUser.id}`);
-      localStorage.removeItem(`dailyLog:${authUser.id}`);
-    }
-
     setAuthUser(null);
     setAuthPassword("");
     setHistory([]);
@@ -295,29 +296,50 @@ export default function Home() {
       return;
     }
 
-    const savedHistory = localStorage.getItem(historyStorageKey);
-    if (!savedHistory) {
-      setHistory([]);
-      return;
-    }
-
-    try {
-      const parsed = JSON.parse(savedHistory);
-
-      // Backwards-compat: previously history was an array of strings
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        if (typeof parsed[0] === "string") {
-          setHistory((parsed as string[]).map((t) => ({ text: t, date: new Date().toISOString() })));
+    void (async () => {
+      try {
+        const res = await fetch("/api/user-data?key=history");
+        const data = (await res.json()) as { value: unknown };
+        if (data.value && Array.isArray(data.value) && data.value.length > 0) {
+          historyJustLoadedRef.current = true;
+          setHistory(data.value as HistoryItem[]);
         } else {
-          setHistory(parsed as HistoryItem[]);
+          // One-time migration: upload localStorage data if server has none.
+          const localRaw = localStorage.getItem(`bulletHistory:${authUser.id}`);
+          if (localRaw) {
+            try {
+              const parsed = JSON.parse(localRaw) as unknown;
+              let migrated: HistoryItem[] = [];
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                migrated = typeof parsed[0] === "string"
+                  ? (parsed as string[]).map((t) => ({ text: t, date: new Date().toISOString() }))
+                  : (parsed as HistoryItem[]);
+              }
+              if (migrated.length > 0) {
+                await fetch("/api/user-data", {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ key: "history", value: migrated }),
+                });
+                localStorage.removeItem(`bulletHistory:${authUser.id}`);
+              }
+              historyJustLoadedRef.current = true;
+              setHistory(migrated);
+            } catch {
+              historyJustLoadedRef.current = true;
+              setHistory([]);
+            }
+          } else {
+            historyJustLoadedRef.current = true;
+            setHistory([]);
+          }
         }
-      } else {
+      } catch {
+        historyJustLoadedRef.current = true;
         setHistory([]);
       }
-    } catch {
-      setHistory([]);
-    }
-  }, [authUser, historyStorageKey]);
+    })();
+  }, [authUser]);
 
   useEffect(() => {
     if (!authUser) {
@@ -325,41 +347,65 @@ export default function Home() {
       return;
     }
 
-    const savedLog = localStorage.getItem(logStorageKey);
-    if (!savedLog) {
-      setLogEntries([]);
-      return;
-    }
-
-    try {
-      const parsed = JSON.parse(savedLog);
-      if (Array.isArray(parsed)) {
-        const normalized = parsed
-          .filter((entry): entry is Partial<LogEntry> => !!entry && typeof entry === "object")
-          .map((entry) => ({
-            text: typeof entry.text === "string" ? entry.text : "",
-            date: typeof entry.date === "string" ? entry.date : "",
-            dates: Array.isArray(entry.dates)
-              ? entry.dates.filter((date): date is string => typeof date === "string" && date.length > 0)
+    void (async () => {
+      const normalize = (arr: unknown[]): LogEntry[] =>
+        (arr as Partial<LogEntry>[])
+          .filter((e): e is Partial<LogEntry> => !!e && typeof e === "object")
+          .map((e) => ({
+            text: typeof e.text === "string" ? e.text : "",
+            date: typeof e.date === "string" ? e.date : "",
+            dates: Array.isArray(e.dates)
+              ? e.dates.filter((d): d is string => typeof d === "string" && d.length > 0)
               : undefined,
-            group: typeof entry.group === "string" ? entry.group : undefined,
+            group: typeof e.group === "string" ? e.group : undefined,
           }))
-          .filter((entry) => entry.text.trim().length > 0);
+          .filter((e) => e.text.trim().length > 0);
 
-        setLogEntries(normalized);
-      } else {
+      try {
+        const res = await fetch("/api/user-data?key=log");
+        const data = (await res.json()) as { value: unknown };
+        if (data.value && Array.isArray(data.value)) {
+          logJustLoadedRef.current = true;
+          setLogEntries(normalize(data.value));
+        } else {
+          // One-time migration from localStorage.
+          const localRaw = localStorage.getItem(`dailyLog:${authUser.id}`);
+          if (localRaw) {
+            try {
+              const parsed = JSON.parse(localRaw) as unknown;
+              const migrated = Array.isArray(parsed) ? normalize(parsed) : [];
+              if (migrated.length > 0) {
+                await fetch("/api/user-data", {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ key: "log", value: migrated }),
+                });
+                localStorage.removeItem(`dailyLog:${authUser.id}`);
+              }
+              logJustLoadedRef.current = true;
+              setLogEntries(migrated);
+            } catch {
+              logJustLoadedRef.current = true;
+              setLogEntries([]);
+            }
+          } else {
+            logJustLoadedRef.current = true;
+            setLogEntries([]);
+          }
+        }
+      } catch {
+        logJustLoadedRef.current = true;
         setLogEntries([]);
       }
-    } catch {
-      setLogEntries([]);
-    }
-  }, [authUser, logStorageKey]);
+    })();
+  }, [authUser]);
 
   useEffect(() => {
     if (!authUser) {
       return;
     }
 
+    settingsJustLoadedRef.current = true;
     setRankLevel("E4");
     setRating("BM - Boatswain's Mate");
     setUserName("");
@@ -371,60 +417,77 @@ export default function Home() {
     setMpPeriodEnd("");
     setMpManualMarks({});
     setSettingsMessage("");
-  }, [authUser]);
 
-  useEffect(() => {
-    if (!authUser) {
-      return;
-    }
-
-    const savedSettings = localStorage.getItem(settingsStorageKey);
-    if (!savedSettings) return;
-
-    try {
-      const parsed = JSON.parse(savedSettings) as {
+    void (async () => {
+      type SettingsShape = {
         rankLevel?: string;
         rating?: string;
         userName?: string;
         userUnit?: string;
         bulletStyle?: string;
       };
-      if (parsed.rankLevel) setRankLevel(parsed.rankLevel);
-      if (parsed.rating) setRating(parsed.rating);
-      if (parsed.userName) setUserName(parsed.userName);
-      if (parsed.userUnit) setUserUnit(parsed.userUnit);
-      if (parsed.bulletStyle) {
-        const mappedStyle =
-          parsed.bulletStyle === "Balanced"
-            ? "Standard"
-            : parsed.bulletStyle === "Concise"
-              ? "Short/Concise"
-              : parsed.bulletStyle === "Impact-Forward"
-                ? "Detailed"
-                : parsed.bulletStyle;
-        setBulletStyle(mappedStyle);
+      try {
+        const res = await fetch("/api/user-data?key=settings");
+        const data = (await res.json()) as { value: SettingsShape | null };
+        let loaded = data.value;
+
+        if (!loaded) {
+          // One-time migration from localStorage.
+          const localRaw = localStorage.getItem(`appSettings:${authUser.id}`);
+          if (localRaw) {
+            try {
+              const parsed = JSON.parse(localRaw) as SettingsShape;
+              if (parsed && typeof parsed === "object") {
+                loaded = parsed;
+                await fetch("/api/user-data", {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ key: "settings", value: loaded }),
+                });
+                localStorage.removeItem(`appSettings:${authUser.id}`);
+              }
+            } catch {
+              // ignore
+            }
+          }
+        }
+
+        if (loaded) {
+          settingsJustLoadedRef.current = true;
+          if (loaded.rankLevel) setRankLevel(loaded.rankLevel);
+          if (loaded.rating) setRating(loaded.rating);
+          if (loaded.userName) setUserName(loaded.userName);
+          if (loaded.userUnit) setUserUnit(loaded.userUnit);
+          if (loaded.bulletStyle) {
+            const mappedStyle =
+              loaded.bulletStyle === "Balanced"
+                ? "Standard"
+                : loaded.bulletStyle === "Concise"
+                  ? "Short/Concise"
+                  : loaded.bulletStyle === "Impact-Forward"
+                    ? "Detailed"
+                    : loaded.bulletStyle;
+            setBulletStyle(mappedStyle);
+          }
+        }
+      } catch {
+        // Keep the defaults set above.
       }
-    } catch {
-      // ignore parse errors
-    }
-  }, [authUser, settingsStorageKey]);
+    })();
+  }, [authUser]);
 
   useEffect(() => {
-    if (!authUser) {
+    if (!authUser) return;
+    if (settingsJustLoadedRef.current) {
+      settingsJustLoadedRef.current = false;
       return;
     }
-
-    localStorage.setItem(
-      settingsStorageKey,
-      JSON.stringify({
-        rankLevel,
-        rating,
-        userName,
-        userUnit,
-        bulletStyle,
-      })
-    );
-  }, [rankLevel, rating, userName, userUnit, bulletStyle, authUser, settingsStorageKey]);
+    void fetch("/api/user-data", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: "settings", value: { rankLevel, rating, userName, userUnit, bulletStyle } }),
+    });
+  }, [rankLevel, rating, userName, userUnit, bulletStyle, authUser]);
 
   useEffect(() => {
     if (!mpMemberName && userName) {
@@ -517,20 +580,32 @@ export default function Home() {
       return;
     }
 
-    localStorage.setItem(historyStorageKey, JSON.stringify(history));
-  }, [history, authUser, historyStorageKey]);
+    if (historyJustLoadedRef.current) {
+      historyJustLoadedRef.current = false;
+      return;
+    }
+    void fetch("/api/user-data", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: "history", value: history }),
+    });
+  }, [history, authUser]);
 
   useEffect(() => {
     if (!authUser) {
       return;
     }
 
-    try {
-      localStorage.setItem(logStorageKey, JSON.stringify(logEntries));
-    } catch {
-      setSettingsMessage("Unable to save log entry. Storage may be full.");
+    if (logJustLoadedRef.current) {
+      logJustLoadedRef.current = false;
+      return;
     }
-  }, [logEntries, authUser, logStorageKey]);
+    void fetch("/api/user-data", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: "log", value: logEntries }),
+    });
+  }, [logEntries, authUser]);
 
   // ======================================================
   // GENERATE BULLET
@@ -1147,8 +1222,12 @@ export default function Home() {
     setSummaries({});
     setBullet(null);
     setEditingIndex(null);
-    localStorage.removeItem(historyStorageKey);
     setSettingsMessage("All bullets cleared.");
+  };
+
+  const handlePullLogEntryToGenerator = (index: number) => {
+    setPendingLogPull(index);
+    setActiveTab("generator");
   };
 
   if (authLoading) {
@@ -1261,7 +1340,7 @@ export default function Home() {
           </div>
 
           <button
-            onClick={handleSignupProfileComplete}
+                onClick={() => void handleSignupProfileComplete()}
             className="mt-6 w-full rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
           >
             Continue
@@ -1351,10 +1430,10 @@ export default function Home() {
 
   return (
     <>
-      <div className="fixed top-0 left-0 right-0 z-100 bg-green-700 py-1 text-center text-xs font-bold uppercase tracking-widest text-black shadow-md">
+      <div className="fixed inset-x-0 top-0 z-100 flex h-(--unclassified-bar-height) items-center justify-center bg-green-700 text-center text-xs font-bold uppercase tracking-widest text-black shadow-md">
         UNCLASSIFIED
       </div>
-    <main className="min-h-screen flex justify-center p-3 pt-10 sm:p-6 sm:pt-12">
+    <main className="min-h-screen flex justify-center p-3 pt-[calc(var(--unclassified-bar-height)+0.5rem)] sm:p-6 sm:pt-12">
       <div className="w-full max-w-4xl space-y-6">
         <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm font-medium text-slate-700">
@@ -1402,6 +1481,8 @@ export default function Home() {
             handleCommitSplitBulletDrafts={handleCommitSplitBulletDrafts}
             handleCommitBullet={handleCommitBullet}
             onLogEntryPulled={({ date }) => setPulledLogDate(date)}
+            pendingLogPull={pendingLogPull}
+            onPendingLogPullConsumed={() => setPendingLogPull(null)}
           />
         )}
 
@@ -1427,6 +1508,7 @@ export default function Home() {
             onSaveImportedEntries={handleSaveImportedLogEntries}
             onDeleteEntry={handleDeleteLogEntry}
             onClearEntries={handleClearLogEntries}
+            onPullEntry={handlePullLogEntryToGenerator}
           />
         )}
 

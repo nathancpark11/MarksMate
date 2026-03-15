@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { requireSessionUser } from "@/lib/auth";
 
 const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: process.env.OPENAI_API_KEY ?? "missing-openai-api-key",
 });
 
 function extractNumbers(value: string) {

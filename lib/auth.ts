@@ -19,7 +19,15 @@ type SessionPayload = {
 };
 
 function getAuthSecret() {
-  return process.env.AUTH_SECRET || "dev-only-change-me-auth-secret";
+  if (process.env.AUTH_SECRET) {
+    return process.env.AUTH_SECRET;
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("Server misconfiguration: AUTH_SECRET is not set.");
+  }
+
+  return "dev-only-change-me-auth-secret";
 }
 
 function base64UrlEncode(input: string | Buffer) {
@@ -81,7 +89,17 @@ export function verifySessionToken(token: string): SessionUser | null {
   }
 
   const expected = sign(encodedPayload);
-  if (signature !== expected) {
+  if (!/^[a-f0-9]+$/i.test(signature) || !/^[a-f0-9]+$/i.test(expected)) {
+    return null;
+  }
+
+  const providedSignature = Buffer.from(signature, "hex");
+  const expectedSignature = Buffer.from(expected, "hex");
+  if (providedSignature.length !== expectedSignature.length) {
+    return null;
+  }
+
+  if (!timingSafeEqual(providedSignature, expectedSignature)) {
     return null;
   }
 

@@ -302,11 +302,6 @@ export default function GeneratorPanel({
           </div>
         </div>
 
-        {selectedLogEntryId && (
-          <p className="mt-2 whitespace-pre-line text-xs text-blue-900">
-            {dailyLogItems.find((entry) => entry.id === selectedLogEntryId)?.text}
-          </p>
-        )}
       </div>
 
       <div className="mt-6 flex items-center justify-between gap-3">
