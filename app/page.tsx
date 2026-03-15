@@ -124,10 +124,10 @@ export default function Home() {
   // ======================================================
   // AUTH SESSION
   // ======================================================
-  // Prevent load-triggered state changes from firing API save effects.
-  const historyJustLoadedRef = useRef(false);
-  const logJustLoadedRef = useRef(false);
-  const settingsJustLoadedRef = useRef(false);
+  // Block save effects until each data area has finished its initial load.
+  const historyHydratedRef = useRef(false);
+  const logHydratedRef = useRef(false);
+  const settingsHydratedRef = useRef(false);
   useEffect(() => {
     let cancelled = false;
 
@@ -292,16 +292,18 @@ export default function Home() {
   // ======================================================
   useEffect(() => {
     if (!authUser) {
+      historyHydratedRef.current = false;
       setHistory([]);
       return;
     }
+
+    historyHydratedRef.current = false;
 
     void (async () => {
       try {
         const res = await fetch("/api/user-data?key=history");
         const data = (await res.json()) as { value: unknown };
         if (data.value && Array.isArray(data.value) && data.value.length > 0) {
-          historyJustLoadedRef.current = true;
           setHistory(data.value as HistoryItem[]);
         } else {
           // One-time migration: upload localStorage data if server has none.
@@ -323,29 +325,30 @@ export default function Home() {
                 });
                 localStorage.removeItem(`bulletHistory:${authUser.id}`);
               }
-              historyJustLoadedRef.current = true;
               setHistory(migrated);
             } catch {
-              historyJustLoadedRef.current = true;
               setHistory([]);
             }
           } else {
-            historyJustLoadedRef.current = true;
             setHistory([]);
           }
         }
       } catch {
-        historyJustLoadedRef.current = true;
         setHistory([]);
+      } finally {
+        historyHydratedRef.current = true;
       }
     })();
   }, [authUser]);
 
   useEffect(() => {
     if (!authUser) {
+      logHydratedRef.current = false;
       setLogEntries([]);
       return;
     }
+
+    logHydratedRef.current = false;
 
     void (async () => {
       const normalize = (arr: unknown[]): LogEntry[] =>
@@ -365,7 +368,6 @@ export default function Home() {
         const res = await fetch("/api/user-data?key=log");
         const data = (await res.json()) as { value: unknown };
         if (data.value && Array.isArray(data.value)) {
-          logJustLoadedRef.current = true;
           setLogEntries(normalize(data.value));
         } else {
           // One-time migration from localStorage.
@@ -382,30 +384,29 @@ export default function Home() {
                 });
                 localStorage.removeItem(`dailyLog:${authUser.id}`);
               }
-              logJustLoadedRef.current = true;
               setLogEntries(migrated);
             } catch {
-              logJustLoadedRef.current = true;
               setLogEntries([]);
             }
           } else {
-            logJustLoadedRef.current = true;
             setLogEntries([]);
           }
         }
       } catch {
-        logJustLoadedRef.current = true;
         setLogEntries([]);
+      } finally {
+        logHydratedRef.current = true;
       }
     })();
   }, [authUser]);
 
   useEffect(() => {
     if (!authUser) {
+      settingsHydratedRef.current = false;
       return;
     }
 
-    settingsJustLoadedRef.current = true;
+    settingsHydratedRef.current = false;
     setRankLevel("E4");
     setRating("BM - Boatswain's Mate");
     setUserName("");
@@ -453,7 +454,6 @@ export default function Home() {
         }
 
         if (loaded) {
-          settingsJustLoadedRef.current = true;
           if (loaded.rankLevel) setRankLevel(loaded.rankLevel);
           if (loaded.rating) setRating(loaded.rating);
           if (loaded.userName) setUserName(loaded.userName);
@@ -472,14 +472,15 @@ export default function Home() {
         }
       } catch {
         // Keep the defaults set above.
+      } finally {
+        settingsHydratedRef.current = true;
       }
     })();
   }, [authUser]);
 
   useEffect(() => {
     if (!authUser) return;
-    if (settingsJustLoadedRef.current) {
-      settingsJustLoadedRef.current = false;
+    if (!settingsHydratedRef.current) {
       return;
     }
     void fetch("/api/user-data", {
@@ -580,8 +581,7 @@ export default function Home() {
       return;
     }
 
-    if (historyJustLoadedRef.current) {
-      historyJustLoadedRef.current = false;
+    if (!historyHydratedRef.current) {
       return;
     }
     void fetch("/api/user-data", {
@@ -596,8 +596,7 @@ export default function Home() {
       return;
     }
 
-    if (logJustLoadedRef.current) {
-      logJustLoadedRef.current = false;
+    if (!logHydratedRef.current) {
       return;
     }
     void fetch("/api/user-data", {
