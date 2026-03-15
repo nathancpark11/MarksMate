@@ -14,6 +14,27 @@ const MAIN_CATEGORIES = ['Military', 'Performance', 'Professional Qualities', 'L
 type MainCategory = typeof MAIN_CATEGORIES[number];
 
 export default function ExportPanel({ history, suggestions, rankLevel }: ExportPanelProps) {
+  const [showAckModal, setShowAckModal] = useState(false);
+  const [pendingExport, setPendingExport] = useState<(() => void) | null>(null);
+
+  const requestExport = (exportFn: () => void) => {
+    setPendingExport(() => exportFn);
+    setShowAckModal(true);
+  };
+
+  const handleAckConfirm = () => {
+    setShowAckModal(false);
+    if (pendingExport) {
+      pendingExport();
+      setPendingExport(null);
+    }
+  };
+
+  const handleAckCancel = () => {
+    setShowAckModal(false);
+    setPendingExport(null);
+  };
+
   const [selectedCategories, setSelectedCategories] = useState<Record<MainCategory, boolean>>({
     Military: true,
     Performance: true,
@@ -661,6 +682,7 @@ export default function ExportPanel({ history, suggestions, rankLevel }: ExportP
   };
 
   return (
+    <>
     <div className="bg-white p-6 rounded-xl shadow-md space-y-6">
       <h2 className="text-xl font-semibold">Export Bullets</h2>
 
@@ -693,19 +715,19 @@ export default function ExportPanel({ history, suggestions, rankLevel }: ExportP
           </p>
           <div className="flex flex-wrap gap-3">
             <button
-              onClick={handleExportPDF}
+              onClick={() => requestExport(handleExportPDF)}
               className="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700 transition-colors"
             >
               Export as PDF
             </button>
             <button
-              onClick={handleExportWord}
+              onClick={() => requestExport(handleExportWord)}
               className="bg-indigo-600 text-white px-6 py-2 rounded-md hover:bg-indigo-700 transition-colors"
             >
               Export as Word
             </button>
             <button
-              onClick={handleExportTxt}
+              onClick={() => requestExport(handleExportTxt)}
               className="bg-gray-600 text-white px-6 py-2 rounded-md hover:bg-gray-700 transition-colors"
             >
               Export as Text
@@ -714,5 +736,45 @@ export default function ExportPanel({ history, suggestions, rankLevel }: ExportP
         </div>
       )}
     </div>
+
+      {showAckModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full mx-4 p-6 space-y-4">
+            <h3 className="text-lg font-semibold">AI Assistance Notice</h3>
+            <p className="text-sm text-gray-700 leading-relaxed">
+              This tool uses AI to help generate draft performance bullets from your inputs. The
+              content produced is intended as a writing aid only.
+            </p>
+            <p className="text-sm text-gray-700 leading-relaxed">
+              By continuing with export, you acknowledge that AI-generated bullets may contain
+              inaccuracies or incomplete information. You are responsible for reviewing, editing,
+              and verifying all content before official use.
+            </p>
+            <p className="text-sm text-gray-700 leading-relaxed">
+              This application is not an official U.S. Coast Guard or Department of Defense
+              resource. Only unclassified information should be entered.
+            </p>
+            <p className="text-sm text-gray-700 leading-relaxed">
+              Select <span className="font-semibold">&ldquo;Acknowledge &amp; Export&rdquo;</span> to
+              confirm you understand and accept these conditions.
+            </p>
+            <div className="flex justify-end gap-3 pt-2">
+              <button
+                onClick={handleAckCancel}
+                className="px-4 py-2 rounded-md border border-gray-300 text-gray-700 hover:bg-gray-100 transition-colors text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAckConfirm}
+                className="px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors text-sm"
+              >
+                Acknowledge &amp; Export
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
