@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import jsPDF from 'jspdf';
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle, TableCell, TableRow, Table, WidthType } from 'docx';
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } from 'docx';
+import { sanitizeText } from '@/lib/textSanitization';
 
 type HistoryItem = { text: string; date: string; category?: string };
 
@@ -10,23 +11,84 @@ type ExportPanelProps = {
   rankLevel: string;
 };
 
+type ExportType = 'pdf' | 'docx' | 'txt';
+
+type ExportHistoryItem = {
+  type: ExportType;
+  createdAt: string;
+  ref: string;
+  itemCount: number;
+};
+
 const MAIN_CATEGORIES = ['Military', 'Performance', 'Professional Qualities', 'Leadership'] as const;
 type MainCategory = typeof MAIN_CATEGORIES[number];
 
 export default function ExportPanel({ history, suggestions, rankLevel }: ExportPanelProps) {
   const [showAckModal, setShowAckModal] = useState(false);
-  const [pendingExport, setPendingExport] = useState<(() => void) | null>(null);
+  const [pendingExport, setPendingExport] = useState<{
+    run: () => Promise<void> | void;
+    type: ExportType;
+    ref: string;
+  } | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
 
-  const requestExport = (exportFn: () => void) => {
-    setPendingExport(() => exportFn);
+  const appendExportHistory = async (item: ExportHistoryItem) => {
+    try {
+      const existingRes = await fetch('/api/user-data?key=exportHistory');
+      const existingData = (await existingRes.json()) as { value?: unknown };
+      const existing = Array.isArray(existingData.value) ? existingData.value : [];
+      const normalized = existing.filter(
+        (entry): entry is ExportHistoryItem =>
+          !!entry &&
+          typeof entry === 'object' &&
+          typeof (entry as { type?: unknown }).type === 'string' &&
+          typeof (entry as { createdAt?: unknown }).createdAt === 'string' &&
+          typeof (entry as { ref?: unknown }).ref === 'string' &&
+          typeof (entry as { itemCount?: unknown }).itemCount === 'number'
+      );
+      const next = [item, ...normalized].slice(0, 100);
+
+      await fetch('/api/user-data', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'exportHistory', value: next }),
+      });
+    } catch {
+      // Non-blocking: export should still complete if metadata save fails.
+    }
+  };
+
+  const requestExport = (
+    exportFn: () => Promise<void> | void,
+    type: ExportType,
+    ref: string
+  ) => {
+    if (isExporting) {
+      return;
+    }
+
+    setPendingExport({ run: exportFn, type, ref });
     setShowAckModal(true);
   };
 
-  const handleAckConfirm = () => {
+  const handleAckConfirm = async () => {
+    if (!pendingExport || isExporting) {
+      return;
+    }
+
+    setIsExporting(true);
     setShowAckModal(false);
-    if (pendingExport) {
-      pendingExport();
+    try {
+      await pendingExport.run();
+      await appendExportHistory({
+        type: pendingExport.type,
+        createdAt: new Date().toISOString(),
+        ref: pendingExport.ref,
+        itemCount: exportReadyHistory.length,
+      });
+    } finally {
       setPendingExport(null);
+      setIsExporting(false);
     }
   };
 
@@ -44,6 +106,14 @@ export default function ExportPanel({ history, suggestions, rankLevel }: ExportP
 
   const MIN_MARK = 4;
   const MAX_MARK = 7;
+  const exportReadyHistory: HistoryItem[] = history
+    .map((item) => ({
+      ...item,
+      text: sanitizeText(item.text, { preserveLineBreaks: false }),
+      category: item.category ? sanitizeText(item.category, { preserveLineBreaks: false }) : undefined,
+    }))
+    .filter((item) => item.text.length > 0);
+
   const dashboardSubCategories = [
     'Military Bearing',
     'Customs, Courtesies and Traditions',
@@ -69,7 +139,7 @@ export default function ExportPanel({ history, suggestions, rankLevel }: ExportP
   };
 
   const getCategoryCount = (subCategory: string): number => {
-    return history.reduce((count, item) => {
+    return exportReadyHistory.reduce((count, item) => {
       const rawCategory = item.category || suggestions[item.text]?.category;
       if (!rawCategory) return count;
       const normalized = normalizeCategory(rawCategory);
@@ -95,7 +165,7 @@ export default function ExportPanel({ history, suggestions, rankLevel }: ExportP
       dashboardSubCategories.map((cat) => [cat, [] as string[]])
     );
 
-    history.forEach((item) => {
+    exportReadyHistory.forEach((item) => {
       const rawCategory = item.category || suggestions[item.text]?.category;
       if (!rawCategory) return;
 
@@ -178,7 +248,7 @@ export default function ExportPanel({ history, suggestions, rankLevel }: ExportP
     const groupedByCategory: Record<string, HistoryItem[]> = {};
     const uncategorized: HistoryItem[] = [];
 
-    history.forEach((item) => {
+    exportReadyHistory.forEach((item) => {
       if (item.category) {
         const normalizedCategory = item.category.trim();
         let found = false;
@@ -310,7 +380,7 @@ export default function ExportPanel({ history, suggestions, rankLevel }: ExportP
     const groupedByCategory: Record<string, HistoryItem[]> = {};
     const uncategorized: HistoryItem[] = [];
 
-    history.forEach((item) => {
+    exportReadyHistory.forEach((item) => {
       if (item.category) {
         const normalizedCategory = item.category.trim();
         let found = false;
@@ -427,14 +497,14 @@ export default function ExportPanel({ history, suggestions, rankLevel }: ExportP
     const groupedByCategory: Record<string, HistoryItem[]> = {};
     const uncategorized: HistoryItem[] = [];
 
-    history.forEach((item) => {
+    exportReadyHistory.forEach((item) => {
       if (item.category) {
         // Normalize category name (trim whitespace)
         const normalizedCategory = item.category.trim();
         let found = false;
         
         // Check if this category matches any subcategory in our mapping (case-insensitive)
-        for (const [subCategory, mainCategory] of Object.entries(categoryMapping)) {
+        for (const [subCategory] of Object.entries(categoryMapping)) {
           if (subCategory.toLowerCase() === normalizedCategory.toLowerCase()) {
             if (!groupedByCategory[subCategory]) {
               groupedByCategory[subCategory] = [];
@@ -706,28 +776,49 @@ export default function ExportPanel({ history, suggestions, rankLevel }: ExportP
         </div>
       </div>
 
-      {history.length === 0 ? (
+      {exportReadyHistory.length === 0 ? (
         <p className="text-gray-500">No history items to export.</p>
       ) : (
         <div className="space-y-4">
           <p className="text-sm text-gray-600">
-            {history.length} item{history.length !== 1 ? 's' : ''} in history.
+            {exportReadyHistory.length} mark{exportReadyHistory.length !== 1 ? 's' : ''} will be exported.
           </p>
           <div className="flex flex-wrap gap-3">
             <button
-              onClick={() => requestExport(handleExportPDF)}
+              onClick={() =>
+                requestExport(
+                  handleExportPDF,
+                  'pdf',
+                  `bullet-history-${new Date().toISOString().slice(0, 10)}.pdf`
+                )
+              }
+              disabled={isExporting}
               className="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700 transition-colors"
             >
               Export as PDF
             </button>
             <button
-              onClick={() => requestExport(handleExportWord)}
+              onClick={() =>
+                requestExport(
+                  handleExportWord,
+                  'docx',
+                  `bullet-history-${new Date().toISOString().slice(0, 10)}.docx`
+                )
+              }
+              disabled={isExporting}
               className="bg-indigo-600 text-white px-6 py-2 rounded-md hover:bg-indigo-700 transition-colors"
             >
               Export as Word
             </button>
             <button
-              onClick={() => requestExport(handleExportTxt)}
+              onClick={() =>
+                requestExport(
+                  handleExportTxt,
+                  'txt',
+                  `bullet-history-${new Date().toISOString().slice(0, 10)}.txt`
+                )
+              }
+              disabled={isExporting}
               className="bg-gray-600 text-white px-6 py-2 rounded-md hover:bg-gray-700 transition-colors"
             >
               Export as Text
@@ -767,9 +858,10 @@ export default function ExportPanel({ history, suggestions, rankLevel }: ExportP
               </button>
               <button
                 onClick={handleAckConfirm}
+                disabled={isExporting}
                 className="px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors text-sm"
               >
-                Acknowledge &amp; Export
+                {isExporting ? "Exporting..." : "Acknowledge &amp; Export"}
               </button>
             </div>
           </div>

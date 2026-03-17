@@ -1,19 +1,41 @@
 import OpenAI from "openai";
+import { parseLimitedJsonBody } from "@/lib/aiRequestGuards";
 import { requireSessionUser } from "@/lib/auth";
+import { validateCombinedAiInputs } from "@/lib/promptSpamGuard";
+import { enforceRateLimits } from "@/lib/rateLimit";
+import { getRequestId, logApiError, logApiRequestMetadata } from "@/lib/safeLogging";
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY ?? "missing-openai-api-key",
 });
+
+const DASHBOARD_ANALYSIS_MODEL = process.env.OPENAI_MODEL_DASHBOARD_ANALYSIS ?? process.env.OPENAI_MODEL_STRONG ?? "gpt-4.1";
 
 function stripCodeFences(value: string) {
   return value.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
 }
 
 export async function POST(req: Request) {
+  const routeName = "/api/smart-insights";
+  const requestId = getRequestId(req);
+  let inputLength = 0;
+
   try {
     const { response: authResponse } = await requireSessionUser();
     if (authResponse) {
       return authResponse;
+    }
+
+    const rateLimitResponse = enforceRateLimits(req, [
+      {
+        key: "smart-insights-per-hour",
+        maxRequests: 3,
+        windowMs: 60 * 60 * 1000,
+        errorMessage: "Hourly rate limit reached for dashboard analysis.",
+      },
+    ]);
+    if (rateLimitResponse) {
+      return rateLimitResponse;
     }
 
     if (!process.env.OPENAI_API_KEY) {
@@ -23,11 +45,18 @@ export async function POST(req: Request) {
       );
     }
 
-    const { rankLevel, allCategories, bulletsByCategory } = (await req.json()) as {
+    const parsedBody = await parseLimitedJsonBody<{
       rankLevel?: string;
       allCategories?: string[];
       bulletsByCategory?: Record<string, string[]>;
-    };
+    }>(req);
+    inputLength = parsedBody.bodyBytes;
+    if (!parsedBody.ok) {
+      logApiRequestMetadata({ requestId, routeName, inputLength, success: false, status: parsedBody.response.status });
+      return parsedBody.response;
+    }
+
+    const { rankLevel, allCategories, bulletsByCategory } = parsedBody.data;
 
     if (
       !allCategories ||
@@ -38,7 +67,23 @@ export async function POST(req: Request) {
       return Response.json({ error: "Missing required fields." }, { status: 400 });
     }
 
-    const totalBullets = Object.values(bulletsByCategory).reduce(
+    const normalizedBulletsByCategory = Object.fromEntries(
+      Object.entries(bulletsByCategory).map(([categoryName, maybeBullets]) => [
+        categoryName,
+        Array.isArray(maybeBullets)
+          ? maybeBullets
+              .filter((bullet): bullet is string => typeof bullet === "string")
+              .map((bullet) => bullet.trim())
+              .filter(Boolean)
+          : [],
+      ])
+    );
+    const normalizedCategories = allCategories
+      .filter((category): category is string => typeof category === "string")
+      .map((category) => category.trim())
+      .filter(Boolean);
+
+    const totalBullets = Object.values(normalizedBulletsByCategory).reduce(
       (sum, arr) => sum + arr.length,
       0
     );
@@ -52,15 +97,23 @@ export async function POST(req: Request) {
       });
     }
 
+    const flattenedBullets = Object.values(normalizedBulletsByCategory)
+      .flat()
+      .filter(Boolean);
+    const promptSpamError = validateCombinedAiInputs([...flattenedBullets, ...normalizedCategories]);
+    if (promptSpamError) {
+      return Response.json({ error: promptSpamError }, { status: 400 });
+    }
+
     const prompt = `You are an expert advisor helping a U.S. military service member strengthen their evaluation (EER/OER) before marks close.
 
 Current rank: ${rankLevel || "Not specified"}
 
 Full list of EER categories:
-${allCategories.join("\n")}
+${normalizedCategories.join("\n")}
 
 Current bullets by category (categories with empty arrays have 0 bullets):
-${JSON.stringify(bulletsByCategory, null, 2)}
+${JSON.stringify(normalizedBulletsByCategory, null, 2)}
 
 Analyze the above and return a JSON object with exactly these four fields:
 
@@ -97,7 +150,7 @@ Measurable-results guidance for "suggestedImprovement" (important):
 - Do not use vague percentages when a count/time/volume metric is more credible.`;
 
     const completion = await client.chat.completions.create({
-      model: "gpt-3.5-turbo",
+      model: DASHBOARD_ANALYSIS_MODEL,
       messages: [{ role: "user", content: prompt }],
       temperature: 0.3,
       max_tokens: 2000,
@@ -139,6 +192,7 @@ Measurable-results guidance for "suggestedImprovement" (important):
         ? Math.max(0, Math.min(100, Math.round(v)))
         : 50;
 
+    logApiRequestMetadata({ requestId, routeName, inputLength, success: true, status: 200 });
     return Response.json({
       underrepresentedCategories: (parsed.underrepresentedCategories ?? []).filter(
         (e) => typeof e.category === "string" && typeof e.suggestedAction === "string"
@@ -158,7 +212,8 @@ Measurable-results guidance for "suggestedImprovement" (important):
       ),
     });
   } catch (error: unknown) {
-    console.error("Smart insights error:", error);
-    return Response.json({ error: "AI insights unavailable." }, { status: 500 });
+    logApiError("Smart insights error", error, { requestId, routeName, inputLength, success: false });
+    logApiRequestMetadata({ requestId, routeName, inputLength, success: false, status: 500 });
+    return Response.json({ error: "AI insights are unavailable right now. Please try again." }, { status: 500 });
   }
 }

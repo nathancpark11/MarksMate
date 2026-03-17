@@ -1,5 +1,9 @@
 import OpenAI from "openai";
+import { parseLimitedJsonBody } from "@/lib/aiRequestGuards";
 import { requireSessionUser } from "@/lib/auth";
+import { validateCombinedAiInputs } from "@/lib/promptSpamGuard";
+import { enforceRateLimits } from "@/lib/rateLimit";
+import { getRequestId, logApiError, logApiRequestMetadata } from "@/lib/safeLogging";
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY ?? "missing-openai-api-key",
@@ -10,10 +14,26 @@ function stripCodeFences(value: string) {
 }
 
 export async function POST(req: Request) {
+  const routeName = "/api/build-marks-package";
+  const requestId = getRequestId(req);
+  let inputLength = 0;
+
   try {
     const { response: authResponse } = await requireSessionUser();
     if (authResponse) {
       return authResponse;
+    }
+
+    const rateLimitResponse = enforceRateLimits(req, [
+      {
+        key: "build-marks-package-per-hour",
+        maxRequests: 20,
+        windowMs: 60 * 60 * 1000,
+        errorMessage: "Hourly rate limit reached for Marks Package generation.",
+      },
+    ]);
+    if (rateLimitResponse) {
+      return rateLimitResponse;
     }
 
     if (!process.env.OPENAI_API_KEY) {
@@ -23,8 +43,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const { bulletsByCategory, memberName, rankLevel, unitName, periodStart, periodEnd, includeSections } =
-      (await req.json()) as {
+    const parsedBody = await parseLimitedJsonBody<{
         bulletsByCategory?: Record<string, string[]>;
         memberName?: string;
         rankLevel?: string;
@@ -37,7 +56,15 @@ export async function POST(req: Request) {
           achievementLog?: boolean;
           supervisorNotes?: boolean;
         };
-      };
+      }>(req);
+    inputLength = parsedBody.bodyBytes;
+    if (!parsedBody.ok) {
+      logApiRequestMetadata({ requestId, routeName, inputLength, success: false, status: parsedBody.response.status });
+      return parsedBody.response;
+    }
+
+    const { bulletsByCategory, memberName, rankLevel, unitName, periodStart, periodEnd, includeSections } =
+      parsedBody.data;
 
     const selectedSections = {
       categorySummaries: includeSections?.categorySummaries ?? true,
@@ -50,15 +77,34 @@ export async function POST(req: Request) {
       return Response.json({ error: "Missing bullets." }, { status: 400 });
     }
 
-    const hasBullets = Object.values(bulletsByCategory).some(
-      (arr) => Array.isArray(arr) && arr.length > 0
+    const normalizedBulletsByCategory = Object.fromEntries(
+      Object.entries(bulletsByCategory).map(([categoryName, maybeBullets]) => [
+        categoryName,
+        Array.isArray(maybeBullets)
+          ? maybeBullets
+              .filter((bullet): bullet is string => typeof bullet === "string")
+              .map((bullet) => bullet.trim())
+              .filter(Boolean)
+          : [],
+      ])
     );
+
+    const hasBullets = Object.values(normalizedBulletsByCategory).some((arr) => arr.length > 0);
 
     if (!hasBullets) {
       return Response.json(
         { error: "No bullets found. Add bullets in the Generator first." },
         { status: 400 }
       );
+    }
+
+    const allBullets = Object.values(normalizedBulletsByCategory)
+      .flat()
+      .filter(Boolean);
+
+    const promptSpamError = validateCombinedAiInputs(allBullets);
+    if (promptSpamError) {
+      return Response.json({ error: promptSpamError }, { status: 400 });
     }
 
     const memberRef = memberName?.trim() || "the member";
@@ -71,7 +117,7 @@ Unit: ${unitName || "Not specified"}
 Reporting Period: ${periodStart || "start of period"} – ${periodEnd || "end of period"}
 
 Bullets grouped by category:
-${JSON.stringify(bulletsByCategory, null, 2)}
+${JSON.stringify(normalizedBulletsByCategory, null, 2)}
 
 Return valid JSON only — no markdown, no code fences — with exactly this shape:
 {
@@ -112,6 +158,7 @@ Rules:
       supervisorNotes?: string;
     };
 
+    logApiRequestMetadata({ requestId, routeName, inputLength, success: true, status: 200 });
     return Response.json({
       categorySummaries: selectedSections.categorySummaries
         ? Array.isArray(parsed.categorySummaries)
@@ -131,8 +178,8 @@ Rules:
           : "",
     });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Failed to build marks package.";
-    console.error("build-marks-package error:", error);
-    return Response.json({ error: message }, { status: 500 });
+    logApiError("build-marks-package error", error, { requestId, routeName, inputLength, success: false });
+    logApiRequestMetadata({ requestId, routeName, inputLength, success: false, status: 500 });
+    return Response.json({ error: "Unable to build the marks package right now. Please try again." }, { status: 500 });
   }
 }

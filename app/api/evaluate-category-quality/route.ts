@@ -1,9 +1,15 @@
 import OpenAI from "openai";
+import { parseLimitedJsonBody } from "@/lib/aiRequestGuards";
 import { requireSessionUser } from "@/lib/auth";
+import { validateCombinedAiInputs } from "@/lib/promptSpamGuard";
+import { enforceRateLimits } from "@/lib/rateLimit";
+import { getRequestId, logApiError, logApiRequestMetadata } from "@/lib/safeLogging";
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY ?? "missing-openai-api-key",
 });
+
+const DASHBOARD_ANALYSIS_MODEL = process.env.OPENAI_MODEL_DASHBOARD_ANALYSIS ?? process.env.OPENAI_MODEL_STRONG ?? "gpt-4.1";
 
 type CategoryEvaluations = Record<
   string,
@@ -55,10 +61,26 @@ function compileScoreFromBreakdown(breakdown: {
 }
 
 export async function POST(req: Request) {
+  const routeName = "/api/evaluate-category-quality";
+  const requestId = getRequestId(req);
+  let inputLength = 0;
+
   try {
     const { response: authResponse } = await requireSessionUser();
     if (authResponse) {
       return authResponse;
+    }
+
+    const rateLimitResponse = enforceRateLimits(req, [
+      {
+        key: "evaluate-category-quality-per-hour",
+        maxRequests: 3,
+        windowMs: 60 * 60 * 1000,
+        errorMessage: "Hourly rate limit reached for category evaluation.",
+      },
+    ]);
+    if (rateLimitResponse) {
+      return rateLimitResponse;
     }
 
     if (!process.env.OPENAI_API_KEY) {
@@ -68,10 +90,17 @@ export async function POST(req: Request) {
       );
     }
 
-    const { rankLevel, categories } = (await req.json()) as {
+    const parsedBody = await parseLimitedJsonBody<{
       rankLevel?: string;
       categories?: Record<string, string[]>;
-    };
+    }>(req);
+    inputLength = parsedBody.bodyBytes;
+    if (!parsedBody.ok) {
+      logApiRequestMetadata({ requestId, routeName, inputLength, success: false, status: parsedBody.response.status });
+      return parsedBody.response;
+    }
+
+    const { rankLevel, categories } = parsedBody.data;
 
     if (!categories || typeof categories !== "object") {
       return Response.json(
@@ -80,12 +109,33 @@ export async function POST(req: Request) {
       );
     }
 
-    const populatedCategories = Object.entries(categories).filter(
-      ([, bullets]) => Array.isArray(bullets) && bullets.some((bullet) => bullet.trim())
+    const normalizedCategories = Object.fromEntries(
+      Object.entries(categories).map(([categoryName, maybeBullets]) => [
+        categoryName,
+        Array.isArray(maybeBullets)
+          ? maybeBullets
+              .filter((bullet): bullet is string => typeof bullet === "string")
+              .map((bullet) => bullet.trim())
+              .filter(Boolean)
+          : [],
+      ])
+    );
+
+    const populatedCategories = Object.entries(normalizedCategories).filter(
+      ([, bullets]) => bullets.length > 0
     );
 
     if (populatedCategories.length === 0) {
       return Response.json({ evaluations: {} });
+    }
+
+    const categoryInputs = populatedCategories.flatMap(([category, bullets]) => [
+      category,
+      ...bullets.filter((bullet): bullet is string => typeof bullet === "string"),
+    ]);
+    const promptSpamError = validateCombinedAiInputs(categoryInputs);
+    if (promptSpamError) {
+      return Response.json({ error: promptSpamError }, { status: 400 });
     }
 
     const prompt = `You are evaluating groups of performance bullets for a U.S. military evaluation dashboard.
@@ -132,7 +182,7 @@ Categories and bullets:
 ${JSON.stringify(populatedCategories.map(([category, bullets]) => ({ category, bullets })), null, 2)}`;
 
     const completion = await client.chat.completions.create({
-      model: "gpt-3.5-turbo",
+      model: DASHBOARD_ANALYSIS_MODEL,
       messages: [
         {
           role: "user",
@@ -193,16 +243,13 @@ ${JSON.stringify(populatedCategories.map(([category, bullets]) => ({ category, b
       })
     );
 
+    logApiRequestMetadata({ requestId, routeName, inputLength, success: true, status: 200 });
     return Response.json({ evaluations });
   } catch (error: unknown) {
-    console.error("Evaluate category quality error:", error);
+    logApiError("Evaluate category quality error", error, { requestId, routeName, inputLength, success: false });
+    logApiRequestMetadata({ requestId, routeName, inputLength, success: false, status: 500 });
     return Response.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Category quality evaluation failed.",
-      },
+      { error: "Unable to evaluate category quality right now. Please try again." },
       { status: 500 }
     );
   }

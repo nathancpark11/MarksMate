@@ -1,23 +1,23 @@
 import { useEffect, useState } from "react";
 
 type DashboardPanelProps = {
+  sessionUserId?: string | null;
+  aiEnabled: boolean;
   history: { text: string; category?: string }[];
   suggestions: Record<string, { category: string; reason: string }>;
   rankLevel: string;
+  onInsightsRecommendationCountChange?: (count: number) => void;
   onUpdateBullet?: (oldText: string, newText: string) => void;
+  onUpdateBulletForCategory?: (oldText: string, newText: string, category: string) => void;
   onCommitConsolidatedRepetition?: (
     originalBullets: string[],
     consolidatedBullet: string,
-    category?: string
+    category?: string,
+    title?: string
   ) => void;
 };
 
 type SmartInsights = {
-  underrepresentedCategories: Array<{
-    category: string;
-    bulletCount: number;
-    suggestedAction: string;
-  }>;
   bulletsLackingResults: Array<{
     bullet: string;
     category: string;
@@ -50,8 +50,26 @@ type RawCategoryEvaluation = Partial<CategoryEvaluation> & {
   overallScore?: number;
 };
 
+type PersistedDashboardAnalysisState = {
+  version: 1;
+  hasAnalyzedDashboard: boolean;
+  insights: SmartInsights | null;
+  evaluations: Record<string, CategoryEvaluation>;
+  dismissedBullets: string[];
+  dismissedUnderrepresentedCategories: boolean;
+  dismissedRepetitionGroups: string[];
+  dismissedCrossCategoryPairs: string[];
+  dismissedPreCloseActions: boolean;
+  lockedTotalEstimate: number | null;
+};
+
 const MIN_MARK = 4;
 const MAX_MARK = 7;
+const DASHBOARD_ANALYSIS_STORAGE_VERSION = 1;
+
+function getDashboardAnalysisStorageKey(userId: string) {
+  return `dashboardAnalysis:${userId}`;
+}
 
 function normalizeCategoryName(category: string) {
   return category.trim().toLowerCase() === "customs, courtesies, and traditions"
@@ -114,11 +132,86 @@ function normalizeEvaluation(evaluation: RawCategoryEvaluation | undefined): Cat
   };
 }
 
+function getLocalUnderrepresentedAction(category: string, bulletCount: number) {
+  if (bulletCount === 0) {
+    return `No marks are currently assigned to ${category}. Add at least one mark here to improve category coverage.`;
+  }
+
+  return `${category} currently has only ${bulletCount} mark. Add another mark here to strengthen category balance.`;
+}
+
+type CategorizedBullet = {
+  text: string;
+  category: string;
+};
+
+type CrossCategorySimilarityPair = {
+  key: string;
+  left: CategorizedBullet;
+  right: CategorizedBullet;
+  matchType: "identical" | "similar";
+};
+
+function normalizeBulletForSimilarity(text: string) {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/^[-*•\s]+/, "")
+    .replace(/[“”"']/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function getCrossCategoryMatchType(firstBullet: string, secondBullet: string): "identical" | "similar" | null {
+  const first = normalizeBulletForSimilarity(firstBullet);
+  const second = normalizeBulletForSimilarity(secondBullet);
+
+  if (!first || !second) {
+    return null;
+  }
+
+  if (first === second) {
+    return "identical";
+  }
+
+  if ((first.includes(second) || second.includes(first)) && Math.min(first.length, second.length) >= 24) {
+    return "similar";
+  }
+
+  const firstTokens = new Set(first.split(" ").filter((token) => token.length > 2));
+  const secondTokens = new Set(second.split(" ").filter((token) => token.length > 2));
+  const allTokens = new Set([...firstTokens, ...secondTokens]);
+
+  if (allTokens.size === 0) {
+    return null;
+  }
+
+  let overlap = 0;
+  for (const token of firstTokens) {
+    if (secondTokens.has(token)) {
+      overlap++;
+    }
+  }
+
+  const jaccardSimilarity = overlap / allTokens.size;
+  return jaccardSimilarity >= 0.72 ? "similar" : null;
+}
+
+function getCrossCategoryPairKey(left: CategorizedBullet, right: CategorizedBullet) {
+  const first = `${left.category}::${left.text}`;
+  const second = `${right.category}::${right.text}`;
+  return [first, second].sort().join("|||" );
+}
+
 export default function DashboardPanel({
+  sessionUserId,
+  aiEnabled,
   history,
   suggestions,
   rankLevel,
+  onInsightsRecommendationCountChange,
   onUpdateBullet,
+  onUpdateBulletForCategory,
   onCommitConsolidatedRepetition,
 }: DashboardPanelProps) {
   const categories = [
@@ -161,8 +254,9 @@ export default function DashboardPanel({
   const [insights, setInsights] = useState<SmartInsights | null>(null);
   const [isLoadingInsights, setIsLoadingInsights] = useState(false);
   const [insightsError, setInsightsError] = useState("");
-  const [hasLoadedInsightsOnce, setHasLoadedInsightsOnce] = useState(false);
-  const [showSmartInsights, setShowSmartInsights] = useState(true);
+  const [hasAnalyzedDashboard, setHasAnalyzedDashboard] = useState(false);
+  const [isAnalyzingDashboard, setIsAnalyzingDashboard] = useState(false);
+  const [lockedTotalEstimate, setLockedTotalEstimate] = useState<number | null>(null);
   const [refreshingInsightSection, setRefreshingInsightSection] = useState<
     "missingResults" | "repetition" | null
   >(null);
@@ -180,11 +274,87 @@ export default function DashboardPanel({
   const [editingBullets, setEditingBullets] = useState<Record<string, string>>({});
   // dismissedBullets: set of original bullet texts that have been saved
   const [dismissedBullets, setDismissedBullets] = useState<Set<string>>(new Set());
+  const [dismissedUnderrepresentedCategories, setDismissedUnderrepresentedCategories] = useState(false);
   const [dismissedRepetitionGroups, setDismissedRepetitionGroups] = useState<Set<string>>(new Set());
+  const [dismissedCrossCategoryPairs, setDismissedCrossCategoryPairs] = useState<Set<string>>(new Set());
+  const [dismissedPreCloseActions, setDismissedPreCloseActions] = useState(false);
   const [openConsolidationGroupKey, setOpenConsolidationGroupKey] = useState<string | null>(null);
   const [consolidatedDrafts, setConsolidatedDrafts] = useState<Record<string, string>>({});
+  const [consolidatedDraftTitles, setConsolidatedDraftTitles] = useState<Record<string, string>>({});
   const [consolidationLoadingKey, setConsolidationLoadingKey] = useState<string | null>(null);
   const [consolidationErrorByKey, setConsolidationErrorByKey] = useState<Record<string, string>>({});
+  const [crossCategoryRewordDrafts, setCrossCategoryRewordDrafts] = useState<Record<string, string>>({});
+  const [crossCategoryRewordLoadingKey, setCrossCategoryRewordLoadingKey] = useState<string | null>(null);
+  const [crossCategoryRewordErrorByKey, setCrossCategoryRewordErrorByKey] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!sessionUserId) {
+      return;
+    }
+
+    try {
+      const raw = localStorage.getItem(getDashboardAnalysisStorageKey(sessionUserId));
+      if (!raw) {
+        return;
+      }
+
+      const parsed = JSON.parse(raw) as Partial<PersistedDashboardAnalysisState>;
+      if (parsed.version !== DASHBOARD_ANALYSIS_STORAGE_VERSION) {
+        return;
+      }
+
+      setHasAnalyzedDashboard(Boolean(parsed.hasAnalyzedDashboard));
+      setInsights(parsed.insights ?? null);
+      setEvaluations(parsed.evaluations ?? {});
+      setDismissedBullets(new Set(parsed.dismissedBullets ?? []));
+      setDismissedUnderrepresentedCategories(Boolean(parsed.dismissedUnderrepresentedCategories));
+      setDismissedRepetitionGroups(new Set(parsed.dismissedRepetitionGroups ?? []));
+      setDismissedCrossCategoryPairs(new Set(parsed.dismissedCrossCategoryPairs ?? []));
+      setDismissedPreCloseActions(Boolean(parsed.dismissedPreCloseActions));
+
+      if (typeof parsed.lockedTotalEstimate === "number" && Number.isFinite(parsed.lockedTotalEstimate)) {
+        setLockedTotalEstimate(parsed.lockedTotalEstimate);
+      }
+    } catch {
+      // Ignore parse/storage errors and continue with in-memory state.
+    }
+  }, [sessionUserId]);
+
+  useEffect(() => {
+    if (!sessionUserId) {
+      return;
+    }
+
+    const payload: PersistedDashboardAnalysisState = {
+      version: DASHBOARD_ANALYSIS_STORAGE_VERSION,
+      hasAnalyzedDashboard,
+      insights,
+      evaluations,
+      dismissedBullets: Array.from(dismissedBullets),
+      dismissedUnderrepresentedCategories,
+      dismissedRepetitionGroups: Array.from(dismissedRepetitionGroups),
+      dismissedCrossCategoryPairs: Array.from(dismissedCrossCategoryPairs),
+      dismissedPreCloseActions,
+      lockedTotalEstimate,
+    };
+
+    try {
+      localStorage.setItem(getDashboardAnalysisStorageKey(sessionUserId), JSON.stringify(payload));
+    } catch {
+      // Ignore quota/storage errors and continue with in-memory state.
+    }
+  }, [
+    sessionUserId,
+    hasAnalyzedDashboard,
+    insights,
+    evaluations,
+    dismissedBullets,
+    dismissedUnderrepresentedCategories,
+    dismissedRepetitionGroups,
+    dismissedCrossCategoryPairs,
+    dismissedPreCloseActions,
+    lockedTotalEstimate,
+  ]);
 
   const startEditingBullet = (originalText: string, suggested: string) =>
     setEditingBullets((prev) => ({ ...prev, [originalText]: suggested }));
@@ -196,10 +366,14 @@ export default function DashboardPanel({
       return next;
     });
 
-  const commitEditingBullet = (originalText: string) => {
+  const commitEditingBullet = (originalText: string, category?: string) => {
     const newText = (editingBullets[originalText] ?? "").trim();
-    if (newText && newText !== originalText && onUpdateBullet) {
-      onUpdateBullet(originalText, newText);
+    if (newText && newText !== originalText) {
+      if (category && onUpdateBulletForCategory) {
+        onUpdateBulletForCategory(originalText, newText, category);
+      } else if (onUpdateBullet) {
+        onUpdateBullet(originalText, newText);
+      }
     }
     cancelEditingBullet(originalText);
     setDismissedBullets((prev) => new Set(prev).add(originalText));
@@ -212,6 +386,14 @@ export default function DashboardPanel({
     group: SmartInsights["repetitionGroups"][number],
     groupKey: string
   ) => {
+    if (!aiEnabled) {
+      setConsolidationErrorByKey((prev) => ({
+        ...prev,
+        [groupKey]: "Dashboard AI is disabled in Settings.",
+      }));
+      return;
+    }
+
     setConsolidationLoadingKey(groupKey);
     setConsolidationErrorByKey((prev) => ({ ...prev, [groupKey]: "" }));
 
@@ -242,6 +424,10 @@ export default function DashboardPanel({
       }
 
       setConsolidatedDrafts((prev) => ({ ...prev, [groupKey]: generatedText }));
+      setConsolidatedDraftTitles((prev) => ({
+        ...prev,
+        [groupKey]: typeof data.title === "string" ? data.title.trim() : "",
+      }));
     } catch (error) {
       setConsolidationErrorByKey((prev) => ({
         ...prev,
@@ -269,17 +455,104 @@ export default function DashboardPanel({
   const handleCommitConsolidation = (group: SmartInsights["repetitionGroups"][number]) => {
     const groupKey = getRepetitionGroupKey(group);
     const draft = (consolidatedDrafts[groupKey] || "").trim();
+    const title = (consolidatedDraftTitles[groupKey] || "").trim();
     if (!draft) {
       setConsolidationErrorByKey((prev) => ({ ...prev, [groupKey]: "Consolidated bullet is empty." }));
       return;
     }
 
     if (onCommitConsolidatedRepetition) {
-      onCommitConsolidatedRepetition(group.bullets, draft, group.category);
+      onCommitConsolidatedRepetition(group.bullets, draft, group.category, title || undefined);
     }
 
     setDismissedRepetitionGroups((prev) => new Set(prev).add(groupKey));
     setOpenConsolidationGroupKey((prev) => (prev === groupKey ? null : prev));
+  };
+
+  const getCrossCategoryTargetKey = (pairKey: string, target: "left" | "right") => `${pairKey}|${target}`;
+
+  const generateCrossCategoryReword = async (
+    pair: CrossCategorySimilarityPair,
+    target: "left" | "right"
+  ) => {
+    const selectedBullet = target === "left" ? pair.left : pair.right;
+    const targetKey = getCrossCategoryTargetKey(pair.key, target);
+
+    if (!aiEnabled) {
+      setCrossCategoryRewordErrorByKey((prev) => ({
+        ...prev,
+        [targetKey]: "Dashboard AI is disabled in Settings.",
+      }));
+      return;
+    }
+
+    setCrossCategoryRewordLoadingKey(targetKey);
+    setCrossCategoryRewordErrorByKey((prev) => ({ ...prev, [targetKey]: "" }));
+
+    try {
+      const response = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accomplishment: `Rewrite this existing mark so it clearly fits the ${selectedBullet.category} category while preserving the original accomplishment and measurable impact: ${selectedBullet.text}`,
+          category: selectedBullet.category,
+          rankLevel,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Unable to reword bullet for this category.");
+      }
+
+      const generatedText = typeof data.bullet === "string" ? data.bullet.trim() : "";
+      if (!generatedText) {
+        throw new Error("Unable to reword bullet for this category.");
+      }
+
+      setCrossCategoryRewordDrafts((prev) => ({ ...prev, [targetKey]: generatedText }));
+    } catch (error) {
+      setCrossCategoryRewordErrorByKey((prev) => ({
+        ...prev,
+        [targetKey]: error instanceof Error ? error.message : "Unable to reword bullet for this category.",
+      }));
+    } finally {
+      setCrossCategoryRewordLoadingKey(null);
+    }
+  };
+
+  const commitCrossCategoryReword = (
+    pair: CrossCategorySimilarityPair,
+    target: "left" | "right"
+  ) => {
+    const selectedBullet = target === "left" ? pair.left : pair.right;
+    const targetKey = getCrossCategoryTargetKey(pair.key, target);
+    const draft = (crossCategoryRewordDrafts[targetKey] || "").trim();
+
+    if (!draft) {
+      setCrossCategoryRewordErrorByKey((prev) => ({
+        ...prev,
+        [targetKey]: "Reworded bullet is empty.",
+      }));
+      return;
+    }
+
+    if (draft === selectedBullet.text) {
+      setCrossCategoryRewordErrorByKey((prev) => ({
+        ...prev,
+        [targetKey]: "Reworded bullet must be different before saving.",
+      }));
+      return;
+    }
+
+    if (onUpdateBulletForCategory) {
+      onUpdateBulletForCategory(selectedBullet.text, draft, selectedBullet.category);
+    } else if (onUpdateBullet) {
+      onUpdateBullet(selectedBullet.text, draft);
+    }
+
+    setDismissedCrossCategoryPairs((prev) => new Set(prev).add(pair.key));
   };
 
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(
@@ -293,9 +566,29 @@ export default function DashboardPanel({
 
   const bulletsByCategory: Record<string, string[]> = {};
   categories.forEach((cat) => (bulletsByCategory[cat] = []));
+  const categorizedBullets: CategorizedBullet[] = [];
+  const insightCategorizedBullets: CategorizedBullet[] = [];
+  const insightCategoryByBullet = new Map<string, string>();
+
+  (insights?.repetitionGroups || []).forEach((group) => {
+    const normalizedGroupCategory = normalizeCategoryName(group.category);
+    const matchedGroupCategory = categories.find(
+      (cat) => cat.toLowerCase() === normalizedGroupCategory.toLowerCase()
+    );
+
+    group.bullets.forEach((bulletText) => {
+      if (!insightCategoryByBullet.has(bulletText)) {
+        insightCategoryByBullet.set(bulletText, group.category);
+      }
+
+      if (matchedGroupCategory) {
+        insightCategorizedBullets.push({ text: bulletText, category: matchedGroupCategory });
+      }
+    });
+  });
 
   history.forEach((item) => {
-    const rawCategory = item.category || suggestions[item.text]?.category;
+    const rawCategory = item.category || suggestions[item.text]?.category || insightCategoryByBullet.get(item.text);
     if (!rawCategory) return;
 
     // Normalize legacy category naming variants before counting.
@@ -305,13 +598,97 @@ export default function DashboardPanel({
     if (matched) {
       counts[matched]++;
       bulletsByCategory[matched].push(item.text);
+      categorizedBullets.push({ text: item.text, category: matched });
     }
   });
+
+  const crossCategorySimilarityPairs: CrossCategorySimilarityPair[] = [];
+  const seenCrossCategoryPairKeys = new Set<string>();
+
+  const crossCategoryDetectionSource = [...categorizedBullets, ...insightCategorizedBullets];
+
+  for (let i = 0; i < crossCategoryDetectionSource.length; i++) {
+    for (let j = i + 1; j < crossCategoryDetectionSource.length; j++) {
+      const left = crossCategoryDetectionSource[i];
+      const right = crossCategoryDetectionSource[j];
+
+      if (left.category === right.category) {
+        continue;
+      }
+
+      const matchType = getCrossCategoryMatchType(left.text, right.text);
+      if (!matchType) {
+        continue;
+      }
+
+      const pairKey = getCrossCategoryPairKey(left, right);
+      if (seenCrossCategoryPairKeys.has(pairKey)) {
+        continue;
+      }
+
+      seenCrossCategoryPairKeys.add(pairKey);
+      crossCategorySimilarityPairs.push({
+        key: pairKey,
+        left,
+        right,
+        matchType,
+      });
+    }
+  }
 
   const populatedBulletsByCategory = Object.fromEntries(
     Object.entries(bulletsByCategory).filter(([, bullets]) => bullets.length > 0)
   );
   const hasCategoryBullets = Object.keys(populatedBulletsByCategory).length > 0;
+  const localUnderrepresentedCategories = categories
+    .filter((category) => counts[category] <= 1)
+    .map((category) => ({
+      category,
+      bulletCount: counts[category],
+      suggestedAction: getLocalUnderrepresentedAction(category, counts[category]),
+    }));
+
+  useEffect(() => {
+    if (!sessionUserId) {
+      setLockedTotalEstimate(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const response = await fetch("/api/user-data?key=dashboardTotalEstimate");
+        const data = (await response.json()) as { value?: unknown };
+        const parsedValue =
+          typeof data.value === "number" && Number.isFinite(data.value) ? data.value : null;
+
+        if (!cancelled) {
+          setLockedTotalEstimate(parsedValue);
+        }
+      } catch {
+        if (!cancelled) {
+          setLockedTotalEstimate(null);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionUserId]);
+
+  const persistLockedTotalEstimate = async (estimate: number) => {
+    try {
+      await fetch("/api/user-data", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: "dashboardTotalEstimate", value: estimate }),
+      });
+    } catch {
+      // Non-blocking: UI keeps locked value locally even if this save fails.
+    }
+  };
 
   const evaluationRequestBody = JSON.stringify({
     rankLevel,
@@ -319,6 +696,10 @@ export default function DashboardPanel({
   });
 
   const fetchSmartInsights = async () => {
+    if (!aiEnabled) {
+      throw new Error("Dashboard AI is disabled in Settings.");
+    }
+
     const requestBody = JSON.stringify({
       rankLevel,
       allCategories: categories,
@@ -340,7 +721,118 @@ export default function DashboardPanel({
     return data as SmartInsights;
   };
 
+  const fetchCategoryEvaluations = async () => {
+    if (!aiEnabled) {
+      setEvaluations({});
+      setEvaluationError("Dashboard AI is disabled in Settings.");
+      setIsEvaluating(false);
+      return;
+    }
+
+    if (!hasCategoryBullets) {
+      setEvaluations({});
+      setEvaluationError("");
+      setIsEvaluating(false);
+      return;
+    }
+
+    setIsEvaluating(true);
+    setEvaluationError("");
+    setEvaluations({});
+
+    try {
+      const response = await fetch("/api/evaluate-category-quality", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: evaluationRequestBody,
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "AI quality score unavailable.");
+      }
+
+      const normalizedEvaluations = Object.fromEntries(
+        Object.entries((data.evaluations || {}) as Record<string, RawCategoryEvaluation>)
+          .map(([category, evaluation]) => [category, normalizeEvaluation(evaluation)])
+          .filter((entry): entry is [string, CategoryEvaluation] => Boolean(entry[1]))
+      );
+
+      setEvaluations(normalizedEvaluations);
+    } catch (error) {
+      setEvaluations({});
+      setEvaluationError(
+        error instanceof Error ? error.message : "AI quality score unavailable."
+      );
+    } finally {
+      setIsEvaluating(false);
+    }
+  };
+
+  const analyzeDashboard = async () => {
+    if (!aiEnabled) {
+      setInsightsError("Dashboard AI is disabled in Settings.");
+      return;
+    }
+
+    if (!hasCategoryBullets) {
+      return;
+    }
+
+    const latestEstimate = categories.reduce((sum, categoryName) => {
+      const categoryCount = counts[categoryName];
+      if (categoryCount === 0 || categoryCount === 1) return sum + MIN_MARK;
+      if (categoryCount === 2) return sum + 5;
+      if (categoryCount === 3) return sum + 6;
+      return sum + MAX_MARK;
+    }, 0);
+
+    setLockedTotalEstimate(latestEstimate);
+    void persistLockedTotalEstimate(latestEstimate);
+
+    setHasAnalyzedDashboard(true);
+    setIsAnalyzingDashboard(true);
+    setInsightsError("");
+    setDismissedUnderrepresentedCategories(false);
+    setDismissedBullets(new Set());
+    setDismissedRepetitionGroups(new Set());
+    setDismissedCrossCategoryPairs(new Set());
+    setDismissedPreCloseActions(false);
+    setEditingBullets({});
+    setOpenConsolidationGroupKey(null);
+    setConsolidatedDrafts({});
+    setConsolidatedDraftTitles({});
+    setConsolidationErrorByKey({});
+    setCrossCategoryRewordDrafts({});
+    setCrossCategoryRewordErrorByKey({});
+    setCrossCategoryRewordLoadingKey(null);
+
+    try {
+      await Promise.all([
+        fetchCategoryEvaluations(),
+        (async () => {
+          setIsLoadingInsights(true);
+          const data = await fetchSmartInsights();
+          setInsights(data);
+        })(),
+      ]);
+    } catch (error) {
+      setInsightsError(error instanceof Error ? error.message : "AI insights unavailable.");
+    } finally {
+      setIsLoadingInsights(false);
+      setIsAnalyzingDashboard(false);
+    }
+  };
+
   const refreshInsightSection = async (section: "missingResults" | "repetition") => {
+    if (!aiEnabled) {
+      setInsightsError("Dashboard AI is disabled in Settings.");
+      return;
+    }
+
     if (!hasCategoryBullets) {
       return;
     }
@@ -374,9 +866,14 @@ export default function DashboardPanel({
         setEditingBullets({});
       } else {
         setDismissedRepetitionGroups(new Set());
+        setDismissedCrossCategoryPairs(new Set());
         setOpenConsolidationGroupKey(null);
         setConsolidatedDrafts({});
+        setConsolidatedDraftTitles({});
         setConsolidationErrorByKey({});
+        setCrossCategoryRewordDrafts({});
+        setCrossCategoryRewordErrorByKey({});
+        setCrossCategoryRewordLoadingKey(null);
       }
     } catch (error) {
       setInsightsError(error instanceof Error ? error.message : "AI insights unavailable.");
@@ -386,102 +883,30 @@ export default function DashboardPanel({
   };
 
   useEffect(() => {
-    let isCancelled = false;
-
     if (!hasCategoryBullets) {
       setEvaluations({});
       setEvaluationError("");
-      setIsEvaluating(false);
-      return;
-    }
-
-    const fetchEvaluations = async () => {
-      setIsEvaluating(true);
-      setEvaluationError("");
-      setEvaluations({});
-
-      try {
-        const response = await fetch("/api/evaluate-category-quality", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: evaluationRequestBody,
-        });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-          throw new Error(data.error || "AI quality score unavailable.");
-        }
-
-        if (!isCancelled) {
-          const normalizedEvaluations = Object.fromEntries(
-            Object.entries((data.evaluations || {}) as Record<string, RawCategoryEvaluation>)
-              .map(([category, evaluation]) => [category, normalizeEvaluation(evaluation)])
-              .filter((entry): entry is [string, CategoryEvaluation] => Boolean(entry[1]))
-          );
-
-          setEvaluations(normalizedEvaluations);
-        }
-      } catch (error) {
-        if (!isCancelled) {
-          setEvaluations({});
-          setEvaluationError(
-            error instanceof Error ? error.message : "AI quality score unavailable."
-          );
-        }
-      } finally {
-        if (!isCancelled) {
-          setIsEvaluating(false);
-        }
-      }
-    };
-
-    fetchEvaluations();
-
-    return () => {
-      isCancelled = true;
-    };
-  }, [evaluationRequestBody, hasCategoryBullets]);
-
-  useEffect(() => {
-    let isCancelled = false;
-
-    if (!showSmartInsights || !hasCategoryBullets || hasLoadedInsightsOnce) {
-      return;
-    }
-
-    const fetchInsights = async () => {
-      setIsLoadingInsights(true);
+      setInsights(null);
       setInsightsError("");
-
-      try {
-        const data = await fetchSmartInsights();
-
-        if (!isCancelled) {
-          setInsights(data);
-          setHasLoadedInsightsOnce(true);
-        }
-      } catch (error) {
-        if (!isCancelled) {
-          setInsightsError(
-            error instanceof Error ? error.message : "AI insights unavailable."
-          );
-        }
-      } finally {
-        if (!isCancelled) {
-          setIsLoadingInsights(false);
-        }
-      }
-    };
-
-    fetchInsights();
-
-    return () => {
-      isCancelled = true;
-    };
-  }, [showSmartInsights, hasCategoryBullets, hasLoadedInsightsOnce, rankLevel, categories, bulletsByCategory]);
+      setHasAnalyzedDashboard(false);
+      setIsEvaluating(false);
+      setIsLoadingInsights(false);
+      setIsAnalyzingDashboard(false);
+      setDismissedUnderrepresentedCategories(false);
+      setDismissedBullets(new Set());
+      setDismissedRepetitionGroups(new Set());
+      setDismissedCrossCategoryPairs(new Set());
+      setDismissedPreCloseActions(false);
+      setEditingBullets({});
+      setOpenConsolidationGroupKey(null);
+      setConsolidatedDrafts({});
+      setConsolidatedDraftTitles({});
+      setConsolidationErrorByKey({});
+      setCrossCategoryRewordDrafts({});
+      setCrossCategoryRewordErrorByKey({});
+      setCrossCategoryRewordLoadingKey(null);
+    }
+  }, [hasCategoryBullets]);
 
   const getBarHeight = (count: number) => {
     if (count === 0) return MIN_MARK;
@@ -500,15 +925,58 @@ export default function DashboardPanel({
     return sum + getBarHeight(count);
   }, 0);
   const maxTotalEstimate = categories.length * MAX_MARK;
+  const displayedTotalEstimate = lockedTotalEstimate ?? totalEstimate;
   const minColorScaleScore = 52;
   const totalEstimateRatio =
     maxTotalEstimate > minColorScaleScore
       ? Math.max(
           0,
-          Math.min(1, (totalEstimate - minColorScaleScore) / (maxTotalEstimate - minColorScaleScore))
+          Math.min(1, (displayedTotalEstimate - minColorScaleScore) / (maxTotalEstimate - minColorScaleScore))
         )
       : 0;
   const totalEstimateHue = Math.round(totalEstimateRatio * 120);
+
+  const visibleUnderrepresentedCount = dismissedUnderrepresentedCategories
+    ? 0
+    : localUnderrepresentedCategories.length;
+  const visibleMissingResultsCount = insights
+    ? insights.bulletsLackingResults.filter((item) => !dismissedBullets.has(item.bullet)).length
+    : 0;
+  const crossCategoryBulletTextSet = new Set(
+    crossCategorySimilarityPairs.flatMap((pair) => [
+      normalizeBulletForSimilarity(pair.left.text),
+      normalizeBulletForSimilarity(pair.right.text),
+    ])
+  );
+  const eligibleRepetitionGroups = insights
+    ? insights.repetitionGroups.filter(
+        (group) =>
+          !group.bullets.some((bullet) =>
+            crossCategoryBulletTextSet.has(normalizeBulletForSimilarity(bullet))
+          )
+      )
+    : [];
+  const visibleRepetitionCount = eligibleRepetitionGroups.filter(
+    (group) => !dismissedRepetitionGroups.has(getRepetitionGroupKey(group))
+  ).length;
+  const visibleCrossCategorySimilarityCount = crossCategorySimilarityPairs.filter(
+    (pair) => !dismissedCrossCategoryPairs.has(pair.key)
+  ).length;
+  const visibleRepetitionInsightCount = visibleRepetitionCount + visibleCrossCategorySimilarityCount;
+  const visiblePreCloseCount = insights && !dismissedPreCloseActions ? insights.preCloseActions.length : 0;
+
+  useEffect(() => {
+    const recommendationCount = hasAnalyzedDashboard
+      ? visibleMissingResultsCount + visibleRepetitionInsightCount
+      : 0;
+
+    onInsightsRecommendationCountChange?.(recommendationCount);
+  }, [
+    hasAnalyzedDashboard,
+    visibleMissingResultsCount,
+    visibleRepetitionInsightCount,
+    onInsightsRecommendationCountChange,
+  ]);
 
   return (
     <div className="space-y-4">
@@ -522,7 +990,7 @@ export default function DashboardPanel({
                 className="font-semibold"
                 style={{ color: `hsl(${totalEstimateHue}, 78%, 38%)` }}
               >
-                {totalEstimate}/{maxTotalEstimate}
+                {displayedTotalEstimate}/{maxTotalEstimate}
               </span>
             </p>
             {evaluationError && (
@@ -534,70 +1002,91 @@ export default function DashboardPanel({
 
       {/* ── AI Smart Insights Section ── */}
       <div className="mt-6 border-t border-gray-200 pt-6">
+        <div className="space-y-5">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h3 className="text-base font-semibold text-gray-800">AI Smart Insights</h3>
-          <button
-            type="button"
-            onClick={() => setShowSmartInsights((prev) => !prev)}
-            className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
-              showSmartInsights
-                ? "border border-blue-200 bg-blue-50 text-blue-800 hover:bg-blue-100"
-                : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
-            }`}
-          >
-            {showSmartInsights ? "Turn Off" : "Turn On"}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void analyzeDashboard()}
+              disabled={!hasCategoryBullets || isAnalyzingDashboard || !aiEnabled}
+              className="rounded-md border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-800 transition-colors hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isAnalyzingDashboard ? "Analyzing..." : "Analyze Dashboard"}
+            </button>
+          </div>
         </div>
+        {!aiEnabled && (
+          <p className="text-xs text-amber-700">Dashboard AI is disabled in Settings.</p>
+        )}
 
-        {!showSmartInsights ? (
-          <p className="py-4 text-center text-sm text-gray-500">
-            AI Smart Insights are turned off.
-          </p>
-        ) : !hasCategoryBullets ? (
+        {!hasCategoryBullets ? (
           <p className="text-sm text-gray-400 text-center py-4">
             Add bullets to generate AI smart insights.
           </p>
-        ) : isLoadingInsights ? (
+        ) : !hasAnalyzedDashboard ? (
+          <p className="py-4 text-center text-sm text-gray-500">
+            Press Analyze Dashboard to run AI Smart Insights.
+          </p>
+        ) : isLoadingInsights || isEvaluating ? (
           <p className="text-sm text-gray-500 text-center py-4">Analyzing your bullets&#8230;</p>
         ) : insightsError ? (
           <p className="text-sm text-red-600 text-center py-4">{insightsError}</p>
         ) : insights ? (
           <div className="space-y-5">
 
-            {/* Underrepresented Categories */}
+            {visibleUnderrepresentedCount > 0 && (
             <div className="rounded-xl border border-orange-200 bg-orange-50 overflow-hidden">
-              <button
-                type="button"
-                onClick={() => toggleInsightSection("underrepresented")}
-                className="flex w-full items-center justify-between px-4 py-3 text-left"
-              >
-                <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 px-4 py-3">
+                <button
+                  type="button"
+                  onClick={() => toggleInsightSection("underrepresented")}
+                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                >
                   <svg className="h-4 w-4 text-orange-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
                   </svg>
                   <h4 className="text-sm font-semibold text-orange-700">
                     Underrepresented Categories
-                    {insights.underrepresentedCategories.length > 0 && (
+                    {visibleUnderrepresentedCount > 0 && (
                       <span className="ml-2 inline-flex items-center rounded-full bg-orange-200 px-2 py-0.5 text-xs font-medium text-orange-800">
-                        {insights.underrepresentedCategories.length}
+                        {visibleUnderrepresentedCount}
                       </span>
                     )}
                   </h4>
-                </div>
-                <svg
-                  className={`h-4 w-4 text-orange-400 transition-transform duration-200 ${openInsightSections.underrepresented ? "rotate-180" : ""}`}
-                  fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDismissedUnderrepresentedCategories(true)}
+                  disabled={visibleUnderrepresentedCount === 0}
+                  className="shrink-0 rounded-md border border-orange-300 bg-white px-2.5 py-1 text-xs font-semibold text-orange-800 hover:bg-orange-100 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
+                  Dismiss All
+                </button>
+                <button
+                  type="button"
+                  onClick={() => toggleInsightSection("underrepresented")}
+                  className="shrink-0"
+                  aria-label="Toggle underrepresented categories"
+                  title="Toggle"
+                >
+                  <svg
+                    className={`h-4 w-4 text-orange-400 transition-transform duration-200 ${openInsightSections.underrepresented ? "rotate-180" : ""}`}
+                    fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+              </div>
               {openInsightSections.underrepresented && (
                 <div className="px-4 pb-4">
-                  {insights.underrepresentedCategories.length === 0 ? (
+                  {dismissedUnderrepresentedCategories ? (
+                    <p className="text-xs text-orange-600">All underrepresented category suggestions dismissed.</p>
+                  ) : localUnderrepresentedCategories.length === 0 ? (
                     <p className="text-xs text-orange-600">All categories are well-represented.</p>
                   ) : (
                     <ul className="space-y-3">
-                      {insights.underrepresentedCategories.map((item, i) => (
+                      {localUnderrepresentedCategories.map((item, i) => (
                         <li key={i} className="rounded-lg bg-white border border-orange-100 p-3">
                           <div className="flex items-center justify-between mb-1">
                             <p className="text-xs font-semibold text-gray-700">{item.category}</p>
@@ -613,9 +1102,10 @@ export default function DashboardPanel({
                 </div>
               )}
             </div>
+            )}
 
             {/* Bullets Missing Measurable Results */}
-            {(() => {
+            {visibleMissingResultsCount > 0 && (() => {
               const visible = insights.bulletsLackingResults.filter(
                 (item) => !dismissedBullets.has(item.bullet)
               );
@@ -625,7 +1115,7 @@ export default function DashboardPanel({
                     <button
                       type="button"
                       onClick={() => toggleInsightSection("missingResults")}
-                      className="flex min-w-0 flex-1 items-center justify-between text-left"
+                      className="flex min-w-0 flex-1 items-center text-left"
                     >
                       <div className="flex items-center gap-2">
                         <svg className="h-4 w-4 text-yellow-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -640,12 +1130,6 @@ export default function DashboardPanel({
                           )}
                         </h4>
                       </div>
-                      <svg
-                        className={`h-4 w-4 text-yellow-400 transition-transform duration-200 ${openInsightSections.missingResults ? "rotate-180" : ""}`}
-                        fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
-                      >
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                      </svg>
                     </button>
                     <button
                       type="button"
@@ -655,11 +1139,37 @@ export default function DashboardPanel({
                     >
                       {refreshingInsightSection === "missingResults" ? "Refreshing..." : "Refresh"}
                     </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setDismissedBullets(
+                          new Set(insights.bulletsLackingResults.map((item) => item.bullet))
+                        )
+                      }
+                      disabled={visibleMissingResultsCount === 0}
+                      className="shrink-0 rounded-md border border-yellow-300 bg-white px-2.5 py-1 text-xs font-semibold text-yellow-800 hover:bg-yellow-100 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      Dismiss All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleInsightSection("missingResults")}
+                      className="shrink-0"
+                      aria-label="Toggle bullets missing measurable results"
+                      title="Toggle"
+                    >
+                      <svg
+                        className={`h-4 w-4 text-yellow-400 transition-transform duration-200 ${openInsightSections.missingResults ? "rotate-180" : ""}`}
+                        fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
                   </div>
                   {openInsightSections.missingResults && (
                     <div className="px-4 pb-4">
                       {visible.length === 0 ? (
-                        <p className="text-xs text-yellow-600">All bullets include measurable outcomes.</p>
+                        <p className="text-xs text-yellow-600">All missing-results suggestions dismissed.</p>
                       ) : (
                         <ul className="space-y-3">
                           {visible.map((item, i) => {
@@ -697,7 +1207,7 @@ export default function DashboardPanel({
                                     <div className="flex gap-2">
                                       <button
                                         type="button"
-                                        onClick={() => commitEditingBullet(item.bullet)}
+                                        onClick={() => commitEditingBullet(item.bullet, item.category)}
                                         className="rounded-md bg-yellow-500 px-3 py-1 text-xs font-semibold text-white hover:bg-yellow-600 transition-colors"
                                       >
                                         Save
@@ -735,12 +1245,13 @@ export default function DashboardPanel({
             })()}
 
             {/* Repetition Detected */}
+            {visibleRepetitionInsightCount > 0 && (
             <div className="rounded-xl border border-purple-200 bg-purple-50 overflow-hidden">
               <div className="flex items-center gap-2 px-4 py-3">
                 <button
                   type="button"
                   onClick={() => toggleInsightSection("repetition")}
-                  className="flex min-w-0 flex-1 items-center justify-between text-left"
+                  className="flex min-w-0 flex-1 items-center text-left"
                 >
                   <div className="flex items-center gap-2">
                     <svg className="h-4 w-4 text-purple-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -748,19 +1259,13 @@ export default function DashboardPanel({
                     </svg>
                     <h4 className="text-sm font-semibold text-purple-700">
                       Repetition Detected
-                      {insights.repetitionGroups.filter((group) => !dismissedRepetitionGroups.has(getRepetitionGroupKey(group))).length > 0 && (
+                      {visibleRepetitionInsightCount > 0 && (
                         <span className="ml-2 inline-flex items-center rounded-full bg-purple-200 px-2 py-0.5 text-xs font-medium text-purple-800">
-                          {insights.repetitionGroups.filter((group) => !dismissedRepetitionGroups.has(getRepetitionGroupKey(group))).length} {insights.repetitionGroups.filter((group) => !dismissedRepetitionGroups.has(getRepetitionGroupKey(group))).length === 1 ? "group" : "groups"}
+                          {visibleRepetitionInsightCount} {visibleRepetitionInsightCount === 1 ? "item" : "items"}
                         </span>
                       )}
                     </h4>
                   </div>
-                  <svg
-                    className={`h-4 w-4 text-purple-400 transition-transform duration-200 ${openInsightSections.repetition ? "rotate-180" : ""}`}
-                    fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
-                  >
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                  </svg>
                 </button>
                 <button
                   type="button"
@@ -770,14 +1275,199 @@ export default function DashboardPanel({
                 >
                   {refreshingInsightSection === "repetition" ? "Refreshing..." : "Refresh"}
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDismissedRepetitionGroups(
+                      new Set(eligibleRepetitionGroups.map((group) => getRepetitionGroupKey(group)))
+                    );
+                    setDismissedCrossCategoryPairs(
+                      new Set(crossCategorySimilarityPairs.map((pair) => pair.key))
+                    );
+                  }}
+                  disabled={visibleRepetitionInsightCount === 0}
+                  className="shrink-0 rounded-md border border-purple-300 bg-white px-2.5 py-1 text-xs font-semibold text-purple-800 hover:bg-purple-100 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Dismiss All
+                </button>
+                <button
+                  type="button"
+                  onClick={() => toggleInsightSection("repetition")}
+                  className="shrink-0"
+                  aria-label="Toggle repetition detected"
+                  title="Toggle"
+                >
+                  <svg
+                    className={`h-4 w-4 text-purple-400 transition-transform duration-200 ${openInsightSections.repetition ? "rotate-180" : ""}`}
+                    fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
               </div>
               {openInsightSections.repetition && (
                 <div className="px-4 pb-4">
-                  {insights.repetitionGroups.filter((group) => !dismissedRepetitionGroups.has(getRepetitionGroupKey(group))).length === 0 ? (
-                    <p className="text-xs text-purple-600">No repeated themes detected across your bullets.</p>
+                  {visibleCrossCategorySimilarityCount > 0 && (
+                    <div className="mb-4 rounded-lg border border-purple-200 bg-white p-3">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-purple-700">
+                          Cross-Category Similarity Dialogue
+                        </p>
+                        <span className="rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700">
+                          {visibleCrossCategorySimilarityCount}
+                        </span>
+                      </div>
+                      <p className="mb-3 text-xs text-gray-600">
+                        These bullets look identical or very similar across different categories. Reword each one so it better matches its own category.
+                      </p>
+                      <ul className="space-y-3">
+                        {crossCategorySimilarityPairs
+                          .filter((pair) => !dismissedCrossCategoryPairs.has(pair.key))
+                          .map((pair, index) => {
+                            const leftKey = getCrossCategoryTargetKey(pair.key, "left");
+                            const rightKey = getCrossCategoryTargetKey(pair.key, "right");
+                            const leftDraft = crossCategoryRewordDrafts[leftKey] || "";
+                            const rightDraft = crossCategoryRewordDrafts[rightKey] || "";
+
+                            return (
+                              <li key={pair.key} className="rounded-md border border-purple-100 bg-purple-50 p-3">
+                                <div className="mb-2 flex items-center justify-between gap-2">
+                                  <p className="text-xs font-semibold text-purple-700">
+                                    Pair {index + 1}: {pair.matchType === "identical" ? "Identical" : "Very Similar"}
+                                  </p>
+                                  <button
+                                    type="button"
+                                    onClick={() => setDismissedCrossCategoryPairs((prev) => new Set(prev).add(pair.key))}
+                                    className="rounded border border-purple-200 bg-white px-1.5 py-0.5 text-xs font-semibold text-purple-600 hover:bg-purple-100 transition-colors"
+                                    title="Dismiss similarity dialogue"
+                                    aria-label="Dismiss similarity dialogue"
+                                  >
+                                    Dismiss
+                                  </button>
+                                </div>
+
+                                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                                  <div className="rounded-md border border-purple-100 bg-white p-2">
+                                    <p className="mb-1 text-xs font-semibold text-gray-700">{pair.left.category}</p>
+                                    <p className="text-xs text-gray-600">&ldquo;{pair.left.text}&rdquo;</p>
+
+                                    {(leftDraft || crossCategoryRewordErrorByKey[leftKey]) && (
+                                      <div className="mt-3 rounded-md border border-purple-200 bg-white p-2">
+                                        <p className="mb-1 text-xs font-semibold text-purple-700">Draft for {pair.left.category}</p>
+                                        <textarea
+                                          className="w-full resize-none rounded-md border border-purple-200 bg-white px-2.5 py-2 text-xs italic text-gray-800 focus:outline-none focus:ring-1 focus:ring-purple-300"
+                                          rows={3}
+                                          value={leftDraft}
+                                          onChange={(e) =>
+                                            setCrossCategoryRewordDrafts((prev) => ({ ...prev, [leftKey]: e.target.value }))
+                                          }
+                                        />
+                                        {crossCategoryRewordErrorByKey[leftKey] && (
+                                          <p className="mt-1 text-xs text-red-600">{crossCategoryRewordErrorByKey[leftKey]}</p>
+                                        )}
+                                        <div className="mt-2 flex gap-2">
+                                          <button
+                                            type="button"
+                                            onClick={() => commitCrossCategoryReword(pair, "left")}
+                                            className="rounded-md bg-purple-600 px-3 py-1 text-xs font-semibold text-white hover:bg-purple-700 transition-colors"
+                                          >
+                                            Save {pair.left.category}
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setCrossCategoryRewordDrafts((prev) => {
+                                                const next = { ...prev };
+                                                delete next[leftKey];
+                                                return next;
+                                              });
+                                              setCrossCategoryRewordErrorByKey((prev) => ({ ...prev, [leftKey]: "" }));
+                                            }}
+                                            className="ml-auto rounded-md border border-gray-200 bg-white px-3 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
+                                          >
+                                            Exit
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    <button
+                                      type="button"
+                                      onClick={() => void generateCrossCategoryReword(pair, "left")}
+                                      disabled={crossCategoryRewordLoadingKey === leftKey}
+                                      className="mt-3 w-full rounded-md border border-purple-300 bg-white px-3 py-1 text-xs font-semibold text-purple-700 hover:bg-purple-100 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                                    >
+                                      {crossCategoryRewordLoadingKey === leftKey ? "Rewording..." : `Reword for ${pair.left.category}`}
+                                    </button>
+                                  </div>
+                                  <div className="rounded-md border border-purple-100 bg-white p-2">
+                                    <p className="mb-1 text-xs font-semibold text-gray-700">{pair.right.category}</p>
+                                    <p className="text-xs text-gray-600">&ldquo;{pair.right.text}&rdquo;</p>
+
+                                    {(rightDraft || crossCategoryRewordErrorByKey[rightKey]) && (
+                                      <div className="mt-3 rounded-md border border-purple-200 bg-white p-2">
+                                        <p className="mb-1 text-xs font-semibold text-purple-700">Draft for {pair.right.category}</p>
+                                        <textarea
+                                          className="w-full resize-none rounded-md border border-purple-200 bg-white px-2.5 py-2 text-xs italic text-gray-800 focus:outline-none focus:ring-1 focus:ring-purple-300"
+                                          rows={3}
+                                          value={rightDraft}
+                                          onChange={(e) =>
+                                            setCrossCategoryRewordDrafts((prev) => ({ ...prev, [rightKey]: e.target.value }))
+                                          }
+                                        />
+                                        {crossCategoryRewordErrorByKey[rightKey] && (
+                                          <p className="mt-1 text-xs text-red-600">{crossCategoryRewordErrorByKey[rightKey]}</p>
+                                        )}
+                                        <div className="mt-2 flex gap-2">
+                                          <button
+                                            type="button"
+                                            onClick={() => commitCrossCategoryReword(pair, "right")}
+                                            className="rounded-md bg-purple-600 px-3 py-1 text-xs font-semibold text-white hover:bg-purple-700 transition-colors"
+                                          >
+                                            Save {pair.right.category}
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setCrossCategoryRewordDrafts((prev) => {
+                                                const next = { ...prev };
+                                                delete next[rightKey];
+                                                return next;
+                                              });
+                                              setCrossCategoryRewordErrorByKey((prev) => ({ ...prev, [rightKey]: "" }));
+                                            }}
+                                            className="ml-auto rounded-md border border-gray-200 bg-white px-3 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
+                                          >
+                                            Exit
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    <button
+                                      type="button"
+                                      onClick={() => void generateCrossCategoryReword(pair, "right")}
+                                      disabled={crossCategoryRewordLoadingKey === rightKey}
+                                      className="mt-3 w-full rounded-md border border-purple-300 bg-white px-3 py-1 text-xs font-semibold text-purple-700 hover:bg-purple-100 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                                    >
+                                      {crossCategoryRewordLoadingKey === rightKey ? "Rewording..." : `Reword for ${pair.right.category}`}
+                                    </button>
+                                  </div>
+                                </div>
+                              </li>
+                            );
+                          })}
+                      </ul>
+                    </div>
+                  )}
+
+                  {eligibleRepetitionGroups.filter((group) => !dismissedRepetitionGroups.has(getRepetitionGroupKey(group))).length === 0 ? (
+                    visibleCrossCategorySimilarityCount === 0 ? (
+                      <p className="text-xs text-purple-600">All repetition suggestions dismissed.</p>
+                    ) : null
                   ) : (
                     <ul className="space-y-3">
-                      {insights.repetitionGroups
+                      {eligibleRepetitionGroups
                         .filter((group) => !dismissedRepetitionGroups.has(getRepetitionGroupKey(group)))
                         .map((group, i) => {
                           const groupKey = getRepetitionGroupKey(group);
@@ -796,7 +1486,7 @@ export default function DashboardPanel({
                                 title="Dismiss suggestion"
                                 aria-label="Dismiss suggestion"
                               >
-                                [X]
+                                Exit
                               </button>
                             </div>
                           </div>
@@ -871,30 +1561,48 @@ export default function DashboardPanel({
                 </div>
               )}
             </div>
+            )}
 
             {/* Before Marks Close */}
+            {visiblePreCloseCount > 0 && (
             <div className="rounded-xl border border-green-200 bg-green-50 overflow-hidden">
-              <button
-                type="button"
-                onClick={() => toggleInsightSection("preClose")}
-                className="flex w-full items-center justify-between px-4 py-3 text-left"
-              >
-                <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 px-4 py-3">
+                <button
+                  type="button"
+                  onClick={() => toggleInsightSection("preClose")}
+                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                >
                   <svg className="h-4 w-4 text-green-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
                   <h4 className="text-sm font-semibold text-green-700">Before Marks Close</h4>
-                </div>
-                <svg
-                  className={`h-4 w-4 text-green-400 transition-transform duration-200 ${openInsightSections.preClose ? "rotate-180" : ""}`}
-                  fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDismissedPreCloseActions(true)}
+                  disabled={visiblePreCloseCount === 0}
+                  className="shrink-0 rounded-md border border-green-300 bg-white px-2.5 py-1 text-xs font-semibold text-green-800 hover:bg-green-100 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
+                  Dismiss All
+                </button>
+                <button
+                  type="button"
+                  onClick={() => toggleInsightSection("preClose")}
+                  className="shrink-0"
+                  aria-label="Toggle before marks close"
+                  title="Toggle"
+                >
+                  <svg
+                    className={`h-4 w-4 text-green-400 transition-transform duration-200 ${openInsightSections.preClose ? "rotate-180" : ""}`}
+                    fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+              </div>
               {openInsightSections.preClose && (
                 <div className="px-4 pb-4">
-                  {insights.preCloseActions.length === 0 ? (
+                  {dismissedPreCloseActions || insights.preCloseActions.length === 0 ? (
                     <p className="text-xs text-green-600">No additional pre-close actions identified.</p>
                   ) : (
                     <ul className="space-y-3">
@@ -925,143 +1633,152 @@ export default function DashboardPanel({
                 </div>
               )}
             </div>
+            )}
 
           </div>
         ) : null}
+        </div>
       </div>
 
       <div className="bg-white p-6 rounded-xl shadow-md">
 
-      <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {Object.entries(primaryCategoryGroups).map(([primaryCategory, subCategories]) => {
-          const groupMinScore = subCategories.length * MIN_MARK;
-          const groupMaxScore = subCategories.length * MAX_MARK;
-          const groupRecommendedScore = subCategories.reduce((sum, cat) => {
-            const mark = getBarHeight(counts[cat]);
-            const evaluation = evaluations[cat];
-            const recommendedScore =
-              counts[cat] > 0 && evaluation
-                ? Math.min(MAX_MARK, Math.max(MIN_MARK, Math.round((mark + evaluation.compiledScore) / 2)))
-                : mark;
-
-            return sum + recommendedScore;
-          }, 0);
-
-          return (
-          <div key={primaryCategory} className="h-fit rounded-xl border border-gray-200 bg-gray-50">
-            <button
-              onClick={() => toggleGroup(primaryCategory)}
-              className="flex w-full items-center justify-between px-4 py-3 text-left"
-            >
-              <h3 className="text-base font-semibold text-gray-700">{primaryCategory}</h3>
-              <div className="flex items-center gap-2">
-                <p className="text-sm font-medium text-gray-500">
-                  {groupRecommendedScore}/{groupMaxScore}
-                </p>
-                <svg
-                  className={`h-4 w-4 text-gray-500 transition-transform duration-200 ${
-                    openGroups[primaryCategory] ? "rotate-180" : ""
-                  }`}
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth={2}
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                </svg>
-              </div>
-            </button>
-            {openGroups[primaryCategory] && (
-            <div className="space-y-3 px-4 pb-4">
-              {subCategories.map((cat) => {
-                const count = counts[cat];
-                const mark = getBarHeight(count);
-                const barWidth = `${getBarWidth(mark)}%`;
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {([
+          ["Military", "Performance"],
+          ["Professional Qualities", "Leadership"],
+        ] as const).map((columnGroups, columnIndex) => (
+          <div key={columnIndex} className="space-y-4 xl:contents">
+            {columnGroups.map((primaryCategory) => {
+              const subCategories = primaryCategoryGroups[primaryCategory] || [];
+              const groupMaxScore = subCategories.length * MAX_MARK;
+              const groupRecommendedScore = subCategories.reduce((sum, cat) => {
+                const mark = getBarHeight(counts[cat]);
                 const evaluation = evaluations[cat];
                 const recommendedScore =
-                  count > 0 && evaluation
+                  counts[cat] > 0 && evaluation
                     ? Math.min(MAX_MARK, Math.max(MIN_MARK, Math.round((mark + evaluation.compiledScore) / 2)))
                     : mark;
 
-                const scoreColors = {
-                  bar:    recommendedScore === 4 ? "bg-red-500"        : recommendedScore === 5 ? "bg-yellow-400"    : recommendedScore === 6 ? "bg-green-400"     : "bg-green-700",
-                  barBg:  recommendedScore === 4 ? "bg-red-100"        : recommendedScore === 5 ? "bg-yellow-100"   : recommendedScore === 6 ? "bg-green-100"    : "bg-green-200",
-                  box:    recommendedScore === 4 ? "border-red-300 bg-red-50"    : recommendedScore === 5 ? "border-yellow-300 bg-yellow-50" : recommendedScore === 6 ? "border-green-300 bg-green-50"  : "border-green-600 bg-green-100",
-                  label:  recommendedScore === 4 ? "text-red-500"      : recommendedScore === 5 ? "text-yellow-600"  : recommendedScore === 6 ? "text-green-600"   : "text-green-800",
-                  value:  recommendedScore === 4 ? "text-red-700"      : recommendedScore === 5 ? "text-yellow-700"  : recommendedScore === 6 ? "text-green-700"   : "text-green-900",
-                };
+                return sum + recommendedScore;
+              }, 0);
 
-                return (
-                  <div key={cat} className="w-full rounded-lg border border-white bg-white p-4 shadow-sm">
-                    <div className="mb-1 text-center">
-                      <p className="text-sm font-semibold text-gray-700">{cat}</p>
-                    </div>
-                    <div className={`h-4 w-full rounded ${scoreColors.barBg}`}>
-                      <div
-                        className={`h-4 rounded ${scoreColors.bar}`}
-                        style={{ width: barWidth }}
-                      ></div>
-                    </div>
-
-                    <div className="mt-2 grid grid-cols-1 gap-2">
-                      {/* Overall recommended score */}
-                      <div className={`rounded-lg border p-2 text-center sm:p-2.5 ${scoreColors.box}`}>
-                        <p className={`text-xs font-semibold leading-tight ${scoreColors.label}`}>Recommended</p>
-                        <p className={`mt-1 text-lg font-bold ${scoreColors.value}`}>
-                          {count === 0 || (!isEvaluating && !evaluation)
-                            ? `${mark}/7`
-                            : isEvaluating && !evaluation
-                              ? "…"
-                              : `${recommendedScore}/7`}
-                        </p>
-                      </div>
-
-                      {/* AI Quality Score */}
-                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-center sm:p-2.5">
-                        <p className="text-xs font-semibold leading-tight text-slate-500">AI Quality</p>
-                        <p className="mt-1 text-lg font-bold text-blue-600">
-                          {count === 0
-                            ? "N/A"
-                            : isEvaluating && !evaluation
-                              ? "…"
-                              : evaluation
-                                ? `${evaluation.compiledScore}/7`
-                                : "—"}
-                        </p>
-                      </div>
-
-                      {/* Bullet-based marking score */}
-                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-center sm:p-2.5">
-                        <p className="text-xs font-semibold leading-tight text-slate-500">Bullet Score</p>
-                        <p className="mt-1 text-lg font-bold text-slate-700">{mark}/7</p>
-                      </div>
-                    </div>
-
-                    {/* AI explanation */}
-                    {count === 0 ? (
-                      <p className="mt-2 text-sm text-slate-500">
-                        Add bullets to this category to generate an AI quality score.
+              return (
+                <div key={primaryCategory} className="rounded-xl border border-gray-200 bg-gray-50">
+                  <button
+                    onClick={() => toggleGroup(primaryCategory)}
+                    className="flex w-full items-center justify-between px-4 py-3 text-left"
+                  >
+                    <h3 className="text-base font-semibold text-gray-700">{primaryCategory}</h3>
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-medium text-gray-500">
+                        {groupRecommendedScore}/{groupMaxScore}
                       </p>
-                    ) : evaluation ? (
-                      <p className="mt-2 text-sm text-slate-600 break-normal">
-                        {evaluation.aiExplanation.replace(
-                          /^Recommended\s+\d+:/i,
-                          `Recommended ${recommendedScore}:`
-                        )}
-                      </p>
-                    ) : !isEvaluating ? (
-                      <p className="mt-2 text-sm text-slate-500">
-                        AI quality score unavailable for this category right now.
-                      </p>
-                    ) : null}
+                      <svg
+                        className={`h-4 w-4 text-gray-500 transition-transform duration-200 ${
+                          openGroups[primaryCategory] ? "rotate-180" : ""
+                        }`}
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
+                  </button>
+                  {openGroups[primaryCategory] && (
+                  <div className="space-y-3 px-4 pb-4">
+                    {subCategories.map((cat) => {
+                      const count = counts[cat];
+                      const mark = getBarHeight(count);
+                      const barWidth = `${getBarWidth(mark)}%`;
+                      const evaluation = evaluations[cat];
+                      const recommendedScore =
+                        count > 0 && evaluation
+                          ? Math.min(MAX_MARK, Math.max(MIN_MARK, Math.round((mark + evaluation.compiledScore) / 2)))
+                          : mark;
+
+                      const scoreColors = {
+                        bar:    recommendedScore === 4 ? "bg-red-500"        : recommendedScore === 5 ? "bg-yellow-400"    : recommendedScore === 6 ? "bg-green-400"     : "bg-green-700",
+                        barBg:  recommendedScore === 4 ? "bg-red-100"        : recommendedScore === 5 ? "bg-yellow-100"   : recommendedScore === 6 ? "bg-green-100"    : "bg-green-200",
+                        box:    recommendedScore === 4 ? "border-red-300 bg-red-50"    : recommendedScore === 5 ? "border-yellow-300 bg-yellow-50" : recommendedScore === 6 ? "border-green-300 bg-green-50"  : "border-green-600 bg-green-100",
+                        label:  recommendedScore === 4 ? "text-red-500"      : recommendedScore === 5 ? "text-yellow-600"  : recommendedScore === 6 ? "text-green-600"   : "text-green-800",
+                        value:  recommendedScore === 4 ? "text-red-700"      : recommendedScore === 5 ? "text-yellow-700"  : recommendedScore === 6 ? "text-green-700"   : "text-green-900",
+                      };
+
+                      return (
+                        <div key={cat} className="w-full rounded-lg border border-white bg-white p-4 shadow-sm">
+                          <div className="mb-1 text-center">
+                            <p className="text-sm font-semibold text-gray-700">{cat}</p>
+                          </div>
+                          <div className={`h-4 w-full rounded ${scoreColors.barBg}`}>
+                            <div
+                              className={`h-4 rounded ${scoreColors.bar}`}
+                              style={{ width: barWidth }}
+                            ></div>
+                          </div>
+
+                          <div className="mt-2 grid grid-cols-1 gap-2">
+                            {/* Overall recommended score */}
+                            <div className={`rounded-lg border p-2 text-center sm:p-2.5 ${scoreColors.box}`}>
+                              <p className={`text-xs font-semibold leading-tight ${scoreColors.label}`}>Recommended</p>
+                              <p className={`mt-1 text-lg font-bold ${scoreColors.value}`}>
+                                {count === 0 || (!isEvaluating && !evaluation)
+                                  ? `${mark}/7`
+                                  : isEvaluating && !evaluation
+                                    ? "…"
+                                    : `${recommendedScore}/7`}
+                              </p>
+                            </div>
+
+                            {/* AI Quality Score */}
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-center sm:p-2.5">
+                              <p className="text-xs font-semibold leading-tight text-slate-500">AI Quality</p>
+                              <p className="mt-1 text-lg font-bold text-blue-600">
+                                {count === 0
+                                  ? "N/A"
+                                  : isEvaluating && !evaluation
+                                    ? "…"
+                                    : evaluation
+                                      ? `${evaluation.compiledScore}/7`
+                                      : "—"}
+                              </p>
+                            </div>
+
+                            {/* Bullet-based marking score */}
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-center sm:p-2.5">
+                              <p className="text-xs font-semibold leading-tight text-slate-500">Bullet Score</p>
+                              <p className="mt-1 text-lg font-bold text-slate-700">{mark}/7</p>
+                            </div>
+                          </div>
+
+                          {/* AI explanation */}
+                          {count === 0 ? (
+                            <p className="mt-2 text-sm text-slate-500">
+                              Add bullets to this category to generate an AI quality score.
+                            </p>
+                          ) : evaluation ? (
+                            <p className="mt-2 text-sm text-slate-600 break-normal">
+                              {evaluation.aiExplanation.replace(
+                                /^Recommended\s+\d+:/i,
+                                `Recommended ${recommendedScore}:`
+                              )}
+                            </p>
+                          ) : !isEvaluating ? (
+                            <p className="mt-2 text-sm text-slate-500">
+                              AI quality score unavailable for this category right now.
+                            </p>
+                          ) : null}
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
-            </div>
-            )}
+                  )}
+                </div>
+              );
+            })}
           </div>
-        );
-        })}
+        ))}
       </div>
 
         <p className="mt-4 text-base text-gray-600">

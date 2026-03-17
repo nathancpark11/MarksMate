@@ -1,5 +1,6 @@
 import { createUser, findUserByUsername, sanitizeUsername } from "@/lib/userStore";
 import { hashPassword, setSessionCookie } from "@/lib/auth";
+import { logApiError } from "@/lib/safeLogging";
 
 export async function POST(req: Request) {
   try {
@@ -45,8 +46,8 @@ export async function POST(req: Request) {
         needsTutorial: !user.hasCompletedTutorial,
       },
     });
-  } catch (error) {
-    console.error("signup error", error);
+  } catch (error: unknown) {
+    logApiError("signup error", error);
     return Response.json({ error: "Failed to create account." }, { status: 500 });
   }
 }

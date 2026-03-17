@@ -50,7 +50,7 @@ const TUTORIAL_CONTENT: Record<TutorialStep, TutorialContent> = {
       { type: "paragraph", text: "The Generator turns your daily accomplishments into official marks." },
       {
         type: "paragraph",
-        text: "Users can pull individual Daily Log entries into the Action field. If the Impact toggle is enabled, AI will automatically generate an impact statement based on the action.",
+        text: "Users can pull individual Daily Log entries into the Action field. If Impact is left blank, AI can suggest one during bullet generation.",
       },
       { type: "paragraph", text: "At the bottom are two options." },
       {

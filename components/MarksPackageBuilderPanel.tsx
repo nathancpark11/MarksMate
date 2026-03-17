@@ -22,6 +22,7 @@ type SelectedSections = {
 type MarksPackageBuilderPanelProps = {
   history: HistoryItem[];
   suggestions: Record<string, { category: string; reason: string }>;
+  aiEnabled: boolean;
   rankLevel: string;
   rating: string;
   memberName: string;
@@ -32,12 +33,7 @@ type MarksPackageBuilderPanelProps = {
   setPeriodStart: (v: string) => void;
   periodEnd: string;
   setPeriodEnd: (v: string) => void;
-  manualMarks: Record<string, number>;
-  setManualMarks: (v: Record<string, number>) => void;
 };
-
-const MIN_MARK = 4;
-const MAX_MARK = 7;
 
 const CATEGORY_GROUPS: Record<string, string[]> = {
   Military: ["Military Bearing", "Customs, Courtesies and Traditions"],
@@ -62,21 +58,6 @@ function normalizeCategoryName(category: string) {
   return category.trim().toLowerCase() === "customs, courtesies, and traditions"
     ? "Customs, Courtesies and Traditions"
     : category.trim();
-}
-
-function getAutoMark(count: number): number {
-  if (count === 0) return MIN_MARK;
-  if (count === 1) return MIN_MARK;
-  if (count === 2) return 5;
-  if (count === 3) return 6;
-  return MAX_MARK;
-}
-
-function markColor(mark: number) {
-  if (mark <= 4) return "bg-gray-200 text-gray-700";
-  if (mark === 5) return "bg-blue-100 text-blue-800";
-  if (mark === 6) return "bg-green-100 text-green-800";
-  return "bg-yellow-100 text-yellow-800";
 }
 
 function getRateCode(rating: string) {
@@ -126,6 +107,7 @@ function getLastName(memberName: string) {
 export default function MarksPackageBuilderPanel({
   history,
   suggestions,
+  aiEnabled,
   rankLevel,
   rating,
   memberName,
@@ -136,13 +118,10 @@ export default function MarksPackageBuilderPanel({
   setPeriodStart,
   periodEnd,
   setPeriodEnd,
-  manualMarks,
-  setManualMarks,
 }: MarksPackageBuilderPanelProps) {
   const [packageResult, setPackageResult] = useState<PackageResult | null>(null);
   const [packageLoading, setPackageLoading] = useState(false);
   const [packageError, setPackageError] = useState("");
-  const [generatedTitledMemberName, setGeneratedTitledMemberName] = useState("");
   const [selectedSections, setSelectedSections] = useState<SelectedSections>({
     categorySummaries: true,
     topAccomplishments: true,
@@ -188,24 +167,6 @@ export default function MarksPackageBuilderPanel({
     if (matched) counts[matched]++;
   });
 
-  const getMark = (cat: string): number => {
-    if (manualMarks[cat] !== undefined) return manualMarks[cat];
-    return getAutoMark(counts[cat]);
-  };
-
-  const setMark = (cat: string, value: number) => {
-    setManualMarks({ ...manualMarks, [cat]: Math.max(MIN_MARK, Math.min(MAX_MARK, value)) });
-  };
-
-  const resetMark = (cat: string) => {
-    const updated = { ...manualMarks };
-    delete updated[cat];
-    setManualMarks(updated);
-  };
-
-  const totalMarks = ALL_CATEGORIES.reduce((sum, cat) => sum + getMark(cat), 0);
-  const maxTotal = ALL_CATEGORIES.length * MAX_MARK;
-
   // ── Chronological log (client-side, no AI needed) ────────
   const chronologicalLog: { monthLabel: string; sortKey: string; bullets: string[] }[] = (() => {
     const map: Record<string, { sortKey: string; label: string; bullets: string[] }> = {};
@@ -223,6 +184,11 @@ export default function MarksPackageBuilderPanel({
 
   // ── Build package ────────────────────────────────────────
   const handleBuildPackage = async () => {
+    if (!aiEnabled) {
+      setPackageError("Marks Package AI is disabled in Settings.");
+      return;
+    }
+
     if (history.length === 0) {
       setPackageError("No bullets in history. Generate and save bullets first.");
       return;
@@ -234,7 +200,7 @@ export default function MarksPackageBuilderPanel({
     setPackageLoading(true);
     setPackageError("");
     setPackageResult(null);
-    setGeneratedTitledMemberName("");
+
     setOpenDocumentSections({
       categorySummaries: false,
       topAccomplishments: false,
@@ -278,7 +244,7 @@ export default function MarksPackageBuilderPanel({
         return;
       }
       setPackageResult(data as PackageResult);
-      setGeneratedTitledMemberName(requestMemberName);
+
     } catch {
       setPackageError("Network error. Please try again.");
     } finally {
@@ -423,7 +389,7 @@ export default function MarksPackageBuilderPanel({
         return lines.map((line) => ({ line, bold: Boolean(entry.bold), indent }));
       });
 
-      let boxHeight =
+      const boxHeight =
         pad +
         wrappedEntries.length * boxLineHeight +
         pad;
@@ -779,11 +745,14 @@ export default function MarksPackageBuilderPanel({
             </div>
             <button
               onClick={handleBuildPackage}
-              disabled={packageLoading || history.length === 0}
+              disabled={packageLoading || history.length === 0 || !aiEnabled}
               className="px-6 py-3 rounded-lg bg-blue-600 text-white font-semibold text-base hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               {packageLoading ? "Building Package…" : "Build Marks Package"}
             </button>
+            {!aiEnabled && (
+              <p className="text-xs text-amber-700">Marks Package AI is disabled in Settings.</p>
+            )}
             {history.length === 0 && (
               <p className="text-xs text-gray-400">No bullets yet — generate and save bullets first.</p>
             )}

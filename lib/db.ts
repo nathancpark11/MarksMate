@@ -44,6 +44,11 @@ export async function ensureSchema(): Promise<void> {
     )
   `;
 
+  // Additive-only migrations for existing deployments.
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TEXT`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_status TEXT NOT NULL DEFAULT 'free'`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
+
   await sql`
     CREATE TABLE IF NOT EXISTS user_data (
       user_id    TEXT NOT NULL,

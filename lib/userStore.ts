@@ -8,6 +8,9 @@ export type UserRecord = {
   passwordHash: string;
   createdAt: string;
   hasCompletedTutorial: boolean;
+  lastLoginAt: string | null;
+  planStatus: string;
+  updatedAt: string | null;
 };
 
 export function sanitizeUsername(username: string) {
@@ -19,6 +22,10 @@ export function toUsernameLower(username: string) {
 }
 
 function rowToUser(row: Record<string, unknown>): UserRecord {
+  const rawLastLoginAt = row.last_login_at;
+  const rawPlanStatus = row.plan_status;
+  const rawUpdatedAt = row.updated_at;
+
   return {
     id: row.id as string,
     username: row.username as string,
@@ -26,6 +33,9 @@ function rowToUser(row: Record<string, unknown>): UserRecord {
     passwordHash: row.password_hash as string,
     createdAt: row.created_at as string,
     hasCompletedTutorial: row.has_completed_tutorial as boolean,
+    lastLoginAt: typeof rawLastLoginAt === "string" ? rawLastLoginAt : null,
+    planStatus: typeof rawPlanStatus === "string" && rawPlanStatus.trim().length > 0 ? rawPlanStatus : "free",
+    updatedAt: typeof rawUpdatedAt === "string" ? rawUpdatedAt : null,
   };
 }
 
@@ -63,7 +73,17 @@ export async function createUser(input: {
     VALUES (${id}, ${username}, ${usernameLower}, ${input.passwordHash}, ${createdAt}, FALSE)
   `;
 
-  return { id, username, usernameLower, passwordHash: input.passwordHash, createdAt, hasCompletedTutorial: false };
+  return {
+    id,
+    username,
+    usernameLower,
+    passwordHash: input.passwordHash,
+    createdAt,
+    hasCompletedTutorial: false,
+    lastLoginAt: null,
+    planStatus: "free",
+    updatedAt: createdAt,
+  };
 }
 
 export async function markTutorialCompleted(id: string): Promise<UserRecord | null> {
@@ -76,4 +96,14 @@ export async function deleteUserById(id: string): Promise<void> {
   await ensureSchema();
   // CASCADE in user_data FK deletes all user data rows automatically.
   await sql`DELETE FROM users WHERE id = ${id}`;
+}
+
+export async function updateUserLastLoginById(id: string): Promise<void> {
+  await ensureSchema();
+  const lastLoginAt = new Date().toISOString();
+  await sql`
+    UPDATE users
+    SET last_login_at = ${lastLoginAt}, updated_at = NOW()
+    WHERE id = ${id}
+  `;
 }

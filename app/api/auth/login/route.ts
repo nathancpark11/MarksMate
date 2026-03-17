@@ -1,5 +1,10 @@
-import { findUserByUsername, sanitizeUsername } from "@/lib/userStore";
+import {
+  findUserByUsername,
+  sanitizeUsername,
+  updateUserLastLoginById,
+} from "@/lib/userStore";
 import { setSessionCookie, verifyPassword } from "@/lib/auth";
+import { logApiError } from "@/lib/safeLogging";
 
 export async function POST(req: Request) {
   try {
@@ -34,6 +39,14 @@ export async function POST(req: Request) {
       );
     }
 
+    let lastLoginAt: string | null = null;
+    try {
+      lastLoginAt = new Date().toISOString();
+      await updateUserLastLoginById(user.id);
+    } catch {
+      // Best effort: login should still succeed if metadata update fails.
+    }
+
     await setSessionCookie({ id: user.id, username: user.username });
 
     return Response.json({
@@ -41,10 +54,11 @@ export async function POST(req: Request) {
         id: user.id,
         username: user.username,
         needsTutorial: !user.hasCompletedTutorial,
+        lastLoginAt,
       },
     });
-  } catch (error) {
-    console.error("login error", error);
+  } catch (error: unknown) {
+    logApiError("login error", error);
     return Response.json({ error: "Failed to log in." }, { status: 500 });
   }
 }

@@ -1,5 +1,9 @@
 import OpenAI from "openai";
+import { parseLimitedJsonBody } from "@/lib/aiRequestGuards";
 import { requireSessionUser } from "@/lib/auth";
+import { validateCombinedAiInputs } from "@/lib/promptSpamGuard";
+import { enforceRateLimits } from "@/lib/rateLimit";
+import { getRequestId, logApiError, logApiRequestMetadata } from "@/lib/safeLogging";
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY ?? "missing-openai-api-key",
@@ -16,10 +20,26 @@ function stripCodeFences(text: string) {
 }
 
 export async function POST(req: Request) {
+  const routeName = "/api/recommend-bullet-split";
+  const requestId = getRequestId(req);
+  let inputLength = 0;
+
   try {
     const { response: authResponse } = await requireSessionUser();
     if (authResponse) {
       return authResponse;
+    }
+
+    const rateLimitResponse = enforceRateLimits(req, [
+      {
+        key: "recommend-bullet-split-per-hour",
+        maxRequests: 20,
+        windowMs: 60 * 60 * 1000,
+        errorMessage: "Hourly rate limit reached for split recommendations.",
+      },
+    ]);
+    if (rateLimitResponse) {
+      return rateLimitResponse;
     }
 
     if (!process.env.OPENAI_API_KEY) {
@@ -29,10 +49,28 @@ export async function POST(req: Request) {
       );
     }
 
-    const { accomplishment, bullet } = await req.json();
+    const parsedBody = await parseLimitedJsonBody<{
+      accomplishment?: unknown;
+      bullet?: unknown;
+    }>(req);
+    inputLength = parsedBody.bodyBytes;
+    if (!parsedBody.ok) {
+      logApiRequestMetadata({ requestId, routeName, inputLength, success: false, status: parsedBody.response.status });
+      return parsedBody.response;
+    }
 
-    if (!accomplishment || !accomplishment.trim()) {
+    const { accomplishment, bullet } = parsedBody.data;
+
+    if (typeof accomplishment !== "string" || !accomplishment.trim()) {
       return Response.json({ error: "Missing accomplishment to review." }, { status: 400 });
+    }
+
+    const promptSpamError = validateCombinedAiInputs([
+      typeof accomplishment === "string" ? accomplishment : "",
+      typeof bullet === "string" ? bullet : "",
+    ]);
+    if (promptSpamError) {
+      return Response.json({ error: promptSpamError }, { status: 400 });
     }
 
     const prompt = `You review Coast Guard evaluation input and decide whether it should be split into more than one bullet.
@@ -57,7 +95,7 @@ Accomplishment:
 ${accomplishment}
 
 Generated bullet:
-${bullet || "Not provided"}`;
+${typeof bullet === "string" ? bullet : "Not provided"}`;
 
     const completion = await client.chat.completions.create({
       model: "gpt-3.5-turbo",
@@ -75,6 +113,7 @@ ${bullet || "Not provided"}`;
 
     try {
       const parsed = JSON.parse(stripCodeFences(rawOutput)) as Partial<SplitRecommendation>;
+      logApiRequestMetadata({ requestId, routeName, inputLength, success: true, status: 200 });
       return Response.json({
         recommendation: {
           shouldSplit: Boolean(parsed.shouldSplit),
@@ -88,6 +127,7 @@ ${bullet || "Not provided"}`;
         },
       });
     } catch {
+      logApiRequestMetadata({ requestId, routeName, inputLength, success: true, status: 200 });
       return Response.json({
         recommendation: {
           shouldSplit: false,
@@ -97,9 +137,10 @@ ${bullet || "Not provided"}`;
       });
     }
   } catch (error: unknown) {
-    console.error("Recommend bullet split error:", error);
+    logApiError("Recommend bullet split error", error, { requestId, routeName, inputLength, success: false });
+    logApiRequestMetadata({ requestId, routeName, inputLength, success: false, status: 500 });
     return Response.json(
-      { error: error instanceof Error ? error.message : "Split recommendation request failed." },
+      { error: "Unable to review split recommendation right now. Please try again." },
       { status: 500 }
     );
   }

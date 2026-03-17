@@ -13,6 +13,11 @@ import MarksPackageBuilderPanel from "../components/MarksPackageBuilderPanel";
 import SettingsPanel from "../components/SettingsPanel";
 import LogPanel from "../components/LogPanel";
 import TutorialModal from "../components/TutorialModal";
+import {
+  GENERATE_REQUEST_MAX_BYTES,
+  getUtf8ByteLength,
+  validateActionAndImpact,
+} from "@/lib/generationValidation";
 
 export default function Home() {
   type TutorialStep =
@@ -49,20 +54,43 @@ export default function Home() {
     action: string;
     text: string;
     category: string;
+    title?: string;
   };
   type AltCategorySuggestion = {
     categories: Array<{ name: string; reason: string }>;
     originalAction: string;
     primaryCategory: string;
+    sourceTitle?: string;
   };
-  const [bullet, setBullet] = useState<{text: string; category: string} | null>(null);
-  type HistoryItem = { text: string; date: string; category?: string; markingPeriod?: string };
-  type LogEntry = { text: string; date: string; dates?: string[]; group?: string };
+  const [bullet, setBullet] = useState<{text: string; category: string; title?: string} | null>(null);
+  type HistoryItem = {
+    text: string;
+    date: string;
+    category?: string;
+    markingPeriod?: string;
+    title?: string;
+    originalAction?: string;
+    sourceLogEntryId?: string;
+    sourceLogEntryPreviousGroup?: string;
+    sourceGroupedLogEntryIds?: string[];
+    sourceGroupedLogEntryGroupName?: string;
+  };
+  type LogEntry = {
+    id?: string;
+    text: string;
+    date: string;
+    dates?: string[];
+    group?: string;
+    committed?: boolean;
+  };
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const [pendingLogPull, setPendingLogPull] = useState<number | null>(null);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [pulledLogDate, setPulledLogDate] = useState<string | null>(null);
+  const [pulledLogIndex, setPulledLogIndex] = useState<number | null>(null);
+  const [pulledLogEntryId, setPulledLogEntryId] = useState<string | null>(null);
+  const [pulledGroupedEntryIndexes, setPulledGroupedEntryIndexes] = useState<number[]>([]);
   const [wasCategoryUserSelected, setWasCategoryUserSelected] = useState(false);
   const [splitBulletRecommendation, setSplitBulletRecommendation] = useState<SplitBulletRecommendation | null>(null);
   const [splitBulletRecommendationLoading, setSplitBulletRecommendationLoading] = useState(false);
@@ -70,9 +98,64 @@ export default function Home() {
   const [splitBulletDraftsLoading, setSplitBulletDraftsLoading] = useState(false);
   const [splitBulletDraftRepromptingId, setSplitBulletDraftRepromptingId] = useState<string | null>(null);
   const [altCategorySuggestion, setAltCategorySuggestion] = useState<AltCategorySuggestion | null>(null);
-  const [altCategoryDrafts, setAltCategoryDrafts] = useState<Record<string, { text: string; generating: boolean }>>({});
+  const [altCategoryDrafts, setAltCategoryDrafts] = useState<Record<string, { text: string; title?: string; generating: boolean }>>({});
   const [suggestions, setSuggestions] = useState<Record<string, { category: string; reason: string }>>({});
-  const [summaries, setSummaries] = useState<Record<string, string>>({});
+
+  const createLogEntryId = () =>
+    `log-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+  const duplicateOfficialMarkMessage =
+    "This action already has an official mark. If you'd like to edit it, go to the Official Marks tab and use Reprompt.";
+
+  const normalizeComparableText = (value: string) =>
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/^[-*•\s]+/, "")
+      .replace(/[“”"']/g, "")
+      .replace(/[.;:,!?]+$/, "")
+      .replace(/\s+/g, " ");
+
+  const findExistingOfficialMarkForAction = (actionText: string) => {
+    if (editingIndex !== null) {
+      return null;
+    }
+
+    const normalizedAction = normalizeComparableText(actionText);
+    if (!normalizedAction) {
+      return null;
+    }
+
+    const directMatch = history.find(
+      (item) => normalizeComparableText(item.originalAction ?? "") === normalizedAction
+    );
+    if (directMatch) {
+      return directMatch;
+    }
+
+    const matchingCommittedLogEntryIds = new Set(
+      logEntries
+        .filter(
+          (entry) =>
+            entry.committed && normalizeComparableText(entry.text) === normalizedAction
+        )
+        .map((entry) => entry.id)
+        .filter((entryId): entryId is string => typeof entryId === "string" && entryId.trim().length > 0)
+    );
+
+    if (matchingCommittedLogEntryIds.size > 0) {
+      const sourcedMatch = history.find(
+        (item) =>
+          typeof item.sourceLogEntryId === "string" &&
+          matchingCommittedLogEntryIds.has(item.sourceLogEntryId)
+      );
+      if (sourcedMatch) {
+        return sourcedMatch;
+      }
+    }
+
+    return history.find((item) => normalizeComparableText(item.text) === normalizedAction) ?? null;
+  };
 
   // ======================================================
   // MARKS PACKAGE BUILDER STATE
@@ -81,7 +164,6 @@ export default function Home() {
   const [mpUnitName, setMpUnitName] = useState("");
   const [mpPeriodStart, setMpPeriodStart] = useState("");
   const [mpPeriodEnd, setMpPeriodEnd] = useState("");
-  const [mpManualMarks, setMpManualMarks] = useState<Record<string, number>>({});
 
   // ======================================================
   // SETTINGS STATE
@@ -89,6 +171,10 @@ export default function Home() {
   const [userName, setUserName] = useState("");
   const [userUnit, setUserUnit] = useState("");
   const [bulletStyle, setBulletStyle] = useState("Standard");
+  const [aiGeneratorEnabled, setAiGeneratorEnabled] = useState(true);
+  const [aiLogImportEnabled, setAiLogImportEnabled] = useState(true);
+  const [aiDashboardInsightsEnabled, setAiDashboardInsightsEnabled] = useState(true);
+  const [aiMarksPackageEnabled, setAiMarksPackageEnabled] = useState(true);
   const [settingsMessage, setSettingsMessage] = useState("");
 
   // ======================================================
@@ -97,6 +183,7 @@ export default function Home() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("log");
+  const [dashboardRecommendationCount, setDashboardRecommendationCount] = useState(0);
   const [showNoticeModal, setShowNoticeModal] = useState(false);
   const [showTutorialModal, setShowTutorialModal] = useState(false);
   const [tutorialStep, setTutorialStep] = useState<TutorialStep>("log");
@@ -105,7 +192,12 @@ export default function Home() {
   // ======================================================
   // AUTH STATE
   // ======================================================
-  type SessionUser = { id: string; username: string; needsTutorial?: boolean };
+  type SessionUser = {
+    id: string;
+    username: string;
+    needsTutorial?: boolean;
+    lastLoginAt?: string | null;
+  };
   const [authLoading, setAuthLoading] = useState(true);
   const [authUser, setAuthUser] = useState<SessionUser | null>(null);
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
@@ -121,6 +213,10 @@ export default function Home() {
   const [signupUserUnit, setSignupUserUnit] = useState("");
   const [signupBulletStyle, setSignupBulletStyle] = useState("Standard");
 
+  const formattedLastLogin = authUser?.lastLoginAt
+    ? new Date(authUser.lastLoginAt).toLocaleString()
+    : null;
+
   // ======================================================
   // AUTH SESSION
   // ======================================================
@@ -128,6 +224,7 @@ export default function Home() {
   const historyHydratedRef = useRef(false);
   const logHydratedRef = useRef(false);
   const settingsHydratedRef = useRef(false);
+  const generateRequestInFlightRef = useRef(false);
   useEffect(() => {
     let cancelled = false;
 
@@ -221,6 +318,10 @@ export default function Home() {
             userName: signupUserName,
             userUnit: signupUserUnit,
             bulletStyle: signupBulletStyle,
+            aiGeneratorEnabled: true,
+            aiLogImportEnabled: true,
+            aiDashboardInsightsEnabled: true,
+            aiMarksPackageEnabled: true,
           },
         }),
       });
@@ -232,6 +333,10 @@ export default function Home() {
     setUserName(signupUserName);
     setUserUnit(signupUserUnit);
     setBulletStyle(signupBulletStyle);
+    setAiGeneratorEnabled(true);
+    setAiLogImportEnabled(true);
+    setAiDashboardInsightsEnabled(true);
+    setAiMarksPackageEnabled(true);
     setAuthUser(pendingUser);
     setPendingUser(null);
     setSignupStep(1);
@@ -247,9 +352,10 @@ export default function Home() {
       setHistory([]);
       setLogEntries([]);
       setSuggestions({});
-      setSummaries({});
       setBullet(null);
       setEditingIndex(null);
+      setPulledLogIndex(null);
+      setPulledGroupedEntryIndexes([]);
       setInput("");
       setCategory("");
       setActiveTab("log");
@@ -279,9 +385,9 @@ export default function Home() {
     setHistory([]);
     setLogEntries([]);
     setSuggestions({});
-    setSummaries({});
     setBullet(null);
     setEditingIndex(null);
+    setPulledLogIndex(null);
     setInput("");
     setCategory("");
     setActiveTab("log");
@@ -357,10 +463,12 @@ export default function Home() {
           .map((e) => ({
             text: typeof e.text === "string" ? e.text : "",
             date: typeof e.date === "string" ? e.date : "",
+            id: typeof e.id === "string" && e.id.trim().length > 0 ? e.id : createLogEntryId(),
             dates: Array.isArray(e.dates)
               ? e.dates.filter((d): d is string => typeof d === "string" && d.length > 0)
               : undefined,
             group: typeof e.group === "string" ? e.group : undefined,
+            committed: typeof e.committed === "boolean" ? e.committed : undefined,
           }))
           .filter((e) => e.text.trim().length > 0);
 
@@ -416,7 +524,10 @@ export default function Home() {
     setMpUnitName("");
     setMpPeriodStart("");
     setMpPeriodEnd("");
-    setMpManualMarks({});
+    setAiGeneratorEnabled(true);
+    setAiLogImportEnabled(true);
+    setAiDashboardInsightsEnabled(true);
+    setAiMarksPackageEnabled(true);
     setSettingsMessage("");
 
     void (async () => {
@@ -426,6 +537,10 @@ export default function Home() {
         userName?: string;
         userUnit?: string;
         bulletStyle?: string;
+        aiGeneratorEnabled?: boolean;
+        aiLogImportEnabled?: boolean;
+        aiDashboardInsightsEnabled?: boolean;
+        aiMarksPackageEnabled?: boolean;
       };
       try {
         const res = await fetch("/api/user-data?key=settings");
@@ -469,6 +584,18 @@ export default function Home() {
                     : loaded.bulletStyle;
             setBulletStyle(mappedStyle);
           }
+          if (typeof loaded.aiGeneratorEnabled === "boolean") {
+            setAiGeneratorEnabled(loaded.aiGeneratorEnabled);
+          }
+          if (typeof loaded.aiLogImportEnabled === "boolean") {
+            setAiLogImportEnabled(loaded.aiLogImportEnabled);
+          }
+          if (typeof loaded.aiDashboardInsightsEnabled === "boolean") {
+            setAiDashboardInsightsEnabled(loaded.aiDashboardInsightsEnabled);
+          }
+          if (typeof loaded.aiMarksPackageEnabled === "boolean") {
+            setAiMarksPackageEnabled(loaded.aiMarksPackageEnabled);
+          }
         }
       } catch {
         // Keep the defaults set above.
@@ -486,9 +613,33 @@ export default function Home() {
     void fetch("/api/user-data", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key: "settings", value: { rankLevel, rating, userName, userUnit, bulletStyle } }),
+      body: JSON.stringify({
+        key: "settings",
+        value: {
+          rankLevel,
+          rating,
+          userName,
+          userUnit,
+          bulletStyle,
+          aiGeneratorEnabled,
+          aiLogImportEnabled,
+          aiDashboardInsightsEnabled,
+          aiMarksPackageEnabled,
+        },
+      }),
     });
-  }, [rankLevel, rating, userName, userUnit, bulletStyle, authUser]);
+  }, [
+    rankLevel,
+    rating,
+    userName,
+    userUnit,
+    bulletStyle,
+    aiGeneratorEnabled,
+    aiLogImportEnabled,
+    aiDashboardInsightsEnabled,
+    aiMarksPackageEnabled,
+    authUser,
+  ]);
 
   useEffect(() => {
     if (!mpMemberName && userName) {
@@ -614,6 +765,10 @@ export default function Home() {
       return preferredCategory;
     }
 
+    if (!aiGeneratorEnabled) {
+      return "Military Bearing";
+    }
+
     try {
       const res = await fetch("/api/suggest-category", {
         method: "POST",
@@ -631,25 +786,66 @@ export default function Home() {
     return "Military Bearing";
   };
 
+  const summarizeTitleForText = async (text: string) => {
+    const normalizedText = text.trim();
+    if (!normalizedText) {
+      return "";
+    }
+
+    if (!aiGeneratorEnabled) {
+      return "";
+    }
+
+    try {
+      const res = await fetch("/api/summarize-action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: normalizedText }),
+      });
+      const data = (await res.json()) as { summary?: string };
+      if (res.ok && typeof data.summary === "string") {
+        return data.summary.trim();
+      }
+    } catch {
+      // Fall back to an empty title when summary generation fails.
+    }
+
+    return "";
+  };
+
   const generateBulletDraft = async (accomplishment: string, preferredCategory?: string) => {
+    if (!aiGeneratorEnabled) {
+      throw new Error("Generator AI is disabled in Settings.");
+    }
+
     const finalCategory = await resolveCategoryForText(accomplishment, preferredCategory);
+
+    const payload = {
+      accomplishment,
+      category: finalCategory,
+      rankLevel,
+      rating,
+      bulletStyle,
+      peopleAffected,
+      percentImproved,
+      hoursSaved,
+      missionImpact,
+      generationIntent: "final-polished-official-mark",
+    };
+
+    const payloadBytes = getUtf8ByteLength(JSON.stringify(payload));
+    if (payloadBytes > GENERATE_REQUEST_MAX_BYTES) {
+      throw new Error(
+        `Request is too large (${payloadBytes} bytes). Reduce Action/Impact text and keep request size under ${GENERATE_REQUEST_MAX_BYTES} bytes.`
+      );
+    }
 
     const res = await fetch("/api/generate", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        accomplishment,
-        category: finalCategory,
-        rankLevel,
-        rating,
-        bulletStyle,
-        peopleAffected,
-        percentImproved,
-        hoursSaved,
-        missionImpact,
-      }),
+      body: JSON.stringify(payload),
     });
 
     const data = await res.json();
@@ -660,17 +856,39 @@ export default function Home() {
     return {
       text: data.bullet as string,
       category: finalCategory,
+      title: typeof data.title === "string" ? data.title : "",
     };
   };
 
   const handleGenerate = async () => {
+    if (generateRequestInFlightRef.current || loading) {
+      return;
+    }
+
+    if (!aiGeneratorEnabled) {
+      setError("Generator AI is disabled in Settings.");
+      return;
+    }
+
     const trimmedInput = input.trim();
 
-    if (!trimmedInput) {
-      setError("Please enter an accomplishment.");
+    const validationError = validateActionAndImpact(trimmedInput, missionImpact);
+    if (validationError) {
+      setError(validationError);
       setBullet(null);
       setSplitBulletRecommendation(null);
       setSplitBulletDrafts([]);
+      return;
+    }
+
+    const existingOfficialMark = findExistingOfficialMarkForAction(trimmedInput);
+    if (existingOfficialMark) {
+      setError(duplicateOfficialMarkMessage);
+      setBullet(null);
+      setSplitBulletRecommendation(null);
+      setSplitBulletRecommendationLoading(false);
+      setSplitBulletDrafts([]);
+      setSplitBulletDraftsLoading(false);
       return;
     }
 
@@ -679,6 +897,7 @@ export default function Home() {
     setSplitBulletRecommendationLoading(false);
     setSplitBulletDrafts([]);
     setSplitBulletDraftsLoading(false);
+    generateRequestInFlightRef.current = true;
     setLoading(true);
 
     const wasUserSelected = !!category;
@@ -686,27 +905,31 @@ export default function Home() {
     try {
       const generatedDraft = await generateBulletDraft(trimmedInput, category || undefined);
 
-      setBullet({ text: generatedDraft.text, category: generatedDraft.category });
+      setBullet({ text: generatedDraft.text, category: generatedDraft.category, title: generatedDraft.title });
       setWasCategoryUserSelected(wasUserSelected);
 
       setSplitBulletRecommendationLoading(true);
       try {
-        const recommendationRes = await fetch("/api/recommend-bullet-split", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            accomplishment: trimmedInput,
-            bullet: generatedDraft.text,
-          }),
-        });
-
-        const recommendationData = await recommendationRes.json();
-        if (recommendationRes.ok && recommendationData.recommendation) {
-          setSplitBulletRecommendation(recommendationData.recommendation);
-        } else {
+        if (!aiGeneratorEnabled) {
           setSplitBulletRecommendation(null);
+        } else {
+          const recommendationRes = await fetch("/api/recommend-bullet-split", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              accomplishment: trimmedInput,
+              bullet: generatedDraft.text,
+            }),
+          });
+
+          const recommendationData = await recommendationRes.json();
+          if (recommendationRes.ok && recommendationData.recommendation) {
+            setSplitBulletRecommendation(recommendationData.recommendation);
+          } else {
+            setSplitBulletRecommendation(null);
+          }
         }
       } catch {
         setSplitBulletRecommendation(null);
@@ -722,17 +945,34 @@ export default function Home() {
       setSplitBulletDraftsLoading(false);
     } finally {
       setLoading(false);
+      generateRequestInFlightRef.current = false;
     }
   };
 
   const handleGenerateMarkAsIs = async () => {
+    if (generateRequestInFlightRef.current || loading) {
+      return;
+    }
+
     const trimmedInput = input.trim();
 
-    if (!trimmedInput) {
-      setError("Please enter an accomplishment.");
+    const validationError = validateActionAndImpact(trimmedInput, missionImpact);
+    if (validationError) {
+      setError(validationError);
       setBullet(null);
       setSplitBulletRecommendation(null);
       setSplitBulletDrafts([]);
+      return;
+    }
+
+    const existingOfficialMark = findExistingOfficialMarkForAction(trimmedInput);
+    if (existingOfficialMark) {
+      setError(duplicateOfficialMarkMessage);
+      setBullet(null);
+      setSplitBulletRecommendation(null);
+      setSplitBulletRecommendationLoading(false);
+      setSplitBulletDrafts([]);
+      setSplitBulletDraftsLoading(false);
       return;
     }
 
@@ -741,15 +981,20 @@ export default function Home() {
     setSplitBulletRecommendationLoading(false);
     setSplitBulletDrafts([]);
     setSplitBulletDraftsLoading(false);
+    generateRequestInFlightRef.current = true;
     setLoading(true);
 
     try {
-      const resolvedCategory = await resolveCategoryForText(trimmedInput, category || undefined);
       const normalizedText = trimmedInput.replace(/^[-*•\s]+/, "").replace(/\s+/g, " ").trim();
+      const [resolvedCategory, title] = await Promise.all([
+        resolveCategoryForText(trimmedInput, category || undefined),
+        summarizeTitleForText(normalizedText),
+      ]);
 
       setBullet({
         text: normalizedText ? `- ${normalizedText}` : "",
         category: resolvedCategory,
+        title,
       });
       setWasCategoryUserSelected(!!category);
     } catch (error) {
@@ -757,11 +1002,17 @@ export default function Home() {
       setBullet(null);
     } finally {
       setLoading(false);
+      generateRequestInFlightRef.current = false;
     }
   };
 
   const handleApplySplitRecommendation = async () => {
     if (!splitBulletRecommendation?.shouldSplit || splitBulletRecommendation.splitActions.length === 0) {
+      return;
+    }
+
+    if (!aiGeneratorEnabled) {
+      setError("Generator AI is disabled in Settings.");
       return;
     }
 
@@ -779,6 +1030,7 @@ export default function Home() {
             action,
             text: generatedDraft.text,
             category: generatedDraft.category,
+            title: generatedDraft.title,
           };
         })
       );
@@ -807,6 +1059,11 @@ export default function Home() {
   };
 
   const handleRepromptSplitBulletDraft = async (draftId: string) => {
+    if (!aiGeneratorEnabled) {
+      setError("Generator AI is disabled in Settings.");
+      return;
+    }
+
     const targetDraft = splitBulletDrafts.find((draft) => draft.id === draftId);
     if (!targetDraft) {
       return;
@@ -821,7 +1078,7 @@ export default function Home() {
       setSplitBulletDrafts((prevDrafts) =>
         prevDrafts.map((draft) =>
           draft.id === draftId
-            ? { ...draft, text: regeneratedDraft.text, category: regeneratedDraft.category }
+            ? { ...draft, text: regeneratedDraft.text, category: regeneratedDraft.category, title: regeneratedDraft.title }
             : draft
         )
       );
@@ -832,11 +1089,18 @@ export default function Home() {
     }
   };
 
-  // ======================================================
-  // ALTERNATE CATEGORY ANALYSIS
-  // After committing a mark, check if it fits other categories
-  // ======================================================
-  const triggerAltCategoryAnalysis = (bulletText: string, action: string, primaryCategory: string) => {
+  const triggerAltCategoryAnalysis = (
+    bulletText: string,
+    action: string,
+    primaryCategory: string,
+    sourceTitle?: string
+  ) => {
+    if (!aiGeneratorEnabled) {
+      setAltCategorySuggestion(null);
+      setAltCategoryDrafts({});
+      return;
+    }
+
     setAltCategorySuggestion(null);
     setAltCategoryDrafts({});
     void (async () => {
@@ -851,20 +1115,30 @@ export default function Home() {
           categories?: Array<{ name: string; reason: string }>;
         };
         if (res.ok && data.hasAlternatives && Array.isArray(data.categories) && data.categories.length > 0) {
-          setAltCategorySuggestion({ categories: data.categories, originalAction: action, primaryCategory });
+          setAltCategorySuggestion({
+            categories: data.categories,
+            originalAction: action,
+            primaryCategory,
+            sourceTitle,
+          });
         }
       } catch {
-        // fail silently
+        // Fail silently; commit already succeeded.
       }
     })();
   };
 
   const handleGenerateAltCategoryDraft = async (categoryName: string) => {
+    if (!aiGeneratorEnabled) return;
     if (!altCategorySuggestion) return;
-    setAltCategoryDrafts((prev) => ({ ...prev, [categoryName]: { text: "", generating: true } }));
+    setAltCategoryDrafts((prev) => ({ ...prev, [categoryName]: { text: "", title: "", generating: true } }));
     try {
       const draft = await generateBulletDraft(altCategorySuggestion.originalAction, categoryName);
-      setAltCategoryDrafts((prev) => ({ ...prev, [categoryName]: { text: draft.text, generating: false } }));
+      const title = altCategorySuggestion.sourceTitle?.trim() || draft.title;
+      setAltCategoryDrafts((prev) => ({
+        ...prev,
+        [categoryName]: { text: draft.text, title, generating: false },
+      }));
     } catch {
       setAltCategoryDrafts((prev) => {
         const next = { ...prev };
@@ -875,8 +1149,13 @@ export default function Home() {
   };
 
   const handleCommitAltCategoryDraft = (categoryName: string) => {
+    if (!altCategorySuggestion) return;
+
     const draftEntry = altCategoryDrafts[categoryName];
     if (!draftEntry?.text) return;
+
+    const originalAction = altCategorySuggestion.originalAction.trim();
+
     setHistory((prev) => {
       if (prev.some((h) => h.text === draftEntry.text)) return prev;
       return [
@@ -885,6 +1164,8 @@ export default function Home() {
           date: new Date().toISOString(),
           category: categoryName,
           markingPeriod: computeMarkingPeriod(new Date().toISOString(), rankLevel),
+          title: draftEntry.title,
+          originalAction,
         },
         ...prev,
       ];
@@ -904,6 +1185,16 @@ export default function Home() {
     }
 
     const splitItemDate = pulledLogDate !== null ? pulledLogDate : new Date().toISOString();
+    const sourceLogEntry = pulledLogIndex != null ? logEntries[pulledLogIndex] : undefined;
+    const sourceLogEntryId = pulledLogEntryId ?? sourceLogEntry?.id;
+    const sourceLogEntryPreviousGroup = sourceLogEntry?.group;
+    const splitGroupedEntries = pulledGroupedEntryIndexes
+      .map((i) => logEntries[i])
+      .filter((e): e is LogEntry => e !== undefined);
+    const sourceGroupedLogEntryIds = splitGroupedEntries
+      .map((e) => e.id)
+      .filter((id): id is string => typeof id === "string" && id.length > 0);
+    const sourceGroupedLogEntryGroupName = splitGroupedEntries[0]?.group?.trim() || undefined;
 
     setHistory((prevHistory) => {
       const existingTexts = new Set(prevHistory.map((item) => item.text));
@@ -914,21 +1205,51 @@ export default function Home() {
           date: splitItemDate,
           category: draft.category,
           markingPeriod: splitItemDate ? computeMarkingPeriod(splitItemDate, rankLevel) : "",
+          title: draft.title,
+          originalAction: draft.action.trim(),
+          sourceLogEntryId,
+          sourceLogEntryPreviousGroup,
+          ...(sourceGroupedLogEntryIds.length > 0 && {
+            sourceGroupedLogEntryIds,
+            sourceGroupedLogEntryGroupName,
+          }),
         }));
 
       return [...newItems, ...prevHistory];
     });
 
+    setLogEntries((prevEntries) => {
+      if (pulledLogIndex != null) {
+        return prevEntries.map((entry, entryIndex) =>
+          entryIndex === pulledLogIndex
+            ? { ...entry, committed: true, group: undefined }
+            : entry
+        );
+      }
+      if (pulledGroupedEntryIndexes.length > 0) {
+        const groupedIndexSet = new Set(pulledGroupedEntryIndexes);
+        return prevEntries.map((entry, entryIndex) =>
+          groupedIndexSet.has(entryIndex)
+            ? { ...entry, committed: true, group: undefined }
+            : entry
+        );
+      }
+      return prevEntries;
+    });
     setPulledLogDate(null);
+    setPulledLogIndex(null);
+    setPulledLogEntryId(null);
+    setPulledGroupedEntryIndexes([]);
     setEditingIndex(null);
     setWasCategoryUserSelected(false);
+    setInput("");
     setSplitBulletDrafts([]);
     setSplitBulletDraftsLoading(false);
     setSplitBulletDraftRepromptingId(null);
     setActiveTab("history");
     const firstDraft = selectedDrafts[0];
     if (firstDraft) {
-      triggerAltCategoryAnalysis(firstDraft.text, firstDraft.action, firstDraft.category);
+      triggerAltCategoryAnalysis(firstDraft.text, firstDraft.action, firstDraft.category, firstDraft.title);
     }
   };
 
@@ -968,6 +1289,8 @@ export default function Home() {
   const handleCommitBullet = () => {
     if (!bullet) return;
 
+    const trimmedInput = input.trim();
+
     setHistory((prevHistory) => {
       // If we're editing an existing history item, update it in-place but keep original date
       if (editingIndex !== null && editingIndex >= 0 && editingIndex < prevHistory.length) {
@@ -977,7 +1300,7 @@ export default function Home() {
         }
 
         return prevHistory.map((h, i) =>
-          i === editingIndex ? { ...h, text: bullet.text } : h
+          i === editingIndex ? { ...h, text: bullet.text, category: bullet.category, title: bullet.title } : h
         );
       }
 
@@ -987,21 +1310,61 @@ export default function Home() {
       }
 
       const itemDate = pulledLogDate !== null ? pulledLogDate : new Date().toISOString();
+      const sourceLogEntry = pulledLogIndex != null ? logEntries[pulledLogIndex] : undefined;
+      const sourceLogEntryId = pulledLogEntryId ?? sourceLogEntry?.id;
+      const sourceLogEntryPreviousGroup = sourceLogEntry?.group;
+      const groupedEntries = pulledGroupedEntryIndexes
+        .map((i) => logEntries[i])
+        .filter((e): e is LogEntry => e !== undefined);
+      const sourceGroupedLogEntryIds = groupedEntries
+        .map((e) => e.id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0);
+      const sourceGroupedLogEntryGroupName = groupedEntries[0]?.group?.trim() || undefined;
       const newItem: HistoryItem = {
         text: bullet.text,
         date: itemDate,
         category: bullet.category,
         markingPeriod: itemDate ? computeMarkingPeriod(itemDate, rankLevel) : "",
+        title: bullet.title,
+        originalAction: trimmedInput,
+        sourceLogEntryId,
+        sourceLogEntryPreviousGroup,
+        ...(sourceGroupedLogEntryIds.length > 0 && {
+          sourceGroupedLogEntryIds,
+          sourceGroupedLogEntryGroupName,
+        }),
       };
       return [newItem, ...prevHistory];
     });
 
+    setLogEntries((prevEntries) => {
+      if (pulledLogIndex != null) {
+        return prevEntries.map((entry, entryIndex) =>
+          entryIndex === pulledLogIndex
+            ? { ...entry, committed: true, group: undefined }
+            : entry
+        );
+      }
+      if (pulledGroupedEntryIndexes.length > 0) {
+        const groupedIndexSet = new Set(pulledGroupedEntryIndexes);
+        return prevEntries.map((entry, entryIndex) =>
+          groupedIndexSet.has(entryIndex)
+            ? { ...entry, committed: true, group: undefined }
+            : entry
+        );
+      }
+      return prevEntries;
+    });
     setPulledLogDate(null);
+    setPulledLogIndex(null);
+    setPulledLogEntryId(null);
+    setPulledGroupedEntryIndexes([]);
     setEditingIndex(null);
     setWasCategoryUserSelected(false);
+    setInput("");
 
     setActiveTab("history");
-    triggerAltCategoryAnalysis(bullet.text, input.trim(), bullet.category);
+    triggerAltCategoryAnalysis(bullet.text, input.trim(), bullet.category, bullet.title);
   };
 
   // ======================================================
@@ -1020,88 +1383,106 @@ export default function Home() {
     if (!item) return;
     setInput(item.text);
     setCategory(""); // Reset category for reprompt
-    setHistory(prev => prev.map((h, i) => i === index ? { ...h, category: undefined } : h)); // Reset category in history
     setSuggestions(prev => { const newS = {...prev}; delete newS[item.text]; return newS; }); // Clear suggestion
     setEditingIndex(index);
     setActiveTab("generator");
   };
 
   // ======================================================
-  // SUGGEST CATEGORY
-  // Ask the backend to recommend a category for a history item
-  // ======================================================
-  const handleSuggestCategory = async (text: string) => {
-    if (!text) return;
-
-    setSuggestions((s) => ({ ...s, [text]: { category: "...", reason: "" } }));
-
-    try {
-      const res = await fetch("/api/suggest-category", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-
-      const data = await res.json();
-      if (res.ok && data.category) {
-        setSuggestions((s) => ({ ...s, [text]: { category: data.category, reason: data.reason || "" } }));
-      } else {
-        setSuggestions((s) => ({ ...s, [text]: { category: "Unknown", reason: data.error || "" } }));
-      }
-    } catch {
-      setSuggestions((s) => ({ ...s, [text]: { category: "Error", reason: "Request failed" } }));
-    }
-  };
-
-  // ======================================================
-  // SUMMARIZE ACTION
-  // Get a 2-3 word summary of the bullet's action
-  // ======================================================
-  const handleSummarize = async (text: string) => {
-    if (!text) return;
-
-    setSummaries((s) => ({ ...s, [text]: "Summarizing..." }));
-
-    try {
-      const res = await fetch("/api/summarize-action", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-
-      const data = await res.json();
-      if (res.ok && data.summary) {
-        setSummaries((s) => ({ ...s, [text]: data.summary }));
-      } else {
-        setSummaries((s) => ({ ...s, [text]: "Summary unavailable" }));
-      }
-    } catch {
-      setSummaries((s) => ({ ...s, [text]: "Error summarizing" }));
-    }
-  };
-
-  // ======================================================
   // DELETE HISTORY ITEM
   // ======================================================
   const handleDelete = (index: number) => {
-    setHistory((prev) => prev.filter((_, i) => i !== index));
+    const removedItem = history[index];
+    if (!removedItem) {
+      return;
+    }
+
+    const nextHistory = history.filter((_, i) => i !== index);
+    setHistory(nextHistory);
+
+    const sourceLogEntryId = removedItem.sourceLogEntryId;
+    if (sourceLogEntryId) {
+      const sourceLogEntryPreviousGroup = removedItem.sourceLogEntryPreviousGroup;
+      const hasOtherMarksFromSameLogEntry = nextHistory.some(
+        (item) => item.sourceLogEntryId === sourceLogEntryId
+      );
+      if (!hasOtherMarksFromSameLogEntry) {
+        setLogEntries((prevEntries) =>
+          prevEntries.map((entry) =>
+            entry.id === sourceLogEntryId
+              ? {
+                  ...entry,
+                  committed: false,
+                  group: sourceLogEntryPreviousGroup?.trim() ? sourceLogEntryPreviousGroup : undefined,
+                }
+              : entry
+          )
+        );
+      }
+    }
+
+    const sourceGroupedLogEntryIds = removedItem.sourceGroupedLogEntryIds;
+    if (sourceGroupedLogEntryIds && sourceGroupedLogEntryIds.length > 0) {
+      const sourceGroupedLogEntryGroupName = removedItem.sourceGroupedLogEntryGroupName;
+      setLogEntries((prevEntries) =>
+        prevEntries.map((entry) => {
+          if (!entry.id || !sourceGroupedLogEntryIds.includes(entry.id)) return entry;
+          const stillReferenced = nextHistory.some(
+            (item) => item.sourceGroupedLogEntryIds?.includes(entry.id!)
+          );
+          if (stillReferenced) return entry;
+          return {
+            ...entry,
+            committed: false,
+            group: sourceGroupedLogEntryGroupName?.trim() ? sourceGroupedLogEntryGroupName : undefined,
+          };
+        })
+      );
+    }
   };
 
-  const handleUpdateMark = (index: number, nextText: string) => {
+  const handleUpdateMark = (index: number, nextText: string, nextCategory?: string) => {
     const trimmedText = nextText.trim();
     if (!trimmedText) {
       return;
     }
 
+    const currentItem = history[index];
+    const previousText = currentItem?.text;
+
     setHistory((prev) =>
-      prev.map((item, itemIndex) =>
-        itemIndex === index ? { ...item, text: trimmedText } : item
-      )
+      prev.map((item, itemIndex) => {
+        if (itemIndex !== index) {
+          return item;
+        }
+
+        const trimmedCategory = nextCategory?.trim();
+        return {
+          ...item,
+          text: trimmedText,
+          category: trimmedCategory ? trimmedCategory : item.category,
+        };
+      })
     );
+
+    if (previousText && previousText !== trimmedText) {
+      setSuggestions((prev) => {
+        const existing = prev[previousText];
+        if (!existing) {
+          return prev;
+        }
+
+        const next = { ...prev };
+        delete next[previousText];
+        next[trimmedText] = existing;
+        return next;
+      });
+    }
   };
 
   const handleSaveLogEntry = (entry: { text: string; group?: string }) => {
     const newEntry: LogEntry = {
+      id: createLogEntryId(),
       text: entry.text,
       group: entry.group,
       date: new Date().toISOString(),
@@ -1115,6 +1496,7 @@ export default function Home() {
   ) => {
     const normalizedEntries = entriesToSave
       .map((entry) => ({
+        id: createLogEntryId(),
         text: entry.text.trim(),
         group: entry.group?.trim() || undefined,
         date: entry.dates[0] || "",
@@ -1133,6 +1515,24 @@ export default function Home() {
     setLogEntries((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const handleAssignLogGroup = (entryIndexes: number[], groupName: string) => {
+    const normalizedGroup = groupName.trim();
+    const entryIndexSet = new Set(entryIndexes);
+
+    setLogEntries((prev) =>
+      prev.map((entry, index) => {
+        if (!entryIndexSet.has(index)) {
+          return entry;
+        }
+
+        return {
+          ...entry,
+          group: normalizedGroup.length > 0 ? normalizedGroup : undefined,
+        };
+      })
+    );
+  };
+
   const handleClearLogEntries = () => {
     const confirmed = window.confirm("Clear all Daily Log entries? This cannot be undone.");
     if (!confirmed) {
@@ -1140,12 +1540,6 @@ export default function Home() {
     }
 
     setLogEntries([]);
-  };
-
-  const handleUpdateLogEntryGroup = (index: number, group?: string) => {
-    setLogEntries((prev) =>
-      prev.map((entry, i) => (i === index ? { ...entry, group: group || undefined } : entry))
-    );
   };
 
   const handleExportBackup = () => {
@@ -1159,6 +1553,10 @@ export default function Home() {
         userName,
         userUnit,
         bulletStyle,
+        aiGeneratorEnabled,
+        aiLogImportEnabled,
+        aiDashboardInsightsEnabled,
+        aiMarksPackageEnabled,
       },
     };
 
@@ -1187,6 +1585,10 @@ export default function Home() {
           userName?: string;
           userUnit?: string;
           bulletStyle?: string;
+          aiGeneratorEnabled?: boolean;
+          aiLogImportEnabled?: boolean;
+          aiDashboardInsightsEnabled?: boolean;
+          aiMarksPackageEnabled?: boolean;
         };
       };
 
@@ -1204,6 +1606,10 @@ export default function Home() {
         if (parsed.settings.userName !== undefined) setUserName(parsed.settings.userName);
         if (parsed.settings.userUnit !== undefined) setUserUnit(parsed.settings.userUnit);
         if (parsed.settings.bulletStyle) setBulletStyle(parsed.settings.bulletStyle);
+        if (typeof parsed.settings.aiGeneratorEnabled === "boolean") setAiGeneratorEnabled(parsed.settings.aiGeneratorEnabled);
+        if (typeof parsed.settings.aiLogImportEnabled === "boolean") setAiLogImportEnabled(parsed.settings.aiLogImportEnabled);
+        if (typeof parsed.settings.aiDashboardInsightsEnabled === "boolean") setAiDashboardInsightsEnabled(parsed.settings.aiDashboardInsightsEnabled);
+        if (typeof parsed.settings.aiMarksPackageEnabled === "boolean") setAiMarksPackageEnabled(parsed.settings.aiMarksPackageEnabled);
       }
 
       setSettingsMessage("Backup imported.");
@@ -1218,7 +1624,6 @@ export default function Home() {
     if (!confirmed) return;
     setHistory([]);
     setSuggestions({});
-    setSummaries({});
     setBullet(null);
     setEditingIndex(null);
     setSettingsMessage("All bullets cleared.");
@@ -1353,7 +1758,7 @@ export default function Home() {
     return (
       <main className="min-h-screen flex items-center justify-center bg-slate-100 p-4">
         <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-lg sm:p-8">
-          <h1 className="text-2xl font-bold text-slate-900">MarksMate</h1>
+          <h1 className="text-2xl font-bold text-slate-900">Bullet Proof</h1>
           <p className="mt-2 text-sm text-slate-600">
             {authMode === "login"
               ? "Log in to access your AI marking assistant."
@@ -1438,15 +1843,26 @@ export default function Home() {
           <p className="text-sm font-medium text-slate-700">
             Signed in as <span className="font-bold text-slate-900">{authUser.username}</span>
           </p>
-          <button
-            onClick={() => void handleLogout()}
-            className="rounded-md border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
-          >
-            Log Out
-          </button>
+          <div className="flex items-center gap-3">
+            {formattedLastLogin ? (
+              <span className="text-xs font-normal text-slate-500">
+                Last login: {formattedLastLogin}
+              </span>
+            ) : null}
+            <button
+              onClick={() => void handleLogout()}
+              className="rounded-md border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+            >
+              Log Out
+            </button>
+          </div>
         </div>
 
-        <TabBar activeTab={activeTab} setActiveTab={setActiveTab} />
+        <TabBar
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          dashboardRecommendationCount={dashboardRecommendationCount}
+        />
 
         {activeTab === "generator" && (
           <GeneratorPanel
@@ -1479,7 +1895,12 @@ export default function Home() {
             handleRepromptSplitBulletDraft={handleRepromptSplitBulletDraft}
             handleCommitSplitBulletDrafts={handleCommitSplitBulletDrafts}
             handleCommitBullet={handleCommitBullet}
-            onLogEntryPulled={({ date }) => setPulledLogDate(date)}
+            onLogEntryPulled={({ date, index, groupedIndexes }) => {
+              setPulledLogDate(date);
+              setPulledLogIndex(index);
+              setPulledLogEntryId(index == null ? null : logEntries[index]?.id ?? null);
+              setPulledGroupedEntryIndexes(groupedIndexes ?? []);
+            }}
             pendingLogPull={pendingLogPull}
             onPendingLogPullConsumed={() => setPendingLogPull(null)}
           />
@@ -1493,37 +1914,95 @@ export default function Home() {
             handleDelete={handleDelete}
             handleUpdateMark={handleUpdateMark}
             handleReprompt={handleReprompt}
-            handleSuggestCategory={handleSuggestCategory}
-            handleSummarize={handleSummarize}
-            suggestions={suggestions}
-            summaries={summaries}
           />
         )}
 
         {activeTab === "log" && (
           <LogPanel
             entries={logEntries}
+            aiEnabled={aiLogImportEnabled}
             onSaveEntry={handleSaveLogEntry}
             onSaveImportedEntries={handleSaveImportedLogEntries}
             onDeleteEntry={handleDeleteLogEntry}
-            onClearEntries={handleClearLogEntries}
+
+            onAssignGroup={handleAssignLogGroup}
             onPullEntry={handlePullLogEntryToGenerator}
+            onReloadCommittedEntry={(text) => {
+              setInput(text.text);
+              setPulledLogDate(text.date || null);
+              setPulledLogIndex(text.index);
+              setPulledLogEntryId(text.id ?? logEntries[text.index]?.id ?? null);
+              setActiveTab("generator");
+            }}
           />
         )}
 
-        {activeTab === "dashboard" && (
+        <div className={activeTab === "dashboard" ? "" : "hidden"}>
           <DashboardPanel
+            sessionUserId={authUser?.id ?? null}
+            aiEnabled={aiDashboardInsightsEnabled}
             history={history}
             suggestions={suggestions}
             rankLevel={rankLevel}
-            onUpdateBullet={(oldText, newText) =>
+            onInsightsRecommendationCountChange={setDashboardRecommendationCount}
+            onUpdateBullet={(oldText, newText) => {
               setHistory((prev) =>
                 prev.map((item) =>
                   item.text === oldText ? { ...item, text: newText } : item
                 )
-              )
-            }
-            onCommitConsolidatedRepetition={(originalBullets, consolidatedBullet, category) => {
+              );
+              setSuggestions((prev) => {
+                const existing = prev[oldText];
+                if (!existing || oldText === newText) {
+                  return prev;
+                }
+
+                const next = { ...prev };
+                delete next[oldText];
+                next[newText] = existing;
+                return next;
+              });
+            }}
+            onUpdateBulletForCategory={(oldText, newText, category) => {
+              setHistory((prev) => {
+                const normalizeCategory = (value: string | undefined) => {
+                  if (!value) return "";
+                  const normalized = value.trim().toLowerCase();
+                  return normalized === "customs, courtesies, and traditions"
+                    ? "customs, courtesies and traditions"
+                    : normalized;
+                };
+
+                const normalizedTargetCategory = normalizeCategory(category);
+                let hasUpdatedMatch = false;
+
+                return prev.map((item) => {
+                  const resolvedCategory = item.category || suggestions[item.text]?.category;
+                  const isTargetMatch =
+                    item.text === oldText &&
+                    normalizeCategory(resolvedCategory) === normalizedTargetCategory;
+
+                  if (isTargetMatch && !hasUpdatedMatch) {
+                    hasUpdatedMatch = true;
+                    return { ...item, text: newText, category };
+                  }
+
+                  return item;
+                });
+              });
+              setSuggestions((prev) => {
+                const existing = prev[oldText];
+                if (!existing || oldText === newText) {
+                  return prev;
+                }
+
+                const next = { ...prev };
+                delete next[oldText];
+                next[newText] = existing;
+                return next;
+              });
+            }}
+            onCommitConsolidatedRepetition={(originalBullets, consolidatedBullet, category, title) => {
               setHistory((prevHistory) => {
                 const normalizeBulletText = (value: string) =>
                   value
@@ -1566,19 +2045,24 @@ export default function Home() {
                 const sourceDate = sourceItem?.date || new Date().toISOString();
                 const sourceMarkingPeriod =
                   sourceItem?.markingPeriod || computeMarkingPeriod(sourceDate, rankLevel);
+                const resolvedTitle =
+                  typeof title === "string" && title.trim().length > 0
+                    ? title.trim()
+                    : sourceItem?.title;
 
                 const newItem = {
                   text: consolidatedBullet,
                   date: sourceDate,
                   category,
                   markingPeriod: sourceMarkingPeriod,
+                  title: resolvedTitle,
                 };
 
                 return [newItem, ...filtered];
               });
             }}
           />
-        )}
+        </div>
 
         {activeTab === "export" && (
           <ExportPanel history={history} suggestions={suggestions} rankLevel={rankLevel} />
@@ -1588,6 +2072,7 @@ export default function Home() {
           <MarksPackageBuilderPanel
             history={history}
             suggestions={suggestions}
+            aiEnabled={aiMarksPackageEnabled}
             rankLevel={rankLevel}
             rating={rating}
             memberName={mpMemberName}
@@ -1598,8 +2083,6 @@ export default function Home() {
             setPeriodStart={setMpPeriodStart}
             periodEnd={mpPeriodEnd}
             setPeriodEnd={setMpPeriodEnd}
-            manualMarks={mpManualMarks}
-            setManualMarks={setMpManualMarks}
           />
         )}
 
@@ -1615,11 +2098,20 @@ export default function Home() {
             setUserUnit={setUserUnit}
             bulletStyle={bulletStyle}
             setBulletStyle={setBulletStyle}
+            aiGeneratorEnabled={aiGeneratorEnabled}
+            setAiGeneratorEnabled={setAiGeneratorEnabled}
+            aiLogImportEnabled={aiLogImportEnabled}
+            setAiLogImportEnabled={setAiLogImportEnabled}
+            aiDashboardInsightsEnabled={aiDashboardInsightsEnabled}
+            setAiDashboardInsightsEnabled={setAiDashboardInsightsEnabled}
+            aiMarksPackageEnabled={aiMarksPackageEnabled}
+            setAiMarksPackageEnabled={setAiMarksPackageEnabled}
             historyCount={history.length}
             settingsMessage={settingsMessage}
             onExportBackup={handleExportBackup}
             onImportBackup={handleImportBackup}
             onClearAllBullets={handleClearAllBullets}
+            onClearDailyLog={handleClearLogEntries}
             onReviewTutorial={() => {
               setTutorialStep("log");
               setActiveTab("log");
@@ -1660,11 +2152,14 @@ export default function Home() {
               </div>
               <button
                 type="button"
-                onClick={() => { setAltCategorySuggestion(null); setAltCategoryDrafts({}); }}
+                onClick={() => {
+                  setAltCategorySuggestion(null);
+                  setAltCategoryDrafts({});
+                }}
                 className="shrink-0 text-gray-400 hover:text-gray-700 text-lg leading-none"
                 aria-label="Dismiss"
               >
-                ✕
+                X
               </button>
             </div>
 
@@ -1719,7 +2214,10 @@ export default function Home() {
             <div className="mt-4 flex justify-end">
               <button
                 type="button"
-                onClick={() => { setAltCategorySuggestion(null); setAltCategoryDrafts({}); }}
+                onClick={() => {
+                  setAltCategorySuggestion(null);
+                  setAltCategoryDrafts({});
+                }}
                 className="rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-100"
               >
                 Dismiss

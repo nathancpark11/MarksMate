@@ -1,15 +1,35 @@
 import OpenAI from "openai";
+import { parseLimitedJsonBody } from "@/lib/aiRequestGuards";
 import { requireSessionUser } from "@/lib/auth";
+import { validateSingleAiInput } from "@/lib/promptSpamGuard";
+import { enforceRateLimits } from "@/lib/rateLimit";
+import { getRequestId, logApiError, logApiRequestMetadata } from "@/lib/safeLogging";
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY ?? "missing-openai-api-key",
 });
 
 export async function POST(req: Request) {
+  const routeName = "/api/suggest-category";
+  const requestId = getRequestId(req);
+  let inputLength = 0;
+
   try {
     const { response: authResponse } = await requireSessionUser();
     if (authResponse) {
       return authResponse;
+    }
+
+    const rateLimitResponse = enforceRateLimits(req, [
+      {
+        key: "suggest-category-per-hour",
+        maxRequests: 30,
+        windowMs: 60 * 60 * 1000,
+        errorMessage: "Hourly rate limit reached for category suggestion.",
+      },
+    ]);
+    if (rateLimitResponse) {
+      return rateLimitResponse;
     }
 
     if (!process.env.OPENAI_API_KEY) {
@@ -19,10 +39,22 @@ export async function POST(req: Request) {
       );
     }
 
-    const { text } = await req.json();
+    const parsedBody = await parseLimitedJsonBody<{ text?: unknown }>(req);
+    inputLength = parsedBody.bodyBytes;
+    if (!parsedBody.ok) {
+      logApiRequestMetadata({ requestId, routeName, inputLength, success: false, status: parsedBody.response.status });
+      return parsedBody.response;
+    }
 
-    if (!text || !text.trim()) {
+    const { text } = parsedBody.data;
+
+    if (typeof text !== "string" || !text.trim()) {
       return Response.json({ error: "Missing text to classify." }, { status: 400 });
+    }
+
+    const promptSpamError = validateSingleAiInput(text);
+    if (promptSpamError) {
+      return Response.json({ error: promptSpamError }, { status: 400 });
     }
 
     const categories = [
@@ -65,14 +97,17 @@ Bullet:\n${text}`;
 
     try {
       const parsed = JSON.parse(output.trim()) as { category?: string; reason?: string };
+      logApiRequestMetadata({ requestId, routeName, inputLength, success: true, status: 200 });
       return Response.json({ category: parsed.category, reason: parsed.reason });
     } catch {
+      logApiRequestMetadata({ requestId, routeName, inputLength, success: true, status: 200 });
       return Response.json({ category: output.trim(), reason: "" });
     }
   } catch (error: unknown) {
-    console.error("Suggest category error:", error);
+    logApiError("Suggest category error", error, { requestId, routeName, inputLength, success: false });
+    logApiRequestMetadata({ requestId, routeName, inputLength, success: false, status: 500 });
     return Response.json(
-      { error: error instanceof Error ? error.message : "Suggestion request failed." },
+      { error: "Unable to suggest a category right now. Please try again." },
       { status: 500 }
     );
   }

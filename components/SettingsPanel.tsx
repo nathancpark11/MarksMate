@@ -11,11 +11,20 @@ type SettingsPanelProps = {
   setUserUnit: (value: string) => void;
   bulletStyle: string;
   setBulletStyle: (value: string) => void;
+  aiGeneratorEnabled: boolean;
+  setAiGeneratorEnabled: (value: boolean) => void;
+  aiLogImportEnabled: boolean;
+  setAiLogImportEnabled: (value: boolean) => void;
+  aiDashboardInsightsEnabled: boolean;
+  setAiDashboardInsightsEnabled: (value: boolean) => void;
+  aiMarksPackageEnabled: boolean;
+  setAiMarksPackageEnabled: (value: boolean) => void;
   historyCount: number;
   settingsMessage: string;
   onExportBackup: () => void;
   onImportBackup: (file: File) => void;
   onClearAllBullets: () => void;
+  onClearDailyLog: () => void;
   onReviewTutorial: () => void;
   onDeleteAccount: () => void;
 };
@@ -31,11 +40,20 @@ export default function SettingsPanel({
   setUserUnit,
   bulletStyle,
   setBulletStyle,
+  aiGeneratorEnabled,
+  setAiGeneratorEnabled,
+  aiLogImportEnabled,
+  setAiLogImportEnabled,
+  aiDashboardInsightsEnabled,
+  setAiDashboardInsightsEnabled,
+  aiMarksPackageEnabled,
+  setAiMarksPackageEnabled,
   historyCount,
   settingsMessage,
   onExportBackup,
   onImportBackup,
   onClearAllBullets,
+  onClearDailyLog,
   onReviewTutorial,
   onDeleteAccount,
 }: SettingsPanelProps) {
@@ -45,7 +63,7 @@ export default function SettingsPanel({
     <div className="bg-white p-4 sm:p-8 rounded-xl shadow-md space-y-8">
       <h2 className="text-2xl font-bold">Settings</h2>
 
-      <section className="space-y-4">
+      <section className="space-y-4 rounded-lg border border-gray-200 bg-gray-50 p-4 sm:p-5">
         <h3 className="text-lg font-semibold text-gray-800">User Profile</h3>
         <p className="text-sm text-gray-500">
           Set defaults used across generators and marks package workflows.
@@ -123,8 +141,8 @@ export default function SettingsPanel({
         </div>
       </section>
 
-      <section className="space-y-4">
-        <h3 className="text-lg font-semibold text-gray-800">Default Bullet Settings</h3>
+      <section className="space-y-4 rounded-lg border border-gray-200 bg-gray-50 p-4 sm:p-5">
+        <h3 className="text-lg font-semibold text-gray-800">AI Generation Settings</h3>
         <div>
           <label className="block text-sm font-medium">Bullet Style</label>
           <select
@@ -140,9 +158,63 @@ export default function SettingsPanel({
             This default is sent to the bullet generator prompt each time you generate.
           </p>
         </div>
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <label className="flex items-start gap-3 rounded-md border border-gray-200 p-3">
+            <input
+              type="checkbox"
+              className="mt-1 h-4 w-4"
+              checked={aiGeneratorEnabled}
+              onChange={(e) => setAiGeneratorEnabled(e.target.checked)}
+            />
+            <span>
+              <span className="block text-sm font-medium text-gray-900">Generator Tab AI</span>
+              <span className="text-xs text-gray-500">Use AI for bullet generation, split recommendations, and alternate drafts.</span>
+            </span>
+          </label>
+
+          <label className="flex items-start gap-3 rounded-md border border-gray-200 p-3">
+            <input
+              type="checkbox"
+              className="mt-1 h-4 w-4"
+              checked={aiLogImportEnabled}
+              onChange={(e) => setAiLogImportEnabled(e.target.checked)}
+            />
+            <span>
+              <span className="block text-sm font-medium text-gray-900">Daily Log Tab AI</span>
+              <span className="text-xs text-gray-500">Use AI file parsing for Word/PDF note imports.</span>
+            </span>
+          </label>
+
+          <label className="flex items-start gap-3 rounded-md border border-gray-200 p-3">
+            <input
+              type="checkbox"
+              className="mt-1 h-4 w-4"
+              checked={aiDashboardInsightsEnabled}
+              onChange={(e) => setAiDashboardInsightsEnabled(e.target.checked)}
+            />
+            <span>
+              <span className="block text-sm font-medium text-gray-900">Dashboard Tab AI</span>
+              <span className="text-xs text-gray-500">Use AI insights, category evaluation, and rewording recommendations.</span>
+            </span>
+          </label>
+
+          <label className="flex items-start gap-3 rounded-md border border-gray-200 p-3">
+            <input
+              type="checkbox"
+              className="mt-1 h-4 w-4"
+              checked={aiMarksPackageEnabled}
+              onChange={(e) => setAiMarksPackageEnabled(e.target.checked)}
+            />
+            <span>
+              <span className="block text-sm font-medium text-gray-900">Marks Package Tab AI</span>
+              <span className="text-xs text-gray-500">Use AI to generate package summaries and supervisor notes.</span>
+            </span>
+          </label>
+        </div>
       </section>
 
-      <section className="space-y-4">
+      <section className="space-y-4 rounded-lg border border-gray-200 bg-gray-50 p-4 sm:p-5">
         <h3 className="text-lg font-semibold text-gray-800">Data Management</h3>
         <p className="text-sm text-gray-500">Saved bullets: {historyCount}</p>
 
@@ -165,7 +237,14 @@ export default function SettingsPanel({
             onClick={onClearAllBullets}
             className="px-4 py-2 rounded-md bg-red-600 text-white text-sm font-medium hover:bg-red-700"
           >
-            Clear All Bullets
+            Clear Official Marks
+          </button>
+
+          <button
+            onClick={onClearDailyLog}
+            className="px-4 py-2 rounded-md bg-red-600 text-white text-sm font-medium hover:bg-red-700"
+          >
+            Clear Daily Log
           </button>
         </div>
 
@@ -186,7 +265,7 @@ export default function SettingsPanel({
         {settingsMessage && <p className="text-sm text-gray-700">{settingsMessage}</p>}
       </section>
 
-      <section className="space-y-4">
+      <section className="space-y-4 rounded-lg border border-gray-200 bg-gray-50 p-4 sm:p-5">
         <h3 className="text-lg font-semibold text-gray-800">Help</h3>
         <p className="text-sm text-gray-500">
           Reopen the quick tutorial for a refresher on how each tab is meant to be used.
@@ -199,7 +278,7 @@ export default function SettingsPanel({
         </button>
       </section>
 
-      <section className="space-y-4">
+      <section className="space-y-4 rounded-lg border border-red-200 bg-red-50 p-4 sm:p-5">
         <h3 className="text-lg font-semibold text-red-700">Danger Zone</h3>
         <p className="text-sm text-gray-500">
           Permanently delete your account. This cannot be undone. All saved data will be lost.

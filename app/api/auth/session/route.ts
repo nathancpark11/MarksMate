@@ -15,6 +15,7 @@ export async function GET() {
     user: {
       ...user,
       needsTutorial: storedUser ? !storedUser.hasCompletedTutorial : false,
+      lastLoginAt: storedUser?.lastLoginAt ?? null,
     },
   });
 }

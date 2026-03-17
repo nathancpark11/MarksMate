@@ -1,7 +1,14 @@
 import { requireSessionUser } from "@/lib/auth";
 import { sql, ensureSchema } from "@/lib/db";
+import { sanitizeUnknownStrings } from "@/lib/textSanitization";
 
-const ALLOWED_KEYS = new Set(["history", "log", "settings"]);
+const ALLOWED_KEYS = new Set([
+  "history",
+  "log",
+  "settings",
+  "dashboardTotalEstimate",
+  "exportHistory",
+]);
 
 export async function GET(req: Request) {
   const { user, response } = await requireSessionUser();
@@ -45,7 +52,8 @@ export async function PUT(req: Request) {
 
   await ensureSchema();
 
-  const serialized = JSON.stringify(value);
+  const valueToStore = key === "settings" ? sanitizeUnknownStrings(value) : value;
+  const serialized = JSON.stringify(valueToStore);
 
   await sql`
     INSERT INTO user_data (user_id, data_key, data_value)

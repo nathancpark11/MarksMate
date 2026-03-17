@@ -1,4 +1,4 @@
-# My App
+# Bullet Proof
 
 This app uses OpenAI from server-side API routes only (under `app/api/*`).
 That means your OpenAI key should be configured as a server environment variable and never exposed to client code.

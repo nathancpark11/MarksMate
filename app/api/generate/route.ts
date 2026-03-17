@@ -1,9 +1,40 @@
 import OpenAI from "openai";
 import { requireSessionUser } from "@/lib/auth";
+import { validateCombinedAiInputs } from "@/lib/promptSpamGuard";
+import { enforceRateLimits } from "@/lib/rateLimit";
+import { getRequestId, logApiError, logApiRequestMetadata } from "@/lib/safeLogging";
+import {
+  GENERATE_REQUEST_MAX_BYTES,
+  getUtf8ByteLength,
+  validateActionAndImpact,
+} from "@/lib/generationValidation";
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY ?? "missing-openai-api-key",
 });
+
+const SIMPLE_MODEL = process.env.OPENAI_MODEL_SIMPLE ?? "gpt-4.1-mini";
+const STRONG_MODEL = process.env.OPENAI_MODEL_STRONG ?? "gpt-4.1";
+const FINAL_MARK_MODEL = process.env.OPENAI_MODEL_FINAL_MARK ?? STRONG_MODEL;
+const VAGUE_ENTRY_MODEL = process.env.OPENAI_MODEL_VAGUE_ENTRY ?? STRONG_MODEL;
+
+function isLikelyVagueAccomplishment(value: string) {
+  const text = value.replace(/\s+/g, " ").trim();
+  if (!text) {
+    return true;
+  }
+
+  const words = text.split(" ").filter(Boolean);
+  const wordCount = words.length;
+  const hasQuantifier = /\d|%|percent|hours?|hrs?|days?|weeks?|months?/i.test(text);
+  const hasStrongVerb =
+    /\b(led|managed|coordinated|trained|developed|implemented|executed|improved|reduced|increased|organized|supervised|resolved|delivered|planned|directed|analyzed)\b/i.test(
+      text
+    );
+  const hasVagueLanguage = /\b(helped|worked on|assisted|supported|did|handled things)\b/i.test(text);
+
+  return wordCount < 9 || (!hasQuantifier && (!hasStrongVerb || hasVagueLanguage));
+}
 
 function getCategoryGuidance(category: string) {
   switch (category) {
@@ -65,17 +96,96 @@ function getRankGuidance(rankLevel: string) {
   }
 }
 
+function parseGeneratedResult(rawContent: string) {
+  const trimmed = rawContent.trim();
+
+  try {
+    const parsed = JSON.parse(trimmed) as { bullet?: unknown; title?: unknown };
+    if (typeof parsed.bullet === "string" && typeof parsed.title === "string") {
+      return {
+        bullet: parsed.bullet.trim(),
+        title: parsed.title.trim(),
+      };
+    }
+  } catch {
+    // Fall back to extracting from a labeled plain-text response.
+  }
+
+  const bulletMatch = trimmed.match(/bullet\s*:\s*(.+)/i);
+  const titleMatch = trimmed.match(/title\s*:\s*(.+)/i);
+
+  return {
+    bullet: bulletMatch?.[1]?.trim() ?? trimmed,
+    title: titleMatch?.[1]?.trim() ?? "",
+  };
+}
+
 export async function POST(req: Request) {
+  const routeName = "/api/generate";
+  const requestId = getRequestId(req);
+  let inputLength = 0;
+
   try {
     const { response: authResponse } = await requireSessionUser();
     if (authResponse) {
       return authResponse;
     }
 
+    const rateLimitResponse = enforceRateLimits(req, [
+      {
+        key: "generate-per-minute",
+        maxRequests: 5,
+        windowMs: 60_000,
+        errorMessage: "Rate limit reached for Generate Mark.",
+      },
+      {
+        key: "generate-per-hour",
+        maxRequests: 40,
+        windowMs: 60 * 60 * 1000,
+        errorMessage: "Hourly rate limit reached for Generate Mark.",
+      },
+    ]);
+    if (rateLimitResponse) {
+      return rateLimitResponse;
+    }
+
     if (!process.env.OPENAI_API_KEY) {
       return Response.json(
         { error: "Server misconfiguration: OPENAI_API_KEY is not set." },
         { status: 500 }
+      );
+    }
+
+    const contentLengthHeader = req.headers.get("content-length");
+    if (contentLengthHeader) {
+      const parsedContentLength = Number(contentLengthHeader);
+      if (Number.isFinite(parsedContentLength) && parsedContentLength > GENERATE_REQUEST_MAX_BYTES) {
+        logApiRequestMetadata({
+          requestId,
+          routeName,
+          inputLength: parsedContentLength,
+          success: false,
+          status: 413,
+        });
+        return Response.json(
+          {
+            error: `Request body exceeds ${GENERATE_REQUEST_MAX_BYTES} bytes. Please shorten your Action/Impact text.`,
+          },
+          { status: 413 }
+        );
+      }
+    }
+
+    const rawBody = await req.text();
+    const bodyBytes = getUtf8ByteLength(rawBody);
+    inputLength = bodyBytes;
+    if (bodyBytes > GENERATE_REQUEST_MAX_BYTES) {
+      logApiRequestMetadata({ requestId, routeName, inputLength, success: false, status: 413 });
+      return Response.json(
+        {
+          error: `Request body exceeds ${GENERATE_REQUEST_MAX_BYTES} bytes. Please shorten your Action/Impact text.`,
+        },
+        { status: 413 }
       );
     }
 
@@ -89,36 +199,73 @@ export async function POST(req: Request) {
       percentImproved,
       hoursSaved,
       missionImpact,
-    } = await req.json();
+      generationIntent,
+    } = JSON.parse(rawBody) as {
+      accomplishment?: unknown;
+      category?: unknown;
+      rankLevel?: unknown;
+      rating?: unknown;
+      bulletStyle?: unknown;
+      peopleAffected?: unknown;
+      percentImproved?: unknown;
+      hoursSaved?: unknown;
+      missionImpact?: unknown;
+      generationIntent?: unknown;
+    };
 
-    if (!accomplishment || !accomplishment.trim()) {
-      return Response.json(
-        { error: "Please enter an accomplishment." },
-        { status: 400 }
-      );
+    const accomplishmentValue = typeof accomplishment === "string" ? accomplishment : "";
+    const missionImpactValue = typeof missionImpact === "string" ? missionImpact : "";
+
+    const validationError = validateActionAndImpact(accomplishmentValue, missionImpactValue);
+    if (validationError) {
+      logApiRequestMetadata({ requestId, routeName, inputLength, success: false, status: 400 });
+      return Response.json({ error: validationError }, { status: 400 });
     }
 
-    const categoryValue = category || "Quality of Work";
-    const rankValue = rankLevel || "E4";
-    const ratingValue = rating || "Undesignated";
-    const bulletStyleValue = bulletStyle || "Standard";
+    const promptSpamError = validateCombinedAiInputs([accomplishmentValue, missionImpactValue]);
+    if (promptSpamError) {
+      logApiRequestMetadata({ requestId, routeName, inputLength, success: false, status: 400 });
+      return Response.json({ error: promptSpamError }, { status: 400 });
+    }
+
+    const normalizedAccomplishment = accomplishmentValue.trim();
+    const normalizedMissionImpact = missionImpactValue.trim();
+
+    const categoryValue = typeof category === "string" && category ? category : "Quality of Work";
+    const rankValue = typeof rankLevel === "string" && rankLevel ? rankLevel : "E4";
+    const ratingValue = typeof rating === "string" && rating ? rating : "Undesignated";
+    const bulletStyleValue = typeof bulletStyle === "string" && bulletStyle ? bulletStyle : "Standard";
+    const peopleAffectedValue =
+      typeof peopleAffected === "string" && peopleAffected ? peopleAffected : "";
+    const percentImprovedValue =
+      typeof percentImproved === "string" && percentImproved ? percentImproved : "";
+    const hoursSavedValue = typeof hoursSaved === "string" && hoursSaved ? hoursSaved : "";
+    const generationIntentValue =
+      typeof generationIntent === "string" && generationIntent ? generationIntent : "";
 
     const categoryGuidance = getCategoryGuidance(categoryValue);
     const rankGuidance = getRankGuidance(rankValue);
-    const impactInclusionRule = missionImpact && missionImpact.trim()
+    const isVagueEntry = isLikelyVagueAccomplishment(normalizedAccomplishment);
+    const selectedModel =
+      generationIntentValue === "final-polished-official-mark"
+        ? FINAL_MARK_MODEL
+        : isVagueEntry
+          ? VAGUE_ENTRY_MODEL
+          : SIMPLE_MODEL;
+    const impactInclusionRule = normalizedMissionImpact
       ? "- If mission impact is provided, explicitly include that impact in the bullet."
       : "- If mission impact is not provided, infer impact only from other provided data.";
 
     const supportingData = `
 Supporting Data:
-- People affected: ${peopleAffected || "Not provided"}
-- Percent improved: ${percentImproved || "Not provided"}
-- Hours saved: ${hoursSaved || "Not provided"}
-- Mission impact: ${missionImpact || "Not provided"}
+- People affected: ${peopleAffectedValue || "Not provided"}
+- Percent improved: ${percentImprovedValue || "Not provided"}
+- Hours saved: ${hoursSavedValue || "Not provided"}
+- Mission impact: ${normalizedMissionImpact || "Not provided"}
 `;
 
     const completion = await client.chat.completions.create({
-      model: "gpt-3.5-turbo",
+      model: selectedModel,
       messages: [
         {
           role: "user",
@@ -126,13 +273,15 @@ Supporting Data:
 You are writing performance evaluation bullets for a U.S. Coast Guard member.
 
 Rules:
-- Start with a dash (-)
-- Use strong action verbs
-- Focus on measurable impact and results
-- Keep it to one sentence
-- Be concise and professional
-- Avoid filler words
-- Return only the bullet
+- Return valid JSON only in this shape: {"bullet":"...","title":"..."}
+- 'bullet' must start with a dash (-)
+- 'bullet' must use strong action verbs
+- 'bullet' must focus on measurable impact and results
+- 'bullet' must be concise and professional
+- 'bullet' must avoid filler words
+- 'title' must be 2-3 words
+- 'title' must be Title Case
+- 'title' must briefly label the accomplishment without punctuation at the end
 - Use the supporting data when helpful
 - Do not ignore provided mission impact
 - Do not invent numbers that were not provided
@@ -165,18 +314,18 @@ ${bulletStyleValue}
 
 Style Guidance:
 - If Bullet Style Preference is "Short/Concise", keep wording compact and minimize extra clauses.
-- If Bullet Style Preference is "Detailed", include stronger supporting context while still keeping one sentence.
+- If Bullet Style Preference is "Detailed", include stronger supporting context while still staying tight and readable.
 - If Bullet Style Preference is "Standard", keep equal emphasis on action, result, and impact.
 
 ${supportingData}
 
 Example:
-- Developed and implemented training plan for 12 new members; increased qualification completion rates 30% and improved unit readiness.
+{"bullet":"- Developed and implemented trng plan for 12 new Mbrs; increased qualification completion rates 30% and improved unit readiness.","title":"Training Leadership"}
 
-Rewrite the following accomplishment as a professional evaluation bullet.
+Rewrite the following accomplishment as a professional evaluation bullet and short title.
 
 Accomplishment:
-${accomplishment}
+${normalizedAccomplishment}
 `,
         },
       ],
@@ -184,20 +333,21 @@ ${accomplishment}
       temperature: 0.7,
     });
 
+    const content = completion.choices[0]?.message?.content?.trim();
+    const parsedResult = parseGeneratedResult(content || "");
+
+    logApiRequestMetadata({ requestId, routeName, inputLength, success: true, status: 200 });
     return Response.json({
-      bullet: completion.choices[0]?.message?.content?.trim(),
+      bullet: parsedResult.bullet,
+      title: parsedResult.title,
     });
   } catch (error: unknown) {
-    console.error("OpenAI route error:", error);
-
-    const message =
-      error instanceof Error
-        ? error.message
-        : "OpenAI request failed. Check the terminal for details.";
+    logApiError("OpenAI route error", error, { requestId, routeName, inputLength, success: false });
+    logApiRequestMetadata({ requestId, routeName, inputLength, success: false, status: 500 });
 
     return Response.json(
       {
-        error: message,
+        error: "Unable to generate a mark right now. Please try again.",
       },
       { status: 500 }
     );

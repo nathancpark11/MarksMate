@@ -1,18 +1,30 @@
 import { useEffect, useState } from "react";
 
-type HistoryItem = { text: string; date: string; category?: string; markingPeriod?: string };
+type HistoryItem = { text: string; date: string; category?: string; markingPeriod?: string; title?: string };
+
+const OFFICIAL_MARK_CATEGORIES = [
+  "Military Bearing",
+  "Customs, Courtesies and Traditions",
+  "Quality of Work",
+  "Technical Proficiency",
+  "Initiative",
+  "Decision Making and Problem Solving",
+  "Military Readiness",
+  "Self Awareness and Learning",
+  "Team Building",
+  "Respect for Others",
+  "Accountability and Responsibility",
+  "Influencing Others",
+  "Effective Communication",
+];
 
 type HistoryPanelProps = {
   history: HistoryItem[];
   rankLevel: string;
   handleCopy: (text: string) => void;
   handleDelete: (index: number) => void;
-  handleUpdateMark: (index: number, nextText: string) => void;
+  handleUpdateMark: (index: number, nextText: string, nextCategory?: string) => void;
   handleReprompt: (index: number) => void;
-  handleSuggestCategory: (text: string) => void;
-  handleSummarize: (text: string) => void;
-  suggestions?: Record<string, { category: string; reason: string }>;
-  summaries?: Record<string, string>;
 };
 
 export default function HistoryPanel({
@@ -22,16 +34,13 @@ export default function HistoryPanel({
   handleDelete,
   handleUpdateMark,
   handleReprompt,
-  handleSuggestCategory,
-  handleSummarize,
-  suggestions,
-  summaries,
 }: HistoryPanelProps) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [expandedPeriods, setExpandedPeriods] = useState<Record<string, boolean>>({});
   const [expandedMonths, setExpandedMonths] = useState<Record<string, boolean>>({});
   const [periodCategoryFilters, setPeriodCategoryFilters] = useState<Record<string, string[]>>({});
   const [editableMarks, setEditableMarks] = useState<Record<number, string>>({});
+  const [editableCategories, setEditableCategories] = useState<Record<number, string>>({});
   const [editingMarks, setEditingMarks] = useState<Record<number, boolean>>({});
 
   const parseValidDate = (dateStr: string): Date | null => {
@@ -48,25 +57,37 @@ export default function HistoryPanel({
     return parsed ? parsed.toLocaleDateString() : "Not Dated";
   };
 
-  useEffect(() => {
-    history.forEach((item) => {
-      if (!item.category && !suggestions?.[item.text]) {
-        handleSuggestCategory(item.text);
-      }
-      if (!summaries?.[item.text]) {
-        handleSummarize(item.text);
-      }
-    });
-  }, [history, suggestions, summaries, handleSuggestCategory, handleSummarize]);
+  const toTitleCase = (value: string): string =>
+    value
+      .toLowerCase()
+      .replace(/\b\w/g, (char) => char.toUpperCase());
 
   useEffect(() => {
-    setEditableMarks((prev) => {
-      const next: Record<number, string> = {};
-      history.forEach((item, index) => {
-        next[index] = prev[index] ?? item.text;
+    const timer = window.setTimeout(() => {
+      setEditableMarks((prev) => {
+        const next: Record<number, string> = {};
+        history.forEach((item, index) => {
+          next[index] = prev[index] ?? item.text;
+        });
+        return next;
       });
-      return next;
-    });
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [history]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setEditableCategories((prev) => {
+        const next: Record<number, string> = {};
+        history.forEach((item, index) => {
+          next[index] = prev[index] ?? item.category ?? "";
+        });
+        return next;
+      });
+    }, 0);
+
+    return () => window.clearTimeout(timer);
   }, [history]);
 
   const getMarkingPeriodFromDate = (d: Date): string => {
@@ -232,7 +253,7 @@ export default function HistoryPanel({
             new Set(
               Object.values(grouped[period])
                 .flat()
-                .map(({ item }) => item.category || suggestions?.[item.text]?.category)
+                .map(({ item }) => item.category)
                 .filter((category): category is string => Boolean(category?.trim()))
                 .map((category) => category.trim())
             )
@@ -247,7 +268,7 @@ export default function HistoryPanel({
           const visibleMonthCount = sortedMonths.filter((month) => {
             if (selectedPeriodCategoryFilters.length === 0) return true;
             return grouped[period][month].some(({ item }) => {
-              const itemCategory = item.category || suggestions?.[item.text]?.category;
+              const itemCategory = item.category;
               return selectedPeriodCategoryFilters.some(
                 (selectedCategory) =>
                   (itemCategory || "").trim().toLowerCase() === selectedCategory.toLowerCase()
@@ -331,7 +352,7 @@ export default function HistoryPanel({
                     const isMonthOpen = expandedMonths[monthKey] !== false;
                     const monthItems = grouped[period][month].filter(({ item }) => {
                       if (selectedPeriodCategoryFilters.length === 0) return true;
-                      const itemCategory = item.category || suggestions?.[item.text]?.category;
+                      const itemCategory = item.category;
                       return selectedPeriodCategoryFilters.some(
                         (selectedCategory) =>
                           (itemCategory || "").trim().toLowerCase() === selectedCategory.toLowerCase()
@@ -353,31 +374,52 @@ export default function HistoryPanel({
                         {isMonthOpen && (
                           <div className="space-y-2 px-4 py-2">
                             {monthItems.map(({ item, index }) => (
-                              <div key={index} className="border rounded-md p-3">
+                              <div key={index} className="rounded-md border border-gray-200 bg-gray-50 p-3">
                                 <div
-                                  className="cursor-pointer flex items-center justify-between"
+                                  className="cursor-pointer flex items-center justify-between rounded-md bg-gray-50 px-3 py-2"
                                   onClick={() => setExpanded((prev) => ({ ...prev, [item.text]: !prev[item.text] }))}
                                 >
                                   <div className="flex min-w-0 items-center gap-2">
-                                    {summaries?.[item.text] && (
-                                      <h3 className="text-sm font-semibold">
-                                        {summaries[item.text]?.replace(/\b\w/g, (l) => l.toUpperCase())}
-                                      </h3>
+                                    {item.title && (
+                                      <h3 className="text-sm font-semibold text-gray-900">{toTitleCase(item.title)}</h3>
                                     )}
                                     <p className="text-xs text-gray-400">{formatDateOrBlank(item.date)}</p>
-                                    {(item.category || suggestions?.[item.text]) && (
+                                  </div>
+                                  <div className="ml-3 flex shrink-0 items-center gap-2">
+                                    {item.category && (
                                       <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
-                                        {item.category || `${suggestions?.[item.text]?.category} (AI)`}
+                                        {item.category}
                                       </span>
                                     )}
+                                    <span className="text-sm">{expanded[item.text] ? '▼' : '▶'}</span>
                                   </div>
-                                  <span className="text-sm">{expanded[item.text] ? '▼' : '▶'}</span>
                                 </div>
 
                                 {expanded[item.text] && (
                                   <div className="mt-2">
                                     {editingMarks[index] ? (
                                       <>
+                                        <div className="mt-2">
+                                          <label className="block text-xs font-medium text-gray-600">Category</label>
+                                          <select
+                                            value={editableCategories[index] ?? item.category ?? ""}
+                                            onChange={(e) =>
+                                              setEditableCategories((prev) => ({
+                                                ...prev,
+                                                [index]: e.target.value,
+                                              }))
+                                            }
+                                            className="mt-1 w-full rounded-md border border-indigo-200 bg-indigo-50 p-2 text-sm text-indigo-700"
+                                            aria-label="Edit official mark category"
+                                          >
+                                            <option value="">No category</option>
+                                            {OFFICIAL_MARK_CATEGORIES.map((categoryOption) => (
+                                              <option key={categoryOption} value={categoryOption}>
+                                                {categoryOption}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        </div>
                                         <textarea
                                           value={editableMarks[index] ?? item.text}
                                           onChange={(e) =>
@@ -386,7 +428,7 @@ export default function HistoryPanel({
                                               [index]: e.target.value,
                                             }))
                                           }
-                                          className="w-full rounded-md border p-2 text-sm"
+                                          className="mt-2 w-full rounded-md border p-2 text-sm"
                                           rows={3}
                                           aria-label="Edit official mark"
                                           autoFocus
@@ -395,6 +437,10 @@ export default function HistoryPanel({
                                           <button
                                             onClick={() => {
                                               setEditableMarks((prev) => ({ ...prev, [index]: item.text }));
+                                              setEditableCategories((prev) => ({
+                                                ...prev,
+                                                [index]: item.category ?? "",
+                                              }));
                                               setEditingMarks((prev) => ({ ...prev, [index]: false }));
                                             }}
                                             className="text-gray-600 text-sm"
@@ -408,7 +454,7 @@ export default function HistoryPanel({
                                                 setEditableMarks((prev) => ({ ...prev, [index]: item.text }));
                                                 return;
                                               }
-                                              handleUpdateMark(index, nextText);
+                                              handleUpdateMark(index, nextText, editableCategories[index] ?? item.category);
                                               setEditingMarks((prev) => ({ ...prev, [index]: false }));
                                               if (nextText !== item.text) {
                                                 setExpanded((prev) => {
@@ -443,6 +489,10 @@ export default function HistoryPanel({
                                           <button
                                             onClick={() => {
                                               setEditableMarks((prev) => ({ ...prev, [index]: item.text }));
+                                              setEditableCategories((prev) => ({
+                                                ...prev,
+                                                [index]: item.category ?? "",
+                                              }));
                                               setEditingMarks((prev) => ({ ...prev, [index]: true }));
                                             }}
                                             className="text-blue-600 text-sm"

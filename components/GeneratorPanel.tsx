@@ -1,10 +1,15 @@
 import { useEffect, useRef, useState } from "react";
+import {
+  ACTION_MAX_CHARS,
+  IMPACT_MAX_CHARS,
+} from "@/lib/generationValidation";
 
 type LogEntry = {
   text: string;
   date: string;
   dates?: string[];
   committed?: boolean;
+  group?: string;
   category?: string;
   impact?: string;
 };
@@ -15,6 +20,7 @@ type DailyLogItem = {
   preview: string;
   dates: string[];
   sourceIndex: number;
+  group?: string;
 };
 
 function buildDailyLogItems(entries: LogEntry[]): DailyLogItem[] {
@@ -29,6 +35,7 @@ function buildDailyLogItems(entries: LogEntry[]): DailyLogItem[] {
         preview,
         dates,
         sourceIndex: index,
+        group: entry.group?.trim() || undefined,
         committed: entry.committed,
       };
     })
@@ -74,7 +81,7 @@ type GeneratorPanelProps = {
   handleRepromptSplitBulletDraft: (draftId: string) => void | Promise<void>;
   handleCommitSplitBulletDrafts: (draftIds: string[]) => void;
   handleCommitBullet: () => void;
-  onLogEntryPulled?: (payload: { date: string; index: number }) => void;
+  onLogEntryPulled?: (payload: { date: string | null; index: number | null; groupedIndexes?: number[] }) => void;
   pendingLogPull?: number | null;
   onPendingLogPullConsumed?: () => void;
 };
@@ -117,15 +124,28 @@ export default function GeneratorPanel({
   const [isSplitDraftModalOpen, setIsSplitDraftModalOpen] = useState(false);
   const [selectedSplitDraftIds, setSelectedSplitDraftIds] = useState<string[]>([]);
   const [selectedLogEntryId, setSelectedLogEntryId] = useState("");
-  const [impactLoading, setImpactLoading] = useState(false);
-  const [aiRecommendationEnabled, setAiRecommendationEnabled] = useState(true);
+  const [selectedGroupName, setSelectedGroupName] = useState("");
+  const [selectedGroupedEntryIds, setSelectedGroupedEntryIds] = useState<string[]>([]);
+  const [pullMode, setPullMode] = useState<"entry" | "group">("entry");
   const previousLoadingRef = useRef(loading);
-  const latestPullRequestRef = useRef(0);
 
   const dailyLogItems = buildDailyLogItems(logEntries);
   const selectedLogEntryIndex = dailyLogItems.findIndex((entry) => entry.id === selectedLogEntryId);
+  const groupedDailyLogItems = dailyLogItems
+    .filter((entry) => !!entry.group)
+    .reduce<Map<string, DailyLogItem[]>>((acc, entry) => {
+      const groupName = entry.group!;
+      const existing = acc.get(groupName) || [];
+      existing.push(entry);
+      acc.set(groupName, existing);
+      return acc;
+    }, new Map());
+  const groupNames = Array.from(groupedDailyLogItems.keys()).sort((a, b) => a.localeCompare(b));
+  const selectedGroupEntries = selectedGroupName
+    ? groupedDailyLogItems.get(selectedGroupName) || []
+    : [];
 
-  const pullLogEntryById = async (entryId: string) => {
+  const pullLogEntryById = (entryId: string) => {
     const targetEntry = dailyLogItems.find((entry) => entry.id === entryId);
     if (!targetEntry) {
       return;
@@ -139,38 +159,23 @@ export default function GeneratorPanel({
     setInput(pulledText);
 
     if (onLogEntryPulled) {
-      onLogEntryPulled({ date: targetEntry.dates[0] ?? "", index: targetEntry.sourceIndex });
+      onLogEntryPulled({ date: targetEntry.dates[0] ?? null, index: targetEntry.sourceIndex });
     }
+  };
 
-    if (!aiRecommendationEnabled) {
+  const pullGroupedEntries = (entriesToPull: DailyLogItem[]) => {
+    const entries = entriesToPull
+      .map((entry) => entry.text.trim())
+      .filter((text) => text.length > 0);
+
+    if (entries.length === 0) {
       return;
     }
 
-    const requestId = latestPullRequestRef.current + 1;
-    latestPullRequestRef.current = requestId;
-    setImpactLoading(true);
-    try {
-      const res = await fetch("/api/suggest-impact", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: pulledText }),
-      });
-
-      const data = (await res.json()) as { impact?: string };
-      if (latestPullRequestRef.current !== requestId) {
-        return;
-      }
-
-      if (res.ok && data.impact) {
-        setMissionImpact(data.impact);
-      }
-    } catch {
-      // Non-blocking: Action pull still succeeds if impact suggestion fails.
-    } finally {
-      if (latestPullRequestRef.current === requestId) {
-        setImpactLoading(false);
-      }
-    }
+    setSelectedLogEntryId("");
+    setMissionImpact("");
+    setInput(entries.join("\n"));
+    onLogEntryPulled?.({ date: null, index: null, groupedIndexes: entriesToPull.map((e) => e.sourceIndex) });
   };
 
   const selectLogEntry = (nextId: string) => {
@@ -184,8 +189,54 @@ export default function GeneratorPanel({
       setMissionImpact("");
     }
 
+    setSelectedGroupName("");
+    setSelectedGroupedEntryIds([]);
     setSelectedLogEntryId(nextId);
-    void pullLogEntryById(nextId);
+    pullLogEntryById(nextId);
+  };
+
+  const toggleGroupedEntrySelection = (entryId: string) => {
+    setSelectedGroupedEntryIds((prev) =>
+      prev.includes(entryId) ? prev.filter((id) => id !== entryId) : [...prev, entryId]
+    );
+  };
+
+  const handleSelectGroup = (groupName: string) => {
+    setSelectedLogEntryId("");
+    setSelectedGroupName(groupName);
+    setSelectedGroupedEntryIds([]);
+  };
+
+  const handleSwitchPullMode = (mode: "entry" | "group") => {
+    if (mode === pullMode) return;
+    setPullMode(mode);
+    if (mode === "entry") {
+      setSelectedGroupName("");
+      setSelectedGroupedEntryIds([]);
+    } else {
+      setSelectedLogEntryId("");
+    }
+  };
+
+  const handlePullSelectedGroupedEntries = () => {
+    if (!selectedGroupName || selectedGroupedEntryIds.length === 0) {
+      return;
+    }
+
+    const entriesToPull = selectedGroupEntries.filter((entry) =>
+      selectedGroupedEntryIds.includes(entry.id)
+    );
+
+    pullGroupedEntries(entriesToPull);
+  };
+
+  const handlePullAllGroupedEntries = () => {
+    if (selectedGroupEntries.length === 0) {
+      return;
+    }
+
+    pullGroupedEntries(selectedGroupEntries);
+    setSelectedGroupedEntryIds(selectedGroupEntries.map((entry) => entry.id));
   };
 
   const handleStepLogEntry = (direction: -1 | 1) => {
@@ -216,6 +267,21 @@ export default function GeneratorPanel({
   }, [dailyLogItems, selectedLogEntryId]);
 
   useEffect(() => {
+    if (!selectedGroupName) {
+      return;
+    }
+
+    if (!groupedDailyLogItems.has(selectedGroupName)) {
+      setSelectedGroupName("");
+      setSelectedGroupedEntryIds([]);
+      return;
+    }
+
+    const validEntryIds = new Set((groupedDailyLogItems.get(selectedGroupName) || []).map((entry) => entry.id));
+    setSelectedGroupedEntryIds((prev) => prev.filter((id) => validEntryIds.has(id)));
+  }, [groupedDailyLogItems, selectedGroupName]);
+
+  useEffect(() => {
     const generationJustFinished = previousLoadingRef.current && !loading;
     if (generationJustFinished && bullet?.text) {
       setIsBulletModalOpen(true);
@@ -240,6 +306,13 @@ export default function GeneratorPanel({
     const item = buildDailyLogItems(logEntries).find((i) => i.sourceIndex === pendingLogPull);
     if (item) {
       selectLogEntry(item.id);
+    } else {
+      // Entry may be committed and filtered out of the dropdown (e.g. a committed grouped entry).
+      // Fall back to pulling the text directly so it still populates the Action field.
+      const entry = logEntries[pendingLogPull];
+      if (entry?.text?.trim()) {
+        setInput(entry.text.trim());
+      }
     }
     onPendingLogPullConsumed?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -256,52 +329,140 @@ export default function GeneratorPanel({
       </p>
 
       <div className="mt-6 rounded-lg border border-blue-200 bg-blue-50 p-3 sm:p-4">
-        <p className="text-sm font-semibold text-blue-900">Pull From Daily Log</p>
-        <p className="mt-1 text-xs text-blue-800">
-          Pick a Daily Log entry and it will be pulled into Action automatically.
-        </p>
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm font-semibold text-blue-900">Pull From Daily Log</p>
 
-        <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
-          <div className="flex w-full items-center gap-2">
+          {/* Toggle switch */}
+          <div className="flex rounded-md border border-blue-300 bg-white p-0.5 text-xs font-semibold">
             <button
               type="button"
-              onClick={() => handleStepLogEntry(-1)}
-              disabled={dailyLogItems.length < 2}
-              className="rounded-md border border-blue-300 bg-white px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
-              aria-label="Previous daily log entry"
-              title="Previous"
+              onClick={() => handleSwitchPullMode("entry")}
+              className={`rounded px-3 py-1.5 transition-colors ${
+                pullMode === "entry"
+                  ? "bg-blue-700 text-white"
+                  : "text-blue-700 hover:bg-blue-50"
+              }`}
             >
-              ←
+              Single Entry
             </button>
-
-            <select
-              value={selectedLogEntryId}
-              onChange={(e) => selectLogEntry(e.target.value)}
-              className="w-full rounded-md border p-2 text-sm"
-              disabled={dailyLogItems.length === 0}
-            >
-              {dailyLogItems.length > 0 && <option value="">Daily Log Entry</option>}
-              {dailyLogItems.length === 0 && <option value="">No Daily Log entries available</option>}
-              {dailyLogItems.map((entry) => (
-                <option key={entry.id} value={entry.id}>
-                  {entry.preview}
-                </option>
-              ))}
-            </select>
-
             <button
               type="button"
-              onClick={() => handleStepLogEntry(1)}
-              disabled={dailyLogItems.length < 2}
-              className="rounded-md border border-blue-300 bg-white px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
-              aria-label="Next daily log entry"
-              title="Next"
+              onClick={() => handleSwitchPullMode("group")}
+              className={`rounded px-3 py-1.5 transition-colors ${
+                pullMode === "group"
+                  ? "bg-blue-700 text-white"
+                  : "text-blue-700 hover:bg-blue-50"
+              }`}
             >
-              →
+              Custom Group
             </button>
           </div>
         </div>
 
+        {pullMode === "entry" && (
+          <>
+            <p className="mt-1 text-xs text-blue-800">
+              Pick a Daily Log entry and it will be pulled into Action automatically.
+            </p>
+            <div className="mt-3 flex w-full items-center gap-2">
+              <button
+                type="button"
+                onClick={() => handleStepLogEntry(-1)}
+                disabled={dailyLogItems.length < 2}
+                className="rounded-md border border-blue-300 bg-white px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+                aria-label="Previous daily log entry"
+                title="Previous"
+              >
+                ←
+              </button>
+
+              <select
+                value={selectedLogEntryId}
+                onChange={(e) => selectLogEntry(e.target.value)}
+                className="w-full rounded-md border p-2 text-sm"
+                disabled={dailyLogItems.length === 0}
+              >
+                {dailyLogItems.length > 0 && <option value="">Daily Log Entry</option>}
+                {dailyLogItems.length === 0 && <option value="">No Daily Log entries available</option>}
+                {dailyLogItems.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.preview}
+                  </option>
+                ))}
+              </select>
+
+              <button
+                type="button"
+                onClick={() => handleStepLogEntry(1)}
+                disabled={dailyLogItems.length < 2}
+                className="rounded-md border border-blue-300 bg-white px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+                aria-label="Next daily log entry"
+                title="Next"
+              >
+                →
+              </button>
+            </div>
+          </>
+        )}
+
+        {pullMode === "group" && (
+          <>
+            <p className="mt-1 text-xs text-blue-800">
+              Select a custom group and pull all entries or only the ones you choose.
+            </p>
+            <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center">
+              <select
+                value={selectedGroupName}
+                onChange={(e) => handleSelectGroup(e.target.value)}
+                className="w-full rounded-md border p-2 text-sm"
+                disabled={groupNames.length === 0}
+              >
+                {groupNames.length > 0 && <option value="">Select a custom group</option>}
+                {groupNames.length === 0 && <option value="">No custom groups available</option>}
+                {groupNames.map((groupName) => (
+                  <option key={groupName} value={groupName}>
+                    {groupName}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={handlePullAllGroupedEntries}
+                disabled={!selectedGroupName || selectedGroupEntries.length === 0}
+                className="rounded-md border border-blue-300 bg-white px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Pull All
+              </button>
+              <button
+                type="button"
+                onClick={handlePullSelectedGroupedEntries}
+                disabled={!selectedGroupName || selectedGroupedEntryIds.length === 0}
+                className="rounded-md bg-blue-700 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Pull Selected
+              </button>
+            </div>
+
+            {selectedGroupName && selectedGroupEntries.length > 0 && (
+              <div className="mt-2 max-h-36 space-y-1 overflow-y-auto rounded-md border border-blue-200 bg-white p-2">
+                {selectedGroupEntries.map((entry) => (
+                  <label
+                    key={entry.id}
+                    className="flex cursor-pointer items-start gap-2 rounded-md px-2 py-1 text-sm text-blue-900 hover:bg-blue-50"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedGroupedEntryIds.includes(entry.id)}
+                      onChange={() => toggleGroupedEntrySelection(entry.id)}
+                      className="mt-0.5"
+                    />
+                    <span>{entry.preview}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </>
+        )}
       </div>
 
       <div className="mt-6 flex items-center justify-between gap-3">
@@ -319,6 +480,7 @@ export default function GeneratorPanel({
       <textarea
         value={input}
         onChange={(e) => setInput(e.target.value)}
+        maxLength={ACTION_MAX_CHARS}
         className="mt-2 h-36 w-full border rounded-md p-3"
         placeholder={"What did you do? (Action or Task)\nExample: Led 06 airmen in physical fitness sessions."}
       />
@@ -326,18 +488,6 @@ export default function GeneratorPanel({
       <div className="mt-6 flex items-center justify-between gap-3">
         <label className="text-sm font-medium">Impact:</label>
         <div className="flex flex-nowrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setAiRecommendationEnabled((prev) => !prev)}
-            className={`rounded-md border px-3 py-1 text-xs font-semibold ${
-              aiRecommendationEnabled
-                ? "border-blue-600 bg-blue-600 text-white"
-                : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
-            }`}
-            aria-pressed={aiRecommendationEnabled}
-          >
-            AI Recommendation {aiRecommendationEnabled ? "On" : "Off"}
-          </button>
           <button
             type="button"
             onClick={() => setMissionImpact("")}
@@ -350,12 +500,11 @@ export default function GeneratorPanel({
       <textarea
         value={missionImpact}
         onChange={(e) => setMissionImpact(e.target.value)}
+        maxLength={IMPACT_MAX_CHARS}
         className="mt-2 h-24 w-full border rounded-md p-3"
         placeholder={"Optional (Highly Recommended): What was the result or mission impact?\nExample: 03 airmen graduated AST A-School"}
       />
-      {impactLoading && aiRecommendationEnabled && (
-        <p className="mt-2 text-xs text-blue-700">AI is recommending an impact...</p>
-      )}
+      <p className="mt-2 text-sm italic text-gray-500">If blank, AI will suggest an impact when generated.</p>
 
       <label className="block mt-6 text-sm font-medium">Category (optional - AI will suggest if blank)</label>
       <select
@@ -410,7 +559,7 @@ export default function GeneratorPanel({
           disabled={loading}
           className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-blue-300"
         >
-          {loading ? "Generating..." : "Generate Bullet"}
+          {loading ? "Generating..." : "Generate Mark"}
         </button>
         <button
           type="button"

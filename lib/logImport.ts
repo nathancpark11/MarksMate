@@ -1,9 +1,8 @@
+import { sanitizeText } from "@/lib/textSanitization";
+
 export function normalizeImportedAction(value: string) {
-  return value
-    .replace(/\u0000/g, "")
-    .replace(/^[\s\-\*\u2022\u25CF\u25E6\u2043\d.)]+/, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  const withoutLeadingBullets = value.replace(/^[\s\-\*\u2022\u25CF\u25E6\u2043\d.)]+/, "");
+  return sanitizeText(withoutLeadingBullets, { preserveLineBreaks: false });
 }
 
 export type ImportedLogEntry = {

@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "MarksMate",
+  title: "Bullet Proof",
   description: "Your personal AI marks assistant",
 };
 
