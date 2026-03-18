@@ -30,6 +30,56 @@ npm run dev
 
 Open http://localhost:3000.
 
+## Official Marking PDF Guidance
+
+You can have AI reference your official marking PDF by extracting it into retrieval chunks.
+
+1. Put your PDF at `data/official-marking-guide.pdf`.
+2. Run:
+
+```bash
+npm run build:guidance
+```
+
+3. This creates `data/official-marking-guidance.json`.
+4. The `POST /api/generate` route will automatically retrieve the most relevant guidance chunks and include them in the prompt.
+
+### Multi-Rank Guidance (E-3 to E-7)
+
+You can store separate guidance files per rank in `data/official-guidance/`.
+
+Example commands:
+
+```bash
+node scripts/extract-official-guidance.mjs --input=data/e3-guide.pdf --output=data/official-guidance/e3.json --source="E-3 Official Marking Guide" --ranks=E-3
+node scripts/extract-official-guidance.mjs --input=data/e4-guide.pdf --output=data/official-guidance/e4.json --source="E-4 Official Marking Guide" --ranks=E-4
+node scripts/extract-official-guidance.mjs --input=data/e5-guide.pdf --output=data/official-guidance/e5.json --source="E-5 Official Marking Guide" --ranks=E-5
+node scripts/extract-official-guidance.mjs --input=data/e6-guide.pdf --output=data/official-guidance/e6.json --source="E-6 Official Marking Guide" --ranks=E-6
+node scripts/extract-official-guidance.mjs --input=data/e7-guide.pdf --output=data/official-guidance/e7.json --source="E-7 Official Marking Guide" --ranks=E-7
+```
+
+Behavior:
+
+- If rank-tagged files exist, the API prefers guidance whose `ranks` includes the request rank.
+- If no rank-specific match exists, it falls back to all available guidance.
+- If `data/official-guidance/` is empty, it falls back to `data/official-marking-guidance.json`.
+
+In-app option:
+
+- Go to Settings -> Official Guidance Admin.
+- Enter a guide name, select one or more ranks, and upload a PDF.
+- The app will extract text, chunk it, write JSON into `data/official-guidance/`, and refresh guidance cache automatically.
+
+Optional:
+
+- To use a different guidance file path, set `OFFICIAL_MARKING_GUIDANCE_JSON`.
+- To use a different guidance directory, set `OFFICIAL_MARKING_GUIDANCE_DIR`.
+- To use a custom filename, run:
+
+```bash
+node scripts/extract-official-guidance.mjs --input=data/your-file.pdf --output=data/official-marking-guidance.json --source="Your Official Guide"
+```
+
 ## Vercel Setup (Production + Preview)
 
 1. Open your project in Vercel.

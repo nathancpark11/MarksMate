@@ -3,7 +3,7 @@
 // ======================================================
 // IMPORTS
 // ======================================================
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import GeneratorPanel from "../components/GeneratorPanel";
 import HistoryPanel from "../components/HistoryPanel";
 import TabBar from "../components/TabBar";
@@ -62,7 +62,7 @@ export default function Home() {
     primaryCategory: string;
     sourceTitle?: string;
   };
-  const [bullet, setBullet] = useState<{text: string; category: string; title?: string} | null>(null);
+  const [bullet, setBullet] = useState<{text: string; category: string; title?: string; guidanceSections?: string[]} | null>(null);
   type HistoryItem = {
     text: string;
     date: string;
@@ -98,7 +98,7 @@ export default function Home() {
   const [splitBulletDraftsLoading, setSplitBulletDraftsLoading] = useState(false);
   const [splitBulletDraftRepromptingId, setSplitBulletDraftRepromptingId] = useState<string | null>(null);
   const [altCategorySuggestion, setAltCategorySuggestion] = useState<AltCategorySuggestion | null>(null);
-  const [altCategoryDrafts, setAltCategoryDrafts] = useState<Record<string, { text: string; title?: string; generating: boolean }>>({});
+  const [altCategoryDrafts, setAltCategoryDrafts] = useState<Record<string, { text: string; title?: string; generating: boolean; guidanceSections?: string[] }>>({});
   const [suggestions, setSuggestions] = useState<Record<string, { category: string; reason: string }>>({});
 
   const createLogEntryId = () =>
@@ -170,12 +170,20 @@ export default function Home() {
   // ======================================================
   const [userName, setUserName] = useState("");
   const [userUnit, setUserUnit] = useState("");
-  const [bulletStyle, setBulletStyle] = useState("Standard");
+  const [bulletStyle, setBulletStyle] = useState("Short/Concise");
   const [aiGeneratorEnabled, setAiGeneratorEnabled] = useState(true);
   const [aiLogImportEnabled, setAiLogImportEnabled] = useState(true);
   const [aiDashboardInsightsEnabled, setAiDashboardInsightsEnabled] = useState(true);
   const [aiMarksPackageEnabled, setAiMarksPackageEnabled] = useState(true);
+  const [darkModeEnabled, setDarkModeEnabled] = useState(false);
+  const [highContrastEnabled, setHighContrastEnabled] = useState(false);
   const [settingsMessage, setSettingsMessage] = useState("");
+  const [guidanceUploadBusy, setGuidanceUploadBusy] = useState(false);
+  const [guidanceUploadStatus, setGuidanceUploadStatus] = useState<{
+    fileName: string;
+    status: "uploading" | "uploaded" | "failed";
+    detail?: string;
+  } | null>(null);
 
   // ======================================================
   // UI STATE
@@ -185,6 +193,7 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState("log");
   const [dashboardRecommendationCount, setDashboardRecommendationCount] = useState(0);
   const [showNoticeModal, setShowNoticeModal] = useState(false);
+  const [showGuestExportModal, setShowGuestExportModal] = useState(false);
   const [showTutorialModal, setShowTutorialModal] = useState(false);
   const [tutorialStep, setTutorialStep] = useState<TutorialStep>("log");
   const [hasExited, setHasExited] = useState(false);
@@ -195,6 +204,7 @@ export default function Home() {
   type SessionUser = {
     id: string;
     username: string;
+    isGuest?: boolean;
     needsTutorial?: boolean;
     lastLoginAt?: string | null;
   };
@@ -203,6 +213,9 @@ export default function Home() {
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
+  const [showGuestProfilePrompt, setShowGuestProfilePrompt] = useState(false);
+  const [guestRankLevel, setGuestRankLevel] = useState("E4");
+  const [guestRating, setGuestRating] = useState("BM - Boatswain's Mate");
   const [authUsername, setAuthUsername] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [signupStep, setSignupStep] = useState<1 | 2>(1);
@@ -211,11 +224,80 @@ export default function Home() {
   const [signupRating, setSignupRating] = useState("BM - Boatswain's Mate");
   const [signupUserName, setSignupUserName] = useState("");
   const [signupUserUnit, setSignupUserUnit] = useState("");
-  const [signupBulletStyle, setSignupBulletStyle] = useState("Standard");
+  const [signupBulletStyle, setSignupBulletStyle] = useState("Short/Concise");
 
   const formattedLastLogin = authUser?.lastLoginAt
     ? new Date(authUser.lastLoginAt).toLocaleString()
     : null;
+  const isGuestSession = authUser?.isGuest === true;
+  const rankLevelRef = useRef(rankLevel);
+  const ratingRef = useRef(rating);
+
+  useEffect(() => {
+    rankLevelRef.current = rankLevel;
+  }, [rankLevel]);
+
+  useEffect(() => {
+    ratingRef.current = rating;
+  }, [rating]);
+
+  type UserDataKey =
+    | "history"
+    | "log"
+    | "settings"
+    | "dashboardTotalEstimate"
+    | "exportHistory";
+
+  const GUEST_PROFILE_PROMPT_COMPLETED_KEY = "guest-session:profilePromptCompleted";
+
+  const getGuestStorageKey = useCallback((key: UserDataKey) => `guest-session:${key}`, []);
+
+  const loadUserData = useCallback(
+    async <T,>(key: UserDataKey): Promise<T | null> => {
+      if (isGuestSession) {
+        const raw = sessionStorage.getItem(getGuestStorageKey(key));
+        if (!raw) {
+          return null;
+        }
+
+        try {
+          return JSON.parse(raw) as T;
+        } catch {
+          return null;
+        }
+      }
+
+      const res = await fetch(`/api/user-data?key=${encodeURIComponent(key)}`);
+      const data = (await res.json()) as { value?: T | null };
+      return data.value ?? null;
+    },
+    [getGuestStorageKey, isGuestSession]
+  );
+
+  const saveUserData = useCallback(
+    async (key: UserDataKey, value: unknown) => {
+      if (isGuestSession) {
+        sessionStorage.setItem(getGuestStorageKey(key), JSON.stringify(value));
+        return;
+      }
+
+      await fetch("/api/user-data", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key, value }),
+      });
+    },
+    [getGuestStorageKey, isGuestSession]
+  );
+
+  const clearGuestSessionData = useCallback(() => {
+    const keys: UserDataKey[] = ["history", "log", "settings", "dashboardTotalEstimate", "exportHistory"];
+
+    for (const key of keys) {
+      sessionStorage.removeItem(getGuestStorageKey(key));
+    }
+    sessionStorage.removeItem(GUEST_PROFILE_PROMPT_COMPLETED_KEY);
+  }, [getGuestStorageKey]);
 
   // ======================================================
   // AUTH SESSION
@@ -238,7 +320,18 @@ export default function Home() {
         };
 
         if (!cancelled) {
-          setAuthUser(data.authenticated ? data.user ?? null : null);
+          const sessionUser = data.authenticated ? data.user ?? null : null;
+          setAuthUser(sessionUser);
+
+          if (sessionUser?.isGuest) {
+            const profilePromptCompleted =
+              sessionStorage.getItem(GUEST_PROFILE_PROMPT_COMPLETED_KEY) === "1";
+            if (!profilePromptCompleted) {
+              setGuestRankLevel(rankLevelRef.current);
+              setGuestRating(ratingRef.current);
+              setShowGuestProfilePrompt(true);
+            }
+          }
         }
       } catch {
         if (!cancelled) {
@@ -304,6 +397,31 @@ export default function Home() {
     }
   };
 
+  const handleGuestLogin = async () => {
+    setAuthError("");
+    setAuthBusy(true);
+    try {
+      const res = await fetch("/api/auth/guest", { method: "POST" });
+      const data = (await res.json()) as { error?: string; user?: SessionUser };
+
+      if (!res.ok || !data.user) {
+        setAuthError(data.error || "Unable to start guest session.");
+        return;
+      }
+
+      setAuthUser(data.user);
+      setGuestRankLevel(rankLevel);
+      setGuestRating(rating);
+      setShowGuestProfilePrompt(false);
+      sessionStorage.removeItem(GUEST_PROFILE_PROMPT_COMPLETED_KEY);
+      setShowNoticeModal(true);
+    } catch {
+      setAuthError("Unable to start guest session.");
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
   const handleSignupProfileComplete = async () => {
     if (!pendingUser) return;
     try {
@@ -337,6 +455,8 @@ export default function Home() {
     setAiLogImportEnabled(true);
     setAiDashboardInsightsEnabled(true);
     setAiMarksPackageEnabled(true);
+    setDarkModeEnabled(false);
+    setHighContrastEnabled(false);
     setAuthUser(pendingUser);
     setPendingUser(null);
     setSignupStep(1);
@@ -347,6 +467,9 @@ export default function Home() {
     try {
       await fetch("/api/auth/logout", { method: "POST" });
     } finally {
+      if (isGuestSession) {
+        clearGuestSessionData();
+      }
       setAuthUser(null);
       setAuthPassword("");
       setHistory([]);
@@ -390,6 +513,8 @@ export default function Home() {
     setPulledLogIndex(null);
     setInput("");
     setCategory("");
+    setDarkModeEnabled(false);
+    setHighContrastEnabled(false);
     setActiveTab("log");
   };
 
@@ -407,11 +532,15 @@ export default function Home() {
 
     void (async () => {
       try {
-        const res = await fetch("/api/user-data?key=history");
-        const data = (await res.json()) as { value: unknown };
-        if (data.value && Array.isArray(data.value) && data.value.length > 0) {
-          setHistory(data.value as HistoryItem[]);
+        const loadedHistory = await loadUserData<unknown>("history");
+        if (Array.isArray(loadedHistory) && loadedHistory.length > 0) {
+          setHistory(loadedHistory as HistoryItem[]);
         } else {
+          if (isGuestSession) {
+            setHistory([]);
+            return;
+          }
+
           // One-time migration: upload localStorage data if server has none.
           const localRaw = localStorage.getItem(`bulletHistory:${authUser.id}`);
           if (localRaw) {
@@ -424,11 +553,7 @@ export default function Home() {
                   : (parsed as HistoryItem[]);
               }
               if (migrated.length > 0) {
-                await fetch("/api/user-data", {
-                  method: "PUT",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ key: "history", value: migrated }),
-                });
+                await saveUserData("history", migrated);
                 localStorage.removeItem(`bulletHistory:${authUser.id}`);
               }
               setHistory(migrated);
@@ -445,7 +570,7 @@ export default function Home() {
         historyHydratedRef.current = true;
       }
     })();
-  }, [authUser]);
+  }, [authUser, isGuestSession, loadUserData, saveUserData]);
 
   useEffect(() => {
     if (!authUser) {
@@ -473,11 +598,15 @@ export default function Home() {
           .filter((e) => e.text.trim().length > 0);
 
       try {
-        const res = await fetch("/api/user-data?key=log");
-        const data = (await res.json()) as { value: unknown };
-        if (data.value && Array.isArray(data.value)) {
-          setLogEntries(normalize(data.value));
+        const loadedLog = await loadUserData<unknown>("log");
+        if (Array.isArray(loadedLog)) {
+          setLogEntries(normalize(loadedLog));
         } else {
+          if (isGuestSession) {
+            setLogEntries([]);
+            return;
+          }
+
           // One-time migration from localStorage.
           const localRaw = localStorage.getItem(`dailyLog:${authUser.id}`);
           if (localRaw) {
@@ -485,11 +614,7 @@ export default function Home() {
               const parsed = JSON.parse(localRaw) as unknown;
               const migrated = Array.isArray(parsed) ? normalize(parsed) : [];
               if (migrated.length > 0) {
-                await fetch("/api/user-data", {
-                  method: "PUT",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ key: "log", value: migrated }),
-                });
+                await saveUserData("log", migrated);
                 localStorage.removeItem(`dailyLog:${authUser.id}`);
               }
               setLogEntries(migrated);
@@ -506,7 +631,7 @@ export default function Home() {
         logHydratedRef.current = true;
       }
     })();
-  }, [authUser]);
+  }, [authUser, isGuestSession, loadUserData, saveUserData]);
 
   useEffect(() => {
     if (!authUser) {
@@ -519,7 +644,7 @@ export default function Home() {
     setRating("BM - Boatswain's Mate");
     setUserName("");
     setUserUnit("");
-    setBulletStyle("Standard");
+    setBulletStyle("Short/Concise");
     setMpMemberName("");
     setMpUnitName("");
     setMpPeriodStart("");
@@ -528,6 +653,8 @@ export default function Home() {
     setAiLogImportEnabled(true);
     setAiDashboardInsightsEnabled(true);
     setAiMarksPackageEnabled(true);
+    setDarkModeEnabled(false);
+    setHighContrastEnabled(false);
     setSettingsMessage("");
 
     void (async () => {
@@ -541,13 +668,13 @@ export default function Home() {
         aiLogImportEnabled?: boolean;
         aiDashboardInsightsEnabled?: boolean;
         aiMarksPackageEnabled?: boolean;
+        darkModeEnabled?: boolean;
+        highContrastEnabled?: boolean;
       };
       try {
-        const res = await fetch("/api/user-data?key=settings");
-        const data = (await res.json()) as { value: SettingsShape | null };
-        let loaded = data.value;
+        let loaded = await loadUserData<SettingsShape>("settings");
 
-        if (!loaded) {
+        if (!loaded && !isGuestSession) {
           // One-time migration from localStorage.
           const localRaw = localStorage.getItem(`appSettings:${authUser.id}`);
           if (localRaw) {
@@ -555,11 +682,7 @@ export default function Home() {
               const parsed = JSON.parse(localRaw) as SettingsShape;
               if (parsed && typeof parsed === "object") {
                 loaded = parsed;
-                await fetch("/api/user-data", {
-                  method: "PUT",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ key: "settings", value: loaded }),
-                });
+                await saveUserData("settings", loaded);
                 localStorage.removeItem(`appSettings:${authUser.id}`);
               }
             } catch {
@@ -596,6 +719,12 @@ export default function Home() {
           if (typeof loaded.aiMarksPackageEnabled === "boolean") {
             setAiMarksPackageEnabled(loaded.aiMarksPackageEnabled);
           }
+          if (typeof loaded.darkModeEnabled === "boolean") {
+            setDarkModeEnabled(loaded.darkModeEnabled);
+          }
+          if (typeof loaded.highContrastEnabled === "boolean") {
+            setHighContrastEnabled(loaded.highContrastEnabled);
+          }
         }
       } catch {
         // Keep the defaults set above.
@@ -603,30 +732,25 @@ export default function Home() {
         settingsHydratedRef.current = true;
       }
     })();
-  }, [authUser]);
+  }, [authUser, isGuestSession, loadUserData, saveUserData]);
 
   useEffect(() => {
     if (!authUser) return;
     if (!settingsHydratedRef.current) {
       return;
     }
-    void fetch("/api/user-data", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        key: "settings",
-        value: {
-          rankLevel,
-          rating,
-          userName,
-          userUnit,
-          bulletStyle,
-          aiGeneratorEnabled,
-          aiLogImportEnabled,
-          aiDashboardInsightsEnabled,
-          aiMarksPackageEnabled,
-        },
-      }),
+    void saveUserData("settings", {
+      rankLevel,
+      rating,
+      userName,
+      userUnit,
+      bulletStyle,
+      aiGeneratorEnabled,
+      aiLogImportEnabled,
+      aiDashboardInsightsEnabled,
+      aiMarksPackageEnabled,
+      darkModeEnabled,
+      highContrastEnabled,
     });
   }, [
     rankLevel,
@@ -638,8 +762,32 @@ export default function Home() {
     aiLogImportEnabled,
     aiDashboardInsightsEnabled,
     aiMarksPackageEnabled,
+    darkModeEnabled,
+    highContrastEnabled,
     authUser,
+    saveUserData,
   ]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = darkModeEnabled ? "dark" : "light";
+    document.body.classList.toggle("theme-dark", darkModeEnabled);
+  }, [darkModeEnabled]);
+
+  useEffect(() => {
+    document.documentElement.dataset.contrast = highContrastEnabled ? "high" : "normal";
+    document.body.classList.toggle("theme-high-contrast", highContrastEnabled);
+  }, [highContrastEnabled]);
+
+  useEffect(() => {
+    document.documentElement.style.setProperty(
+      "--guest-global-bar-height",
+      isGuestSession ? "2rem" : "0px"
+    );
+
+    return () => {
+      document.documentElement.style.setProperty("--guest-global-bar-height", "0px");
+    };
+  }, [isGuestSession]);
 
   useEffect(() => {
     if (!mpMemberName && userName) {
@@ -674,6 +822,11 @@ export default function Home() {
   const handleAgreeNotice = () => {
     setShowNoticeModal(false);
 
+    if (isGuestSession) {
+      setShowGuestProfilePrompt(true);
+      return;
+    }
+
     if (authUser?.needsTutorial) {
       setActiveTab("log");
       setTutorialStep("log");
@@ -701,6 +854,13 @@ export default function Home() {
     setShowTutorialModal(false);
 
     if (!authUser?.needsTutorial) {
+      return;
+    }
+
+    if (authUser.isGuest) {
+      setAuthUser((currentUser) =>
+        currentUser ? { ...currentUser, needsTutorial: false } : currentUser
+      );
       return;
     }
 
@@ -735,12 +895,8 @@ export default function Home() {
     if (!historyHydratedRef.current) {
       return;
     }
-    void fetch("/api/user-data", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key: "history", value: history }),
-    });
-  }, [history, authUser]);
+    void saveUserData("history", history);
+  }, [history, authUser, saveUserData]);
 
   useEffect(() => {
     if (!authUser) {
@@ -750,12 +906,8 @@ export default function Home() {
     if (!logHydratedRef.current) {
       return;
     }
-    void fetch("/api/user-data", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key: "log", value: logEntries }),
-    });
-  }, [logEntries, authUser]);
+    void saveUserData("log", logEntries);
+  }, [logEntries, authUser, saveUserData]);
 
   // ======================================================
   // GENERATE BULLET
@@ -857,6 +1009,7 @@ export default function Home() {
       text: data.bullet as string,
       category: finalCategory,
       title: typeof data.title === "string" ? data.title : "",
+      guidanceSections: Array.isArray(data.guidanceSections) ? (data.guidanceSections as string[]) : [],
     };
   };
 
@@ -905,7 +1058,7 @@ export default function Home() {
     try {
       const generatedDraft = await generateBulletDraft(trimmedInput, category || undefined);
 
-      setBullet({ text: generatedDraft.text, category: generatedDraft.category, title: generatedDraft.title });
+      setBullet({ text: generatedDraft.text, category: generatedDraft.category, title: generatedDraft.title, guidanceSections: generatedDraft.guidanceSections });
       setWasCategoryUserSelected(wasUserSelected);
 
       setSplitBulletRecommendationLoading(true);
@@ -1137,7 +1290,7 @@ export default function Home() {
       const title = altCategorySuggestion.sourceTitle?.trim() || draft.title;
       setAltCategoryDrafts((prev) => ({
         ...prev,
-        [categoryName]: { text: draft.text, title, generating: false },
+        [categoryName]: { text: draft.text, title, generating: false, guidanceSections: draft.guidanceSections },
       }));
     } catch {
       setAltCategoryDrafts((prev) => {
@@ -1557,6 +1710,8 @@ export default function Home() {
         aiLogImportEnabled,
         aiDashboardInsightsEnabled,
         aiMarksPackageEnabled,
+        darkModeEnabled,
+        highContrastEnabled,
       },
     };
 
@@ -1589,6 +1744,8 @@ export default function Home() {
           aiLogImportEnabled?: boolean;
           aiDashboardInsightsEnabled?: boolean;
           aiMarksPackageEnabled?: boolean;
+          darkModeEnabled?: boolean;
+          highContrastEnabled?: boolean;
         };
       };
 
@@ -1610,6 +1767,8 @@ export default function Home() {
         if (typeof parsed.settings.aiLogImportEnabled === "boolean") setAiLogImportEnabled(parsed.settings.aiLogImportEnabled);
         if (typeof parsed.settings.aiDashboardInsightsEnabled === "boolean") setAiDashboardInsightsEnabled(parsed.settings.aiDashboardInsightsEnabled);
         if (typeof parsed.settings.aiMarksPackageEnabled === "boolean") setAiMarksPackageEnabled(parsed.settings.aiMarksPackageEnabled);
+        if (typeof parsed.settings.darkModeEnabled === "boolean") setDarkModeEnabled(parsed.settings.darkModeEnabled);
+        if (typeof parsed.settings.highContrastEnabled === "boolean") setHighContrastEnabled(parsed.settings.highContrastEnabled);
       }
 
       setSettingsMessage("Backup imported.");
@@ -1629,9 +1788,93 @@ export default function Home() {
     setSettingsMessage("All bullets cleared.");
   };
 
+  const handleUploadGuidancePdf = async (file: File, source: string, ranks: string[]) => {
+    if (!file) {
+      setSettingsMessage("Choose a PDF file to upload.");
+      return;
+    }
+
+    if (!ranks.length) {
+      setSettingsMessage("Select at least one rank before uploading guidance.");
+      return;
+    }
+
+    setGuidanceUploadBusy(true);
+    setGuidanceUploadStatus({
+      fileName: file.name,
+      status: "uploading",
+      detail: "Uploading and indexing...",
+    });
+    setSettingsMessage("Uploading guidance PDF and indexing sections...");
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("source", source.trim() || "Official Marking Guide");
+      for (const rank of ranks) {
+        formData.append("ranks", rank);
+      }
+
+      const response = await fetch("/api/admin/upload-official-guidance", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = (await response.json()) as {
+        error?: string;
+        message?: string;
+        chunks?: number;
+        outputFile?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(data.error || "Upload failed.");
+      }
+
+      const suffix = typeof data.chunks === "number" ? ` (${data.chunks} chunks)` : "";
+      setSettingsMessage(`${data.message || "Guidance uploaded."}${suffix}`);
+      setGuidanceUploadStatus({
+        fileName: data.outputFile || file.name,
+        status: "uploaded",
+        detail: `${data.message || "Upload complete."}${suffix}`,
+      });
+      setActiveTab("settings");
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unable to upload guidance right now.";
+      setSettingsMessage(
+        errorMessage
+      );
+      setGuidanceUploadStatus({
+        fileName: file.name,
+        status: "failed",
+        detail: errorMessage,
+      });
+    } finally {
+      setGuidanceUploadBusy(false);
+    }
+  };
+
   const handlePullLogEntryToGenerator = (index: number) => {
     setPendingLogPull(index);
     setActiveTab("generator");
+  };
+
+  const handleTabChange = (tab: string) => {
+    if (isGuestSession && tab === "export") {
+      setActiveTab("export");
+      setShowGuestExportModal(true);
+      return;
+    }
+
+    setActiveTab(tab);
+  };
+
+  const handleGuestProfileComplete = () => {
+    setRankLevel(guestRankLevel);
+    setRating(guestRating);
+    sessionStorage.setItem(GUEST_PROFILE_PROMPT_COMPLETED_KEY, "1");
+    setShowGuestProfilePrompt(false);
   };
 
   if (authLoading) {
@@ -1816,6 +2059,16 @@ export default function Home() {
                 ? "Need an account? Sign up"
                 : "Already have an account? Log in"}
             </button>
+
+            {authMode === "login" && (
+              <button
+                onClick={() => void handleGuestLogin()}
+                disabled={authBusy}
+                className="w-full text-sm font-medium text-blue-700 hover:text-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Continue as Guest (Temporary Session)
+              </button>
+            )}
           </div>
         </div>
       </main>
@@ -1837,12 +2090,25 @@ export default function Home() {
       <div className="fixed inset-x-0 top-0 z-100 flex h-(--unclassified-bar-height) items-center justify-center bg-green-700 text-center text-xs font-bold uppercase tracking-widest text-black shadow-md">
         UNCLASSIFIED
       </div>
-    <main className="min-h-screen flex justify-center p-3 pt-[calc(var(--unclassified-bar-height)+0.5rem)] sm:p-6 sm:pt-12">
+      {isGuestSession ? (
+        <div className="fixed inset-x-0 top-(--unclassified-bar-height) z-90 flex h-8 items-center justify-center bg-amber-200 text-center text-xs font-semibold text-amber-950 shadow-sm">
+          Guest Mode: Temporary session. Data is cleared when this browser session ends.
+        </div>
+      ) : null}
+    <main
+      className={`min-h-screen flex justify-center p-3 sm:p-6 ${
+        isGuestSession
+          ? "pt-[calc(var(--unclassified-bar-height)+2.5rem)] sm:pt-[calc(var(--unclassified-bar-height)+3.5rem)]"
+          : "pt-[calc(var(--unclassified-bar-height)+0.5rem)] sm:pt-12"
+      }`}
+    >
       <div className="w-full max-w-4xl space-y-6">
         <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-sm font-medium text-slate-700">
-            Signed in as <span className="font-bold text-slate-900">{authUser.username}</span>
-          </p>
+          <div>
+            <p className="text-sm font-medium text-slate-700">
+              Signed in as <span className="font-bold text-slate-900">{authUser.username}</span>
+            </p>
+          </div>
           <div className="flex items-center gap-3">
             {formattedLastLogin ? (
               <span className="text-xs font-normal text-slate-500">
@@ -1860,7 +2126,7 @@ export default function Home() {
 
         <TabBar
           activeTab={activeTab}
-          setActiveTab={setActiveTab}
+          setActiveTab={handleTabChange}
           dashboardRecommendationCount={dashboardRecommendationCount}
         />
 
@@ -1940,7 +2206,8 @@ export default function Home() {
         <div className={activeTab === "dashboard" ? "" : "hidden"}>
           <DashboardPanel
             sessionUserId={authUser?.id ?? null}
-            aiEnabled={aiDashboardInsightsEnabled}
+            isGuestSession={isGuestSession}
+            aiEnabled={aiDashboardInsightsEnabled && !isGuestSession}
             history={history}
             suggestions={suggestions}
             rankLevel={rankLevel}
@@ -2065,7 +2332,12 @@ export default function Home() {
         </div>
 
         {activeTab === "export" && (
-          <ExportPanel history={history} suggestions={suggestions} rankLevel={rankLevel} />
+          <ExportPanel
+            history={history}
+            suggestions={suggestions}
+            rankLevel={rankLevel}
+            isGuestSession={isGuestSession}
+          />
         )}
 
         {activeTab === "marks-package" && (
@@ -2088,6 +2360,7 @@ export default function Home() {
 
         {activeTab === "settings" && (
           <SettingsPanel
+            isGuestSession={isGuestSession}
             rankLevel={rankLevel}
             setRankLevel={setRankLevel}
             rating={rating}
@@ -2106,10 +2379,20 @@ export default function Home() {
             setAiDashboardInsightsEnabled={setAiDashboardInsightsEnabled}
             aiMarksPackageEnabled={aiMarksPackageEnabled}
             setAiMarksPackageEnabled={setAiMarksPackageEnabled}
+            darkModeEnabled={darkModeEnabled}
+            setDarkModeEnabled={setDarkModeEnabled}
+            highContrastEnabled={highContrastEnabled}
+            setHighContrastEnabled={setHighContrastEnabled}
             historyCount={history.length}
             settingsMessage={settingsMessage}
+            guidanceUploadBusy={guidanceUploadBusy}
+            guidanceUploadStatus={guidanceUploadStatus}
+            canManageOfficialGuidance={authUser?.username?.trim().toLowerCase() === "nathancpark11"}
             onExportBackup={handleExportBackup}
             onImportBackup={handleImportBackup}
+            onUploadGuidancePdf={(file, source, ranks) => {
+              void handleUploadGuidancePdf(file, source, ranks);
+            }}
             onClearAllBullets={handleClearAllBullets}
             onClearDailyLog={handleClearLogEntries}
             onReviewTutorial={() => {
@@ -2126,10 +2409,10 @@ export default function Home() {
           <button
             id="settings-tutorial-anchor"
             onClick={() => setActiveTab("settings")}
-            className={`w-full rounded-md px-3 py-2 text-sm font-medium sm:text-base ${
+            className={`w-full rounded-md border px-3 py-2 text-sm font-medium transition-colors sm:text-base ${
               activeTab === "settings"
-                ? "bg-blue-600 text-white"
-                : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                ? "border-blue-700 bg-blue-700 text-white shadow-sm"
+                : "border-slate-300 bg-slate-50 text-slate-800 hover:border-blue-300 hover:bg-blue-50"
             }`}
           >
             Settings
@@ -2187,6 +2470,13 @@ export default function Home() {
                     {generatedText && (
                       <div className="mt-3 rounded-md border border-blue-100 bg-blue-50 p-3">
                         <p className="text-sm font-semibold text-gray-900">{generatedText}</p>
+                        {draftEntry?.guidanceSections && draftEntry.guidanceSections.length > 0 && (
+                          <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 p-2">
+                            {draftEntry.guidanceSections.map((section, i) => (
+                              <p key={i} className="text-xs text-emerald-800">{section}</p>
+                            ))}
+                          </div>
+                        )}
                         <div className="mt-3 flex justify-end gap-2">
                           <button
                             type="button"
@@ -2255,7 +2545,15 @@ export default function Home() {
               </ul>
             </div>
 
-            <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-end">
+            <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              {isGuestSession ? (
+                <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  Guest mode: nothing will be saved outside this browser session.
+                </p>
+              ) : (
+                <div />
+              )}
+              <div className="flex flex-col gap-2 sm:flex-row">
               <button
                 onClick={handleExitNotice}
                 className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
@@ -2267,6 +2565,102 @@ export default function Home() {
                 className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
               >
                 I Understand and Agree
+              </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showGuestExportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl">
+            <h3 className="text-lg font-semibold text-gray-900">Export Unavailable in Guest Mode</h3>
+            <p className="mt-3 text-sm text-gray-700">
+              Exporting marks is unavailable in Guest mode. Create an account to continue.
+            </p>
+            <div className="mt-5 flex justify-end">
+              <button
+                onClick={() => setShowGuestExportModal(false)}
+                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              >
+                I Understand
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showGuestProfilePrompt && isGuestSession && !showNoticeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-lg rounded-xl bg-white p-6 shadow-2xl sm:p-8">
+            <h3 className="text-xl font-bold text-slate-900">Guest Setup</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              Before continuing, select your rank and rate for this guest session.
+            </p>
+            <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              Advanced AI analysis and categorization are available only with a full account.
+            </p>
+
+            <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label className="block text-sm font-medium text-slate-700">Rank</label>
+                <select
+                  value={guestRankLevel}
+                  onChange={(e) => setGuestRankLevel(e.target.value)}
+                  className="mt-2 w-full rounded-md border border-slate-300 p-3"
+                >
+                  {["E2", "E3", "E4", "E5", "E6", "E7"].map((rankOption) => (
+                    <option key={rankOption} value={rankOption}>
+                      {rankOption}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700">Rate</label>
+                <select
+                  value={guestRating}
+                  onChange={(e) => setGuestRating(e.target.value)}
+                  className="mt-2 w-full rounded-md border border-slate-300 p-3"
+                >
+                  {[
+                    "AET - Aviation Electrical Technician",
+                    "AMT - Aviation Maintenance Technician",
+                    "AST - Aviation Survival Technician",
+                    "BM - Boatswain's Mate",
+                    "DC - Damage Controlman",
+                    "EM - Electrician's Mate",
+                    "ET - Electronics Technician",
+                    "GM - Gunner's Mate",
+                    "HS - Health Services Technician",
+                    "IS - Intelligence Specialist",
+                    "IT - Information Systems Technician",
+                    "MA - Maritime Enforcement Specialist",
+                    "MK - Machinery Technician",
+                    "MST - Marine Science Technician",
+                    "MU - Musician",
+                    "OS - Operations Specialist",
+                    "PA - Public Affairs Specialist",
+                    "PS - Personnel Specialist",
+                    "SK - Storekeeper",
+                    "YN - Yeoman",
+                  ].map((rateOption) => (
+                    <option key={rateOption} value={rateOption}>
+                      {rateOption}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end">
+              <button
+                onClick={handleGuestProfileComplete}
+                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+              >
+                Continue
               </button>
             </div>
           </div>

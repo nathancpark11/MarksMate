@@ -9,6 +9,7 @@ type ExportPanelProps = {
   history: HistoryItem[];
   suggestions: Record<string, { category: string; reason: string }>;
   rankLevel: string;
+  isGuestSession?: boolean;
 };
 
 type ExportType = 'pdf' | 'docx' | 'txt';
@@ -23,7 +24,12 @@ type ExportHistoryItem = {
 const MAIN_CATEGORIES = ['Military', 'Performance', 'Professional Qualities', 'Leadership'] as const;
 type MainCategory = typeof MAIN_CATEGORIES[number];
 
-export default function ExportPanel({ history, suggestions, rankLevel }: ExportPanelProps) {
+export default function ExportPanel({
+  history,
+  suggestions,
+  rankLevel,
+  isGuestSession = false,
+}: ExportPanelProps) {
   const [showAckModal, setShowAckModal] = useState(false);
   const [pendingExport, setPendingExport] = useState<{
     run: () => Promise<void> | void;
@@ -33,6 +39,33 @@ export default function ExportPanel({ history, suggestions, rankLevel }: ExportP
   const [isExporting, setIsExporting] = useState(false);
 
   const appendExportHistory = async (item: ExportHistoryItem) => {
+    if (isGuestSession) {
+      try {
+        const raw = sessionStorage.getItem('guest-session:exportHistory');
+        const existing = raw ? (JSON.parse(raw) as unknown) : [];
+        const normalized = Array.isArray(existing)
+          ? existing.filter(
+              (entry): entry is ExportHistoryItem =>
+                !!entry &&
+                typeof entry === 'object' &&
+                typeof (entry as { type?: unknown }).type === 'string' &&
+                typeof (entry as { createdAt?: unknown }).createdAt === 'string' &&
+                typeof (entry as { ref?: unknown }).ref === 'string' &&
+                typeof (entry as { itemCount?: unknown }).itemCount === 'number'
+            )
+          : [];
+
+        sessionStorage.setItem(
+          'guest-session:exportHistory',
+          JSON.stringify([item, ...normalized].slice(0, 100))
+        );
+      } catch {
+        // Non-blocking: export should still complete if metadata save fails.
+      }
+
+      return;
+    }
+
     try {
       const existingRes = await fetch('/api/user-data?key=exportHistory');
       const existingData = (await existingRes.json()) as { value?: unknown };
@@ -63,7 +96,7 @@ export default function ExportPanel({ history, suggestions, rankLevel }: ExportP
     type: ExportType,
     ref: string
   ) => {
-    if (isExporting) {
+    if (isExporting || isGuestSession) {
       return;
     }
 
@@ -96,6 +129,8 @@ export default function ExportPanel({ history, suggestions, rankLevel }: ExportP
     setShowAckModal(false);
     setPendingExport(null);
   };
+
+  const exportActionsDisabled = isExporting || isGuestSession;
 
   const [selectedCategories, setSelectedCategories] = useState<Record<MainCategory, boolean>>({
     Military: true,
@@ -780,6 +815,11 @@ export default function ExportPanel({ history, suggestions, rankLevel }: ExportP
         <p className="text-gray-500">No history items to export.</p>
       ) : (
         <div className="space-y-4">
+          {isGuestSession ? (
+            <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              Exporting marks is unavailable in Guest mode. Create an account to continue.
+            </p>
+          ) : null}
           <p className="text-sm text-gray-600">
             {exportReadyHistory.length} mark{exportReadyHistory.length !== 1 ? 's' : ''} will be exported.
           </p>
@@ -792,8 +832,8 @@ export default function ExportPanel({ history, suggestions, rankLevel }: ExportP
                   `bullet-history-${new Date().toISOString().slice(0, 10)}.pdf`
                 )
               }
-              disabled={isExporting}
-              className="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700 transition-colors"
+              disabled={exportActionsDisabled}
+              className="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
               Export as PDF
             </button>
@@ -805,8 +845,8 @@ export default function ExportPanel({ history, suggestions, rankLevel }: ExportP
                   `bullet-history-${new Date().toISOString().slice(0, 10)}.docx`
                 )
               }
-              disabled={isExporting}
-              className="bg-indigo-600 text-white px-6 py-2 rounded-md hover:bg-indigo-700 transition-colors"
+              disabled={exportActionsDisabled}
+              className="bg-indigo-600 text-white px-6 py-2 rounded-md hover:bg-indigo-700 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
               Export as Word
             </button>
@@ -818,8 +858,8 @@ export default function ExportPanel({ history, suggestions, rankLevel }: ExportP
                   `bullet-history-${new Date().toISOString().slice(0, 10)}.txt`
                 )
               }
-              disabled={isExporting}
-              className="bg-gray-600 text-white px-6 py-2 rounded-md hover:bg-gray-700 transition-colors"
+              disabled={exportActionsDisabled}
+              className="bg-gray-600 text-white px-6 py-2 rounded-md hover:bg-gray-700 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
               Export as Text
             </button>

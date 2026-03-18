@@ -58,7 +58,7 @@ type GeneratorPanelProps = {
   logEntries: LogEntry[];
   error: string;
   loading: boolean;
-  bullet: {text: string; category: string} | null;
+  bullet: {text: string; category: string; guidanceSections?: string[]} | null;
   splitBulletRecommendation: {
     shouldSplit: boolean;
     reason: string;
@@ -328,7 +328,7 @@ export default function GeneratorPanel({
         Generate professional evaluation bullets.
       </p>
 
-      <div className="mt-6 rounded-lg border border-blue-200 bg-blue-50 p-3 sm:p-4">
+      <div className="pull-log-box mt-6 rounded-lg border border-blue-200 bg-blue-50 p-3 sm:p-4">
         <div className="flex items-center justify-between gap-3">
           <p className="text-sm font-semibold text-blue-900">Pull From Daily Log</p>
 
@@ -590,6 +590,13 @@ export default function GeneratorPanel({
                 <p className="mt-3 text-sm font-medium text-blue-700">
                   AI Recommended Category: {bullet.category}
                 </p>
+              )}
+              {bullet.guidanceSections && bullet.guidanceSections.length > 0 && (
+                <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 p-3">
+                  {bullet.guidanceSections.map((section, i) => (
+                    <p key={i} className="text-xs text-emerald-800">{section}</p>
+                  ))}
+                </div>
               )}
 
               {splitBulletRecommendationLoading && (

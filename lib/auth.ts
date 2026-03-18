@@ -10,12 +10,14 @@ const SESSION_DURATION_SECONDS = 60 * 60 * 24 * 7;
 export type SessionUser = {
   id: string;
   username: string;
+  isGuest?: boolean;
 };
 
 type SessionPayload = {
   sub: string;
   username: string;
   exp: number;
+  guest?: boolean;
 };
 
 function getAuthSecret() {
@@ -75,6 +77,7 @@ export function createSessionToken(user: SessionUser) {
     sub: user.id,
     username: user.username,
     exp: Math.floor(Date.now() / 1000) + SESSION_DURATION_SECONDS,
+    guest: user.isGuest === true,
   };
 
   const encodedPayload = base64UrlEncode(JSON.stringify(payload));
@@ -117,21 +120,26 @@ export function verifySessionToken(token: string): SessionUser | null {
     return {
       id: payload.sub,
       username: payload.username,
+      isGuest: payload.guest === true,
     };
   } catch {
     return null;
   }
 }
 
-export async function setSessionCookie(user: SessionUser) {
+export async function setSessionCookie(
+  user: SessionUser,
+  options?: { persistent?: boolean }
+) {
   const cookieStore = await cookies();
+  const persistent = options?.persistent ?? true;
 
   cookieStore.set(AUTH_COOKIE_NAME, createSessionToken(user), {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
-    maxAge: SESSION_DURATION_SECONDS,
+    ...(persistent ? { maxAge: SESSION_DURATION_SECONDS } : {}),
   });
 }
 

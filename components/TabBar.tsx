@@ -9,48 +9,41 @@ export default function TabBar({
   setActiveTab,
   dashboardRecommendationCount = 0,
 }: TabBarProps) {
+  const tabBaseClass =
+    "min-w-[48%] flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors sm:min-w-0 sm:text-base";
+  const getTabClass = (tabKey: string) =>
+    `${tabBaseClass} ${
+      activeTab === tabKey
+        ? "border-blue-700 bg-blue-700 text-white shadow-sm"
+        : "border-slate-300 bg-slate-50 text-slate-800 hover:border-blue-300 hover:bg-blue-50"
+    }`;
+
   return (
-    <div className="sticky top-(--tab-bar-top-offset) z-20 flex flex-wrap gap-2 rounded-xl bg-white/95 p-2 shadow-md backdrop-blur supports-backdrop-filter:bg-white/80 sm:top-6">
+    <div className="sticky top-(--tab-bar-top-offset) z-20 flex flex-wrap gap-2 rounded-xl border border-slate-300 bg-white/95 p-2 shadow-lg backdrop-blur supports-backdrop-filter:bg-white/80">
       <button
         onClick={() => setActiveTab("log")}
-        className={`min-w-[48%] flex-1 rounded-md px-3 py-2 text-sm sm:min-w-0 sm:text-base ${
-          activeTab === "log"
-            ? "bg-blue-600 text-white"
-            : "bg-gray-100 text-gray-700"
-        }`}
+        className={getTabClass("log")}
       >
         Daily Log
       </button>
 
       <button
         onClick={() => setActiveTab("generator")}
-        className={`min-w-[48%] flex-1 rounded-md px-3 py-2 text-sm sm:min-w-0 sm:text-base ${
-          activeTab === "generator"
-            ? "bg-blue-600 text-white"
-            : "bg-gray-100 text-gray-700"
-        }`}
+        className={getTabClass("generator")}
       >
         Generator
       </button>
 
       <button
         onClick={() => setActiveTab("history")}
-        className={`min-w-[48%] flex-1 rounded-md px-3 py-2 text-sm sm:min-w-0 sm:text-base ${
-          activeTab === "history"
-            ? "bg-blue-600 text-white"
-            : "bg-gray-100 text-gray-700"
-        }`}
+        className={getTabClass("history")}
       >
         Official Marks
       </button>
 
       <button
         onClick={() => setActiveTab("dashboard")}
-        className={`min-w-[48%] flex-1 overflow-hidden rounded-md px-3 py-2 text-sm sm:min-w-0 sm:text-base ${
-          activeTab === "dashboard"
-            ? "bg-blue-600 text-white"
-            : "bg-gray-100 text-gray-700"
-        }`}
+        className={`${getTabClass("dashboard")} overflow-hidden`}
       >
         <span className="inline-flex max-w-full flex-wrap items-center justify-center gap-1.5">
           Dashboard
@@ -71,22 +64,14 @@ export default function TabBar({
 
       <button
         onClick={() => setActiveTab("export")}
-        className={`min-w-[48%] flex-1 rounded-md px-3 py-2 text-sm sm:min-w-0 sm:text-base ${
-          activeTab === "export"
-            ? "bg-blue-600 text-white"
-            : "bg-gray-100 text-gray-700"
-        }`}
+        className={getTabClass("export")}
       >
         Export Marks
       </button>
 
       <button
         onClick={() => setActiveTab("marks-package")}
-        className={`min-w-[48%] flex-1 rounded-md px-3 py-2 text-sm sm:min-w-0 sm:text-base ${
-          activeTab === "marks-package"
-            ? "bg-blue-600 text-white"
-            : "bg-gray-100 text-gray-700"
-        }`}
+        className={getTabClass("marks-package")}
       >
         Marks Package Builder
       </button>

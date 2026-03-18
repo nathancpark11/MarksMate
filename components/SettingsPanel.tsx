@@ -1,6 +1,7 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 
 type SettingsPanelProps = {
+  isGuestSession?: boolean;
   rankLevel: string;
   setRankLevel: (value: string) => void;
   rating: string;
@@ -19,10 +20,22 @@ type SettingsPanelProps = {
   setAiDashboardInsightsEnabled: (value: boolean) => void;
   aiMarksPackageEnabled: boolean;
   setAiMarksPackageEnabled: (value: boolean) => void;
+  darkModeEnabled: boolean;
+  setDarkModeEnabled: (value: boolean) => void;
+  highContrastEnabled: boolean;
+  setHighContrastEnabled: (value: boolean) => void;
   historyCount: number;
   settingsMessage: string;
+  guidanceUploadBusy: boolean;
+  guidanceUploadStatus: {
+    fileName: string;
+    status: "uploading" | "uploaded" | "failed";
+    detail?: string;
+  } | null;
+  canManageOfficialGuidance: boolean;
   onExportBackup: () => void;
   onImportBackup: (file: File) => void;
+  onUploadGuidancePdf: (file: File, source: string, ranks: string[]) => void;
   onClearAllBullets: () => void;
   onClearDailyLog: () => void;
   onReviewTutorial: () => void;
@@ -30,6 +43,7 @@ type SettingsPanelProps = {
 };
 
 export default function SettingsPanel({
+  isGuestSession = false,
   rankLevel,
   setRankLevel,
   rating,
@@ -48,16 +62,62 @@ export default function SettingsPanel({
   setAiDashboardInsightsEnabled,
   aiMarksPackageEnabled,
   setAiMarksPackageEnabled,
+  darkModeEnabled,
+  setDarkModeEnabled,
+  highContrastEnabled,
+  setHighContrastEnabled,
   historyCount,
   settingsMessage,
+  guidanceUploadBusy,
+  guidanceUploadStatus,
+  canManageOfficialGuidance,
   onExportBackup,
   onImportBackup,
+  onUploadGuidancePdf,
   onClearAllBullets,
   onClearDailyLog,
   onReviewTutorial,
   onDeleteAccount,
 }: SettingsPanelProps) {
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const guidanceInputRef = useRef<HTMLInputElement | null>(null);
+  const [guidanceSource, setGuidanceSource] = useState("Official Marking Guide");
+  const [selectedRanks, setSelectedRanks] = useState<string[]>([]);
+
+  const rankOptions = ["E3", "E4", "E5", "E6", "E7"];
+  const status = guidanceUploadStatus?.status || "idle";
+  const statusLabel =
+    status === "uploaded"
+      ? "Uploaded"
+      : status === "failed"
+        ? "Failed"
+        : status === "uploading"
+          ? "Uploading"
+          : "Idle";
+  const statusTextClass =
+    status === "uploaded"
+      ? "text-emerald-700"
+      : status === "failed"
+        ? "text-red-700"
+        : status === "uploading"
+          ? "text-amber-700"
+          : "text-blue-900";
+  const statusCardClass =
+    status === "uploaded"
+      ? "border-emerald-200"
+      : status === "failed"
+        ? "border-red-200"
+        : status === "uploading"
+          ? "border-amber-200"
+          : "border-blue-200";
+
+  const toggleRank = (rank: string) => {
+    setSelectedRanks((prev) =>
+      prev.includes(rank) ? prev.filter((entry) => entry !== rank) : [...prev, rank]
+    );
+  };
+
+  const restrictToRankAndRate = isGuestSession;
 
   return (
     <div className="bg-white p-4 sm:p-8 rounded-xl shadow-md space-y-8">
@@ -68,6 +128,11 @@ export default function SettingsPanel({
         <p className="text-sm text-gray-500">
           Set defaults used across generators and marks package workflows.
         </p>
+        {restrictToRankAndRate ? (
+          <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            Guest mode: only Rank and Rate can be changed.
+          </p>
+        ) : null}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -123,6 +188,7 @@ export default function SettingsPanel({
               value={userName}
               onChange={(e) => setUserName(e.target.value)}
               placeholder="Last, First, MI"
+              disabled={restrictToRankAndRate}
               className="mt-2 w-full border rounded-md p-3"
             />
             <p className="mt-1 text-xs text-gray-500">Format: Last, First, MI</p>
@@ -135,6 +201,7 @@ export default function SettingsPanel({
               value={userUnit}
               onChange={(e) => setUserUnit(e.target.value)}
               placeholder="e.g. Sector Boston"
+              disabled={restrictToRankAndRate}
               className="mt-2 w-full border rounded-md p-3"
             />
           </div>
@@ -148,6 +215,7 @@ export default function SettingsPanel({
           <select
             value={bulletStyle}
             onChange={(e) => setBulletStyle(e.target.value)}
+            disabled={restrictToRankAndRate}
             className="mt-2 w-full md:w-96 border rounded-md p-3"
           >
             <option>Short/Concise</option>
@@ -166,6 +234,7 @@ export default function SettingsPanel({
               className="mt-1 h-4 w-4"
               checked={aiGeneratorEnabled}
               onChange={(e) => setAiGeneratorEnabled(e.target.checked)}
+              disabled={restrictToRankAndRate}
             />
             <span>
               <span className="block text-sm font-medium text-gray-900">Generator Tab AI</span>
@@ -179,6 +248,7 @@ export default function SettingsPanel({
               className="mt-1 h-4 w-4"
               checked={aiLogImportEnabled}
               onChange={(e) => setAiLogImportEnabled(e.target.checked)}
+              disabled={restrictToRankAndRate}
             />
             <span>
               <span className="block text-sm font-medium text-gray-900">Daily Log Tab AI</span>
@@ -192,6 +262,7 @@ export default function SettingsPanel({
               className="mt-1 h-4 w-4"
               checked={aiDashboardInsightsEnabled}
               onChange={(e) => setAiDashboardInsightsEnabled(e.target.checked)}
+              disabled={restrictToRankAndRate}
             />
             <span>
               <span className="block text-sm font-medium text-gray-900">Dashboard Tab AI</span>
@@ -205,10 +276,48 @@ export default function SettingsPanel({
               className="mt-1 h-4 w-4"
               checked={aiMarksPackageEnabled}
               onChange={(e) => setAiMarksPackageEnabled(e.target.checked)}
+              disabled={restrictToRankAndRate}
             />
             <span>
               <span className="block text-sm font-medium text-gray-900">Marks Package Tab AI</span>
               <span className="text-xs text-gray-500">Use AI to generate package summaries and supervisor notes.</span>
+            </span>
+          </label>
+        </div>
+      </section>
+
+      <section className="space-y-4 rounded-lg border border-gray-200 bg-gray-50 p-4 sm:p-5">
+        <h3 className="text-lg font-semibold text-gray-800">Appearance</h3>
+        <p className="text-sm text-gray-500">
+          Adjust readability and color scheme preferences for the full app.
+        </p>
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <label className="flex items-start gap-3 rounded-md border border-gray-200 p-3">
+            <input
+              type="checkbox"
+              className="mt-1 h-4 w-4"
+              checked={darkModeEnabled}
+              onChange={(e) => setDarkModeEnabled(e.target.checked)}
+              disabled={restrictToRankAndRate}
+            />
+            <span>
+              <span className="block text-sm font-medium text-gray-900">Dark Color Scheme</span>
+              <span className="text-xs text-gray-500">Switches the app to a darker surface and text palette.</span>
+            </span>
+          </label>
+
+          <label className="flex items-start gap-3 rounded-md border border-gray-200 p-3">
+            <input
+              type="checkbox"
+              className="mt-1 h-4 w-4"
+              checked={highContrastEnabled}
+              onChange={(e) => setHighContrastEnabled(e.target.checked)}
+              disabled={restrictToRankAndRate}
+            />
+            <span>
+              <span className="block text-sm font-medium text-gray-900">High Contrast</span>
+              <span className="text-xs text-gray-500">Increases text contrast and makes control outlines easier to see.</span>
             </span>
           </label>
         </div>
@@ -221,28 +330,32 @@ export default function SettingsPanel({
         <div className="flex flex-wrap gap-3">
           <button
             onClick={onExportBackup}
-            className="px-4 py-2 rounded-md bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+            disabled={restrictToRankAndRate}
+            className="px-4 py-2 rounded-md bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             Export Backup
           </button>
 
           <button
             onClick={() => importInputRef.current?.click()}
-            className="px-4 py-2 rounded-md border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-100"
+            disabled={restrictToRankAndRate}
+            className="px-4 py-2 rounded-md border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
           >
             Import Backup
           </button>
 
           <button
             onClick={onClearAllBullets}
-            className="px-4 py-2 rounded-md bg-red-600 text-white text-sm font-medium hover:bg-red-700"
+            disabled={restrictToRankAndRate}
+            className="px-4 py-2 rounded-md bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             Clear Official Marks
           </button>
 
           <button
             onClick={onClearDailyLog}
-            className="px-4 py-2 rounded-md bg-red-600 text-white text-sm font-medium hover:bg-red-700"
+            disabled={restrictToRankAndRate}
+            className="px-4 py-2 rounded-md bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             Clear Daily Log
           </button>
@@ -265,6 +378,85 @@ export default function SettingsPanel({
         {settingsMessage && <p className="text-sm text-gray-700">{settingsMessage}</p>}
       </section>
 
+      {canManageOfficialGuidance && <section className="official-guidance-admin space-y-4 rounded-lg border border-blue-200 bg-blue-50 p-4 sm:p-5">
+        <h3 className="text-lg font-semibold text-blue-900">Official Guidance Admin</h3>
+        <p className="text-sm text-blue-800">
+          Upload rank-specific PDF guidance so AI can reference the correct source for E3-E7.
+        </p>
+
+        <div>
+          <label className="block text-sm font-medium text-blue-900">Guide Name</label>
+          <input
+            type="text"
+            value={guidanceSource}
+            onChange={(e) => setGuidanceSource(e.target.value)}
+            placeholder="E-5 Official Marking Guide"
+            className="mt-2 w-full border rounded-md p-3"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-blue-900">Ranks</label>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {rankOptions.map((rank) => {
+              const isSelected = selectedRanks.includes(rank);
+              return (
+                <button
+                  key={rank}
+                  type="button"
+                  onClick={() => toggleRank(rank)}
+                  className={`rounded-md border px-3 py-2 text-sm font-medium ${
+                    isSelected
+                      ? "border-blue-700 bg-blue-700 text-white"
+                      : "border-blue-200 bg-white text-blue-900 hover:bg-blue-100"
+                  }`}
+                >
+                  {rank}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <button
+            type="button"
+            onClick={() => guidanceInputRef.current?.click()}
+            disabled={guidanceUploadBusy}
+            className="px-4 py-2 rounded-md bg-blue-700 text-white text-sm font-medium hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {guidanceUploadBusy ? "Uploading..." : "Upload Guidance PDF"}
+          </button>
+
+          <div className={`min-w-0 rounded-md border bg-white px-3 py-2 text-xs text-blue-900 md:min-w-88 ${statusCardClass}`}>
+            <p className="font-semibold">Upload Status</p>
+            <p className="truncate">
+              File: {guidanceUploadStatus?.fileName || "No recent upload"}
+            </p>
+            <p className={statusTextClass}>
+              State: {statusLabel}
+            </p>
+            {guidanceUploadStatus?.detail && (
+              <p className="line-clamp-2 text-blue-800">{guidanceUploadStatus.detail}</p>
+            )}
+          </div>
+        </div>
+
+        <input
+          ref={guidanceInputRef}
+          type="file"
+          accept="application/pdf"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) {
+              onUploadGuidancePdf(file, guidanceSource, selectedRanks);
+            }
+            e.currentTarget.value = "";
+          }}
+        />
+      </section>}
+
       <section className="space-y-4 rounded-lg border border-gray-200 bg-gray-50 p-4 sm:p-5">
         <h3 className="text-lg font-semibold text-gray-800">Help</h3>
         <p className="text-sm text-gray-500">
@@ -272,24 +464,27 @@ export default function SettingsPanel({
         </p>
         <button
           onClick={onReviewTutorial}
-          className="px-4 py-2 rounded-md border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-100"
+          disabled={restrictToRankAndRate}
+          className="px-4 py-2 rounded-md border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
         >
           Review Tutorial
         </button>
       </section>
 
-      <section className="space-y-4 rounded-lg border border-red-200 bg-red-50 p-4 sm:p-5">
-        <h3 className="text-lg font-semibold text-red-700">Danger Zone</h3>
-        <p className="text-sm text-gray-500">
+      {!restrictToRankAndRate && (
+      <section className="space-y-4 rounded-lg border border-red-900 bg-red-600 p-4 sm:p-5">
+        <h3 className="text-lg font-semibold text-black">Danger Zone</h3>
+        <p className="text-sm text-black">
           Permanently delete your account. This cannot be undone. All saved data will be lost.
         </p>
         <button
           onClick={onDeleteAccount}
-          className="px-4 py-2 rounded-md border border-red-600 text-red-600 text-sm font-medium hover:bg-red-50"
+          className="px-4 py-2 rounded-md border border-red-500 bg-black text-red-500 text-sm font-medium hover:bg-gray-900"
         >
           Delete Account
         </button>
       </section>
+      )}
     </div>
   );
 }

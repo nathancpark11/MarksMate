@@ -50,6 +50,18 @@ export async function ensureSchema(): Promise<void> {
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
 
   await sql`
+    CREATE TABLE IF NOT EXISTS guidance_datasets (
+      id           SERIAL PRIMARY KEY,
+      ranks_key    TEXT UNIQUE NOT NULL,
+      source       TEXT NOT NULL DEFAULT 'Official Marking Guide',
+      ranks        TEXT NOT NULL DEFAULT '[]',
+      chunks       TEXT NOT NULL DEFAULT '[]',
+      generated_at TEXT NOT NULL DEFAULT '',
+      uploaded_by  TEXT NOT NULL DEFAULT ''
+    )
+  `;
+
+  await sql`
     CREATE TABLE IF NOT EXISTS user_data (
       user_id    TEXT NOT NULL,
       data_key   TEXT NOT NULL,

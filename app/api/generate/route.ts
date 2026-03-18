@@ -3,6 +3,7 @@ import { requireSessionUser } from "@/lib/auth";
 import { validateCombinedAiInputs } from "@/lib/promptSpamGuard";
 import { enforceRateLimits } from "@/lib/rateLimit";
 import { getRequestId, logApiError, logApiRequestMetadata } from "@/lib/safeLogging";
+import { getCategorySpecificGuidanceContext } from "@/lib/officialGuidance";
 import {
   GENERATE_REQUEST_MAX_BYTES,
   getUtf8ByteLength,
@@ -126,7 +127,7 @@ export async function POST(req: Request) {
   let inputLength = 0;
 
   try {
-    const { response: authResponse } = await requireSessionUser();
+    const { user, response: authResponse } = await requireSessionUser();
     if (authResponse) {
       return authResponse;
     }
@@ -247,14 +248,26 @@ export async function POST(req: Request) {
     const rankGuidance = getRankGuidance(rankValue);
     const isVagueEntry = isLikelyVagueAccomplishment(normalizedAccomplishment);
     const selectedModel =
-      generationIntentValue === "final-polished-official-mark"
-        ? FINAL_MARK_MODEL
-        : isVagueEntry
-          ? VAGUE_ENTRY_MODEL
-          : SIMPLE_MODEL;
+      user?.isGuest
+        ? SIMPLE_MODEL
+        : generationIntentValue === "final-polished-official-mark"
+          ? FINAL_MARK_MODEL
+          : isVagueEntry
+            ? VAGUE_ENTRY_MODEL
+            : SIMPLE_MODEL;
     const impactInclusionRule = normalizedMissionImpact
       ? "- If mission impact is provided, explicitly include that impact in the bullet."
       : "- If mission impact is not provided, infer impact only from other provided data.";
+    const { context: officialGuidanceContext, sections: officialGuidanceSections } = user?.isGuest
+      ? { context: "", sections: [] as string[] }
+      : await getCategorySpecificGuidanceContext({
+          accomplishment: normalizedAccomplishment,
+          missionImpact: normalizedMissionImpact,
+          category: categoryValue,
+          rankLevel: rankValue,
+          rating: ratingValue,
+          maxChunks: 1,
+        });
 
     const supportingData = `
 Supporting Data:
@@ -319,6 +332,8 @@ Style Guidance:
 
 ${supportingData}
 
+${officialGuidanceContext}
+
 Example:
 {"bullet":"- Developed and implemented trng plan for 12 new Mbrs; increased qualification completion rates 30% and improved unit readiness.","title":"Training Leadership"}
 
@@ -329,7 +344,7 @@ ${normalizedAccomplishment}
 `,
         },
       ],
-      max_tokens: 200,
+      max_tokens: 350,
       temperature: 0.7,
     });
 
@@ -340,6 +355,7 @@ ${normalizedAccomplishment}
     return Response.json({
       bullet: parsedResult.bullet,
       title: parsedResult.title,
+      guidanceSections: officialGuidanceSections,
     });
   } catch (error: unknown) {
     logApiError("OpenAI route error", error, { requestId, routeName, inputLength, success: false });

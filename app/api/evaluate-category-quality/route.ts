@@ -4,6 +4,7 @@ import { requireSessionUser } from "@/lib/auth";
 import { validateCombinedAiInputs } from "@/lib/promptSpamGuard";
 import { enforceRateLimits } from "@/lib/rateLimit";
 import { getRequestId, logApiError, logApiRequestMetadata } from "@/lib/safeLogging";
+import { getMarkDescriptionsForCategory } from "@/lib/officialGuidance";
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY ?? "missing-openai-api-key",
@@ -138,6 +139,25 @@ export async function POST(req: Request) {
       return Response.json({ error: promptSpamError }, { status: 400 });
     }
 
+    const categoryMarkDescriptions: Record<string, string> = {};
+    const rankLevelValue = typeof rankLevel === "string" && rankLevel ? rankLevel : "E5";
+    await Promise.all(
+      populatedCategories.map(async ([category]) => {
+        const descriptions = await getMarkDescriptionsForCategory({
+          category,
+          rankLevel: rankLevelValue,
+          maxChunks: 4,
+        });
+        if (descriptions) {
+          categoryMarkDescriptions[category] = descriptions;
+        }
+      })
+    );
+
+    const guidanceBlock = Object.entries(categoryMarkDescriptions)
+      .map(([cat, text]) => `${cat}:\n${text}`)
+      .join("\n\n");
+
     const prompt = `You are evaluating groups of performance bullets for a U.S. military evaluation dashboard.
 
 Score each category on a 1-10 scale for:
@@ -153,6 +173,7 @@ Instructions:
 - Base scores only on evidence explicitly present in the bullets.
 - Do not reward quantity alone.
 - alignmentToCategory measures how well the bullets actually support the named category.
+- When Official Mark Descriptions are provided below, use the language and performance criteria in those descriptions to calibrate your scores. A bullet that closely matches the language and standards of a mark of 6 should score accordingly; one matching a mark of 2 or 4 should score lower.
 - aiExplanation must be exactly 1 sentence, 20-40 words.
 - aiExplanation must begin with "Recommended <score>:" using the compiled 4-7 score you intend to recommend.
 - aiExplanation must cite specific evidence from the bullets: mention bullet volume, consistency of impact statements, measurable results, above-peer performance indicators, or gaps — whichever are most relevant.
@@ -176,7 +197,11 @@ Use this exact shape:
   }
 }
 
-Current rank level: ${rankLevel || "Not provided"}
+Current rank level: ${rankLevelValue}${
+  guidanceBlock
+    ? `\n\nOfficial Mark Descriptions by Category (use these to calibrate scores and aiExplanation):\n${guidanceBlock}`
+    : ""
+}
 
 Categories and bullets:
 ${JSON.stringify(populatedCategories.map(([category, bullets]) => ({ category, bullets })), null, 2)}`;

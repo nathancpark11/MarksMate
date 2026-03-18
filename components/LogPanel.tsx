@@ -303,7 +303,7 @@ export default function LogPanel({
       <h2 className="text-xl font-semibold">Daily Log</h2>
       <p className="mt-1 text-sm text-gray-600">Capture work notes you can turn into bullets later.</p>
 
-      <div className="mt-5 rounded-lg border border-indigo-200 bg-indigo-50 p-3 sm:p-4">
+      <div className="log-import-section mt-5 rounded-lg border border-indigo-200 bg-indigo-50 p-3 sm:p-4">
         <p className="text-sm font-semibold text-indigo-900">Import Notes Into Daily Log</p>
         <p className="mt-1 text-xs text-indigo-800">
           Upload a .docx or .pdf file, or paste notes, then save parsed entries directly into Daily Log.
@@ -389,7 +389,7 @@ export default function LogPanel({
         {importError && <p className="mt-2 text-xs text-red-700">{importError}</p>}
 
         {importedEntries.length > 0 && (
-          <div className="mt-3 rounded-md border border-indigo-200 bg-white p-3">
+          <div className="log-import-results mt-3 rounded-md border border-indigo-200 bg-white p-3">
             <p className="text-xs font-semibold text-indigo-900">
               Parsed Entries ({importedEntries.length})
             </p>

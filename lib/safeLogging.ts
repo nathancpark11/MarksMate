@@ -26,6 +26,9 @@ export function getSafeErrorDetails(error: unknown) {
 
   if (error instanceof Error) {
     details.errorName = error.name || "Error";
+    if (error.message) {
+      details.errorMessage = error.message.slice(0, 300);
+    }
   } else {
     details.errorName = "NonErrorThrown";
     details.errorType = typeof error;

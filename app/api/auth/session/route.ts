@@ -8,6 +8,17 @@ export async function GET() {
     return Response.json({ authenticated: false, user: null }, { status: 200 });
   }
 
+  if (user.isGuest) {
+    return Response.json({
+      authenticated: true,
+      user: {
+        ...user,
+        needsTutorial: false,
+        lastLoginAt: null,
+      },
+    });
+  }
+
   const storedUser = await findUserById(user.id);
 
   return Response.json({

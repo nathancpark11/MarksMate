@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 type DashboardPanelProps = {
   sessionUserId?: string | null;
+  isGuestSession?: boolean;
   aiEnabled: boolean;
   history: { text: string; category?: string }[];
   suggestions: Record<string, { category: string; reason: string }>;
@@ -67,8 +68,8 @@ const MIN_MARK = 4;
 const MAX_MARK = 7;
 const DASHBOARD_ANALYSIS_STORAGE_VERSION = 1;
 
-function getDashboardAnalysisStorageKey(userId: string) {
-  return `dashboardAnalysis:${userId}`;
+function getDashboardAnalysisStorageKey(userId: string, isGuestSession: boolean) {
+  return `${isGuestSession ? "guest-session" : "dashboardAnalysis"}:${userId}`;
 }
 
 function normalizeCategoryName(category: string) {
@@ -205,6 +206,7 @@ function getCrossCategoryPairKey(left: CategorizedBullet, right: CategorizedBull
 
 export default function DashboardPanel({
   sessionUserId,
+  isGuestSession = false,
   aiEnabled,
   history,
   suggestions,
@@ -293,7 +295,8 @@ export default function DashboardPanel({
     }
 
     try {
-      const raw = localStorage.getItem(getDashboardAnalysisStorageKey(sessionUserId));
+      const storage = isGuestSession ? sessionStorage : localStorage;
+      const raw = storage.getItem(getDashboardAnalysisStorageKey(sessionUserId, isGuestSession));
       if (!raw) {
         return;
       }
@@ -318,7 +321,7 @@ export default function DashboardPanel({
     } catch {
       // Ignore parse/storage errors and continue with in-memory state.
     }
-  }, [sessionUserId]);
+  }, [sessionUserId, isGuestSession]);
 
   useEffect(() => {
     if (!sessionUserId) {
@@ -339,7 +342,11 @@ export default function DashboardPanel({
     };
 
     try {
-      localStorage.setItem(getDashboardAnalysisStorageKey(sessionUserId), JSON.stringify(payload));
+      const storage = isGuestSession ? sessionStorage : localStorage;
+      storage.setItem(
+        getDashboardAnalysisStorageKey(sessionUserId, isGuestSession),
+        JSON.stringify(payload)
+      );
     } catch {
       // Ignore quota/storage errors and continue with in-memory state.
     }
@@ -354,6 +361,7 @@ export default function DashboardPanel({
     dismissedCrossCategoryPairs,
     dismissedPreCloseActions,
     lockedTotalEstimate,
+    isGuestSession,
   ]);
 
   const startEditingBullet = (originalText: string, suggested: string) =>
@@ -658,6 +666,17 @@ export default function DashboardPanel({
 
     void (async () => {
       try {
+        if (isGuestSession) {
+          const raw = sessionStorage.getItem("guest-session:dashboardTotalEstimate");
+          const parsed = raw ? (JSON.parse(raw) as unknown) : null;
+          const parsedValue =
+            typeof parsed === "number" && Number.isFinite(parsed) ? parsed : null;
+          if (!cancelled) {
+            setLockedTotalEstimate(parsedValue);
+          }
+          return;
+        }
+
         const response = await fetch("/api/user-data?key=dashboardTotalEstimate");
         const data = (await response.json()) as { value?: unknown };
         const parsedValue =
@@ -676,9 +695,14 @@ export default function DashboardPanel({
     return () => {
       cancelled = true;
     };
-  }, [sessionUserId]);
+  }, [sessionUserId, isGuestSession]);
 
   const persistLockedTotalEstimate = async (estimate: number) => {
+    if (isGuestSession) {
+      sessionStorage.setItem("guest-session:dashboardTotalEstimate", JSON.stringify(estimate));
+      return;
+    }
+
     try {
       await fetch("/api/user-data", {
         method: "PUT",
@@ -1010,7 +1034,7 @@ export default function DashboardPanel({
               type="button"
               onClick={() => void analyzeDashboard()}
               disabled={!hasCategoryBullets || isAnalyzingDashboard || !aiEnabled}
-              className="rounded-md border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-800 transition-colors hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+              className="analyze-dashboard-button rounded-md border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-800 transition-colors hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isAnalyzingDashboard ? "Analyzing..." : "Analyze Dashboard"}
             </button>
