@@ -1,4 +1,10 @@
-import { createUser, findUserByUsername, sanitizeUsername } from "@/lib/userStore";
+import {
+  createUser,
+  findUserByUsername,
+  isValidEmail,
+  sanitizeEmail,
+  sanitizeUsername,
+} from "@/lib/userStore";
 import { hashPassword, setSessionCookie } from "@/lib/auth";
 import { logApiError } from "@/lib/safeLogging";
 
@@ -6,10 +12,12 @@ export async function POST(req: Request) {
   try {
     const body = (await req.json()) as {
       username?: string;
+      email?: string;
       password?: string;
     };
 
     const username = sanitizeUsername(body.username || "");
+    const email = sanitizeEmail(body.email || "");
     const password = (body.password || "").trim();
 
     if (username.length < 3 || username.length > 40) {
@@ -26,6 +34,13 @@ export async function POST(req: Request) {
       );
     }
 
+    if (email && !isValidEmail(email)) {
+      return Response.json(
+        { error: "Enter a valid email address." },
+        { status: 400 }
+      );
+    }
+
     const existing = await findUserByUsername(username);
     if (existing) {
       return Response.json(
@@ -35,7 +50,7 @@ export async function POST(req: Request) {
     }
 
     const passwordHash = await hashPassword(password);
-    const user = await createUser({ username, passwordHash });
+    const user = await createUser({ username, email, passwordHash });
 
     await setSessionCookie({ id: user.id, username: user.username });
 
@@ -44,9 +59,17 @@ export async function POST(req: Request) {
         id: user.id,
         username: user.username,
         needsTutorial: !user.hasCompletedTutorial,
+        needsEmail: !user.emailLower,
       },
     });
   } catch (error: unknown) {
+    if (error instanceof Error && error.message === "EMAIL_EXISTS") {
+      return Response.json(
+        { error: "An account with that email already exists." },
+        { status: 409 }
+      );
+    }
+
     logApiError("signup error", error);
     return Response.json({ error: "Failed to create account." }, { status: 500 });
   }

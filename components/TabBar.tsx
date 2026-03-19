@@ -49,7 +49,7 @@ export default function TabBar({
           Dashboard
           {dashboardRecommendationCount > 0 && (
             <span
-              className={`inline-flex min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-semibold leading-none ${
+              className={`dashboard-notification-bubble inline-flex min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-semibold leading-none ${
                 activeTab === "dashboard"
                   ? "bg-white text-blue-700"
                   : "bg-red-500 text-white"

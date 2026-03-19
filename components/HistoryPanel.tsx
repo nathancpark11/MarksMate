@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-type HistoryItem = { text: string; date: string; category?: string; markingPeriod?: string; title?: string };
+type HistoryItem = { text: string; date: string; dates?: string[]; category?: string; markingPeriod?: string; title?: string };
 
 const OFFICIAL_MARK_CATEGORIES = [
   "Military Bearing",
@@ -215,6 +215,24 @@ export default function HistoryPanel({
   const { currentPeriod, endDate, daysRemaining } = getCurrentPeriodInfo();
   const urgencyColor = daysRemaining <= 30 ? 'text-red-600' : daysRemaining <= 60 ? 'text-yellow-600' : 'text-green-700';
 
+  const startEditingMark = (index: number, item: HistoryItem) => {
+    setEditableMarks((prev) => ({ ...prev, [index]: item.text }));
+    setEditableCategories((prev) => ({
+      ...prev,
+      [index]: item.category ?? "",
+    }));
+    setEditingMarks((prev) => ({ ...prev, [index]: true }));
+  };
+
+  const cancelEditingMark = (index: number, item: HistoryItem) => {
+    setEditableMarks((prev) => ({ ...prev, [index]: item.text }));
+    setEditableCategories((prev) => ({
+      ...prev,
+      [index]: item.category ?? "",
+    }));
+    setEditingMarks((prev) => ({ ...prev, [index]: false }));
+  };
+
   return (
     <div className="bg-white p-4 sm:p-6 rounded-xl shadow-md">
       <div className="mb-4">
@@ -383,14 +401,35 @@ export default function HistoryPanel({
                                     {item.title && (
                                       <h3 className="text-sm font-semibold text-gray-900">{toTitleCase(item.title)}</h3>
                                     )}
-                                    <p className="text-xs text-gray-400">{formatDateOrBlank(item.date)}</p>
+                                    <p className="text-xs text-gray-400">
+                                      {Array.isArray(item.dates) && item.dates.length > 1
+                                        ? item.dates
+                                            .map((dateValue) => formatDateOrBlank(dateValue))
+                                            .join(", ")
+                                        : formatDateOrBlank(item.date)}
+                                    </p>
                                   </div>
                                   <div className="ml-3 flex shrink-0 items-center gap-2">
-                                    {item.category && (
-                                      <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
-                                        {item.category}
-                                      </span>
-                                    )}
+                                    <select
+                                      value={item.category ?? ""}
+                                      onClick={(event) => event.stopPropagation()}
+                                      onChange={(event) => {
+                                        event.stopPropagation();
+                                        const nextCategory = event.target.value;
+                                        setEditableCategories((prev) => ({ ...prev, [index]: nextCategory }));
+                                        handleUpdateMark(index, item.text, nextCategory || undefined);
+                                      }}
+                                      className="official-mark-category-select official-mark-category-select-inline w-44 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700"
+                                      aria-label="Change official mark category"
+                                      title="Change category"
+                                    >
+                                      <option value="">No category</option>
+                                      {OFFICIAL_MARK_CATEGORIES.map((categoryOption) => (
+                                        <option key={categoryOption} value={categoryOption}>
+                                          {categoryOption}
+                                        </option>
+                                      ))}
+                                    </select>
                                     <span className="text-sm">{expanded[item.text] ? '▼' : '▶'}</span>
                                   </div>
                                 </div>
@@ -399,27 +438,6 @@ export default function HistoryPanel({
                                   <div className="mt-2">
                                     {editingMarks[index] ? (
                                       <>
-                                        <div className="mt-2">
-                                          <label className="block text-xs font-medium text-gray-600">Category</label>
-                                          <select
-                                            value={editableCategories[index] ?? item.category ?? ""}
-                                            onChange={(e) =>
-                                              setEditableCategories((prev) => ({
-                                                ...prev,
-                                                [index]: e.target.value,
-                                              }))
-                                            }
-                                            className="mt-1 w-full rounded-md border border-indigo-200 bg-indigo-50 p-2 text-sm text-indigo-700"
-                                            aria-label="Edit official mark category"
-                                          >
-                                            <option value="">No category</option>
-                                            {OFFICIAL_MARK_CATEGORIES.map((categoryOption) => (
-                                              <option key={categoryOption} value={categoryOption}>
-                                                {categoryOption}
-                                              </option>
-                                            ))}
-                                          </select>
-                                        </div>
                                         <textarea
                                           value={editableMarks[index] ?? item.text}
                                           onChange={(e) =>
@@ -436,12 +454,7 @@ export default function HistoryPanel({
                                         <div className="flex justify-end gap-3 mt-2">
                                           <button
                                             onClick={() => {
-                                              setEditableMarks((prev) => ({ ...prev, [index]: item.text }));
-                                              setEditableCategories((prev) => ({
-                                                ...prev,
-                                                [index]: item.category ?? "",
-                                              }));
-                                              setEditingMarks((prev) => ({ ...prev, [index]: false }));
+                                              cancelEditingMark(index, item);
                                             }}
                                             className="text-gray-600 text-sm"
                                           >
@@ -487,14 +500,7 @@ export default function HistoryPanel({
                                             </button>
                                           </div>
                                           <button
-                                            onClick={() => {
-                                              setEditableMarks((prev) => ({ ...prev, [index]: item.text }));
-                                              setEditableCategories((prev) => ({
-                                                ...prev,
-                                                [index]: item.category ?? "",
-                                              }));
-                                              setEditingMarks((prev) => ({ ...prev, [index]: true }));
-                                            }}
+                                            onClick={() => startEditingMark(index, item)}
                                             className="text-blue-600 text-sm"
                                           >
                                             Edit

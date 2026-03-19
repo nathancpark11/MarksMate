@@ -14,6 +14,7 @@ export async function POST() {
     user: {
       ...guestUser,
       needsTutorial: false,
+      needsEmail: false,
       lastLoginAt: null,
     },
   });

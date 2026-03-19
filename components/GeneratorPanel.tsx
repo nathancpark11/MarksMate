@@ -81,7 +81,7 @@ type GeneratorPanelProps = {
   handleRepromptSplitBulletDraft: (draftId: string) => void | Promise<void>;
   handleCommitSplitBulletDrafts: (draftIds: string[]) => void;
   handleCommitBullet: () => void;
-  onLogEntryPulled?: (payload: { date: string | null; index: number | null; groupedIndexes?: number[] }) => void;
+  onLogEntryPulled?: (payload: { dates: string[]; index: number | null; groupedIndexes?: number[] }) => void;
   pendingLogPull?: number | null;
   onPendingLogPullConsumed?: () => void;
 };
@@ -159,7 +159,7 @@ export default function GeneratorPanel({
     setInput(pulledText);
 
     if (onLogEntryPulled) {
-      onLogEntryPulled({ date: targetEntry.dates[0] ?? null, index: targetEntry.sourceIndex });
+      onLogEntryPulled({ dates: targetEntry.dates, index: targetEntry.sourceIndex });
     }
   };
 
@@ -175,7 +175,7 @@ export default function GeneratorPanel({
     setSelectedLogEntryId("");
     setMissionImpact("");
     setInput(entries.join("\n"));
-    onLogEntryPulled?.({ date: null, index: null, groupedIndexes: entriesToPull.map((e) => e.sourceIndex) });
+    onLogEntryPulled?.({ dates: [], index: null, groupedIndexes: entriesToPull.map((e) => e.sourceIndex) });
   };
 
   const selectLogEntry = (nextId: string) => {
@@ -584,33 +584,33 @@ export default function GeneratorPanel({
               </button>
             </div>
 
-            <div className="mt-4 rounded-md border bg-gray-50 p-4">
-              <p className="text-sm text-gray-800">{bullet.text}</p>
+            <div className="generated-bullet-preview mt-4 rounded-md border bg-gray-50 p-4">
+              <p className="generated-bullet-preview-text text-sm text-gray-800">{bullet.text}</p>
               {!wasCategoryUserSelected && bullet.category && (
-                <p className="mt-3 text-sm font-medium text-blue-700">
+                <p className="generated-bullet-preview-category mt-3 text-sm font-medium text-blue-700">
                   AI Recommended Category: {bullet.category}
                 </p>
               )}
               {bullet.guidanceSections && bullet.guidanceSections.length > 0 && (
-                <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 p-3">
+                <div className="generated-bullet-reference mt-3 rounded-md border border-emerald-200 bg-emerald-50 p-3">
                   {bullet.guidanceSections.map((section, i) => (
-                    <p key={i} className="text-xs text-emerald-800">{section}</p>
+                    <p key={i} className="generated-bullet-reference-text text-xs text-emerald-800">{section}</p>
                   ))}
                 </div>
               )}
 
               {splitBulletRecommendationLoading && (
-                <p className="mt-3 text-sm text-blue-700">
+                <p className="generated-bullet-preview-loading mt-3 text-sm text-blue-700">
                   AI is checking whether this accomplishment should be split into multiple marks...
                 </p>
               )}
 
               {!splitBulletRecommendationLoading && splitBulletRecommendation && (
                 <div
-                  className={`mt-3 rounded-md border p-3 text-sm ${
+                  className={`generated-bullet-split-recommendation mt-3 rounded-md border p-3 text-sm ${
                     splitBulletRecommendation.shouldSplit
-                      ? "border-amber-300 bg-amber-50 text-amber-900"
-                      : "border-blue-200 bg-blue-50 text-blue-900"
+                      ? "generated-bullet-split-recommendation-amber border-amber-300 bg-amber-50 text-amber-900"
+                      : "generated-bullet-split-recommendation-blue border-blue-200 bg-blue-50 text-blue-900"
                   }`}
                 >
                   <p className="font-semibold">

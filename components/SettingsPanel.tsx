@@ -32,10 +32,20 @@ type SettingsPanelProps = {
     status: "uploading" | "uploaded" | "failed";
     detail?: string;
   } | null;
+  guidanceUploadHistory: Array<{
+    rank: string;
+    source: string;
+    fileName: string;
+    outputFile: string;
+    chunkCount: number;
+    uploadedAt: string;
+    uploadedBy: string;
+    replacedExisting: boolean;
+  }>;
   canManageOfficialGuidance: boolean;
   onExportBackup: () => void;
   onImportBackup: (file: File) => void;
-  onUploadGuidancePdf: (file: File, source: string, ranks: string[]) => void;
+  onUploadGuidancePdf: (file: File, ranks: string[]) => void;
   onClearAllBullets: () => void;
   onClearDailyLog: () => void;
   onReviewTutorial: () => void;
@@ -70,6 +80,7 @@ export default function SettingsPanel({
   settingsMessage,
   guidanceUploadBusy,
   guidanceUploadStatus,
+  guidanceUploadHistory,
   canManageOfficialGuidance,
   onExportBackup,
   onImportBackup,
@@ -81,7 +92,6 @@ export default function SettingsPanel({
 }: SettingsPanelProps) {
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const guidanceInputRef = useRef<HTMLInputElement | null>(null);
-  const [guidanceSource, setGuidanceSource] = useState("Official Marking Guide");
   const [selectedRanks, setSelectedRanks] = useState<string[]>([]);
 
   const rankOptions = ["E3", "E4", "E5", "E6", "E7"];
@@ -115,6 +125,15 @@ export default function SettingsPanel({
     setSelectedRanks((prev) =>
       prev.includes(rank) ? prev.filter((entry) => entry !== rank) : [...prev, rank]
     );
+  };
+
+  const formatUploadTimestamp = (value: string) => {
+    if (!value) {
+      return "Unknown date";
+    }
+
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
   };
 
   const restrictToRankAndRate = isGuestSession;
@@ -385,17 +404,6 @@ export default function SettingsPanel({
         </p>
 
         <div>
-          <label className="block text-sm font-medium text-blue-900">Guide Name</label>
-          <input
-            type="text"
-            value={guidanceSource}
-            onChange={(e) => setGuidanceSource(e.target.value)}
-            placeholder="E-5 Official Marking Guide"
-            className="mt-2 w-full border rounded-md p-3"
-          />
-        </div>
-
-        <div>
           <label className="block text-sm font-medium text-blue-900">Ranks</label>
           <div className="mt-2 flex flex-wrap gap-2">
             {rankOptions.map((rank) => {
@@ -418,7 +426,7 @@ export default function SettingsPanel({
           </div>
         </div>
 
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-start">
           <button
             type="button"
             onClick={() => guidanceInputRef.current?.click()}
@@ -427,7 +435,9 @@ export default function SettingsPanel({
           >
             {guidanceUploadBusy ? "Uploading..." : "Upload Guidance PDF"}
           </button>
+        </div>
 
+        <div className="grid gap-3 md:grid-cols-[minmax(0,18rem)_minmax(0,1fr)] md:items-start">
           <div className={`min-w-0 rounded-md border bg-white px-3 py-2 text-xs text-blue-900 md:min-w-88 ${statusCardClass}`}>
             <p className="font-semibold">Upload Status</p>
             <p className="truncate">
@@ -440,6 +450,34 @@ export default function SettingsPanel({
               <p className="line-clamp-2 text-blue-800">{guidanceUploadStatus.detail}</p>
             )}
           </div>
+
+          <div className="rounded-md border border-blue-200 bg-white px-3 py-2 text-xs text-blue-900">
+            <div className="flex items-center justify-between gap-3">
+              <p className="font-semibold">Upload Log</p>
+              <p className="text-[11px] text-blue-700">Permanent history by rank</p>
+            </div>
+            {guidanceUploadHistory.length ? (
+              <div className="mt-2 max-h-56 space-y-2 overflow-y-auto pr-1">
+                {guidanceUploadHistory.map((entry, index) => (
+                  <div
+                    key={`${entry.rank}-${entry.uploadedAt}-${index}`}
+                    className="flex items-start justify-between gap-3 rounded-md border border-blue-100 bg-blue-50 px-3 py-2"
+                  >
+                    <div className="min-w-0">
+                      <p className="font-semibold text-blue-950">{entry.rank}</p>
+                      <p className="truncate text-blue-800">{entry.fileName || entry.outputFile || entry.source}</p>
+                    </div>
+                    <div className="shrink-0 text-right text-[11px] text-blue-800">
+                      <p>{formatUploadTimestamp(entry.uploadedAt)}</p>
+                      {entry.replacedExisting ? <p>Overwrote prior upload</p> : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-2 text-blue-800">No guidance uploads have been logged yet.</p>
+            )}
+          </div>
         </div>
 
         <input
@@ -450,7 +488,7 @@ export default function SettingsPanel({
           onChange={(e) => {
             const file = e.target.files?.[0];
             if (file) {
-              onUploadGuidancePdf(file, guidanceSource, selectedRanks);
+              onUploadGuidancePdf(file, selectedRanks);
             }
             e.currentTarget.value = "";
           }}

@@ -1,5 +1,5 @@
 import {
-  findUserByUsername,
+  findUserByUsernameOrEmail,
   sanitizeUsername,
   updateUserLastLoginById,
 } from "@/lib/userStore";
@@ -9,21 +9,22 @@ import { logApiError } from "@/lib/safeLogging";
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as {
+      identifier?: string;
       username?: string;
       password?: string;
     };
 
-    const username = sanitizeUsername(body.username || "");
+    const identifier = sanitizeUsername(body.identifier || body.username || "");
     const password = body.password || "";
 
-    if (!username || !password) {
+    if (!identifier || !password) {
       return Response.json(
-        { error: "Username and password are required." },
+        { error: "Username/email and password are required." },
         { status: 400 }
       );
     }
 
-    const user = await findUserByUsername(username);
+    const user = await findUserByUsernameOrEmail(identifier);
     if (!user) {
       return Response.json(
         { error: "Invalid username or password." },
@@ -54,6 +55,7 @@ export async function POST(req: Request) {
         id: user.id,
         username: user.username,
         needsTutorial: !user.hasCompletedTutorial,
+        needsEmail: !user.emailLower,
         lastLoginAt,
       },
     });

@@ -121,6 +121,16 @@ function parseGeneratedResult(rawContent: string) {
   };
 }
 
+function normalizeComparableBullet(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/^[-*•\s]+/, "")
+    .replace(/[“”"']/g, "")
+    .replace(/[.;:,!?]+$/g, "")
+    .replace(/\s+/g, " ");
+}
+
 export async function POST(req: Request) {
   const routeName = "/api/generate";
   const requestId = getRequestId(req);
@@ -201,6 +211,8 @@ export async function POST(req: Request) {
       hoursSaved,
       missionImpact,
       generationIntent,
+      sourceBullet,
+      sourceCategory,
     } = JSON.parse(rawBody) as {
       accomplishment?: unknown;
       category?: unknown;
@@ -212,6 +224,8 @@ export async function POST(req: Request) {
       hoursSaved?: unknown;
       missionImpact?: unknown;
       generationIntent?: unknown;
+      sourceBullet?: unknown;
+      sourceCategory?: unknown;
     };
 
     const accomplishmentValue = typeof accomplishment === "string" ? accomplishment : "";
@@ -243,6 +257,10 @@ export async function POST(req: Request) {
     const hoursSavedValue = typeof hoursSaved === "string" && hoursSaved ? hoursSaved : "";
     const generationIntentValue =
       typeof generationIntent === "string" && generationIntent ? generationIntent : "";
+    const sourceBulletValue = typeof sourceBullet === "string" ? sourceBullet.trim() : "";
+    const sourceCategoryValue = typeof sourceCategory === "string" ? sourceCategory.trim() : "";
+    const isAlternateCategoryRewrite = generationIntentValue === "alternate-category-rewrite";
+    const isRewordForCategory = generationIntentValue === "reword-for-category";
 
     const categoryGuidance = getCategoryGuidance(categoryValue);
     const rankGuidance = getRankGuidance(rankValue);
@@ -250,7 +268,7 @@ export async function POST(req: Request) {
     const selectedModel =
       user?.isGuest
         ? SIMPLE_MODEL
-        : generationIntentValue === "final-polished-official-mark"
+        : generationIntentValue === "final-polished-official-mark" || isAlternateCategoryRewrite || isRewordForCategory
           ? FINAL_MARK_MODEL
           : isVagueEntry
             ? VAGUE_ENTRY_MODEL
@@ -277,12 +295,38 @@ Supporting Data:
 - Mission impact: ${normalizedMissionImpact || "Not provided"}
 `;
 
-    const completion = await client.chat.completions.create({
-      model: selectedModel,
-      messages: [
-        {
-          role: "user",
-          content: `
+    const alternateCategoryRewriteContext = isAlternateCategoryRewrite
+      ? `
+Rewrite Context:
+- You are rewriting an existing mark so the same accomplishment fits a different evaluation category.
+- Target category: ${categoryValue}
+- Original/source category: ${sourceCategoryValue || "Not provided"}
+- Existing/source bullet: ${sourceBulletValue || "Not provided"}
+
+Alternate-category rewrite rules:
+- Preserve the underlying accomplishment and any real measurable impact.
+- Reframe the bullet so the emphasis, wording, and evidence clearly support the target category.
+- Do not copy or lightly paraphrase the existing/source bullet.
+- The new bullet must be materially different in phrasing and angle from the existing/source bullet.
+`
+      : "";
+
+    const rewordForCategoryContext = isRewordForCategory
+      ? `
+Reword Context:
+- You are rewriting an existing mark to better fit its assigned evaluation category.
+- Category: ${categoryValue}
+- Existing bullet: ${sourceBulletValue || "Not provided"}
+
+Reword rules:
+- Preserve all real accomplishments, numbers, and measurable impact from the existing bullet.
+- Strengthen the wording so the bullet clearly demonstrates evidence for the assigned category.
+- Improve action verbs, tighten phrasing, and eliminate filler.
+- Do not copy the existing bullet verbatim — the reword must produce a meaningfully improved version.
+`
+      : "";
+
+    const userPrompt = `
 You are writing performance evaluation bullets for a U.S. Coast Guard member.
 
 Rules:
@@ -334,6 +378,10 @@ ${supportingData}
 
 ${officialGuidanceContext}
 
+${alternateCategoryRewriteContext}
+
+${rewordForCategoryContext}
+
 Example:
 {"bullet":"- Developed and implemented trng plan for 12 new Mbrs; increased qualification completion rates 30% and improved unit readiness.","title":"Training Leadership"}
 
@@ -341,15 +389,37 @@ Rewrite the following accomplishment as a professional evaluation bullet and sho
 
 Accomplishment:
 ${normalizedAccomplishment}
-`,
-        },
-      ],
-      max_tokens: 350,
-      temperature: 0.7,
-    });
+`;
 
-    const content = completion.choices[0]?.message?.content?.trim();
-    const parsedResult = parseGeneratedResult(content || "");
+    const createCompletion = async (prompt: string) =>
+      client.chat.completions.create({
+        model: selectedModel,
+        messages: [
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+        max_tokens: 350,
+        temperature: 0.7,
+      });
+
+    let completion = await createCompletion(userPrompt);
+    let content = completion.choices[0]?.message?.content?.trim() || "";
+    let parsedResult = parseGeneratedResult(content);
+
+    if (
+      (isAlternateCategoryRewrite || isRewordForCategory) &&
+      sourceBulletValue &&
+      normalizeComparableBullet(parsedResult.bullet) === normalizeComparableBullet(sourceBulletValue)
+    ) {
+      const retryPrompt = `${userPrompt}
+
+Your previous answer matched the existing bullet too closely. Try again and produce a meaningfully improved rewrite that is clearly different in wording while still fitting the category.`;
+      completion = await createCompletion(retryPrompt);
+      content = completion.choices[0]?.message?.content?.trim() || "";
+      parsedResult = parseGeneratedResult(content);
+    }
 
     logApiRequestMetadata({ requestId, routeName, inputLength, success: true, status: 200 });
     return Response.json({

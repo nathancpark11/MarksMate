@@ -8,12 +8,15 @@ export async function GET() {
     return Response.json({ authenticated: false, user: null }, { status: 200 });
   }
 
+  
+
   if (user.isGuest) {
     return Response.json({
       authenticated: true,
       user: {
         ...user,
         needsTutorial: false,
+        needsEmail: false,
         lastLoginAt: null,
       },
     });
@@ -26,6 +29,7 @@ export async function GET() {
     user: {
       ...user,
       needsTutorial: storedUser ? !storedUser.hasCompletedTutorial : false,
+      needsEmail: storedUser ? !storedUser.emailLower : true,
       lastLoginAt: storedUser?.lastLoginAt ?? null,
     },
   });

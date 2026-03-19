@@ -60,6 +60,7 @@ type PersistedDashboardAnalysisState = {
   dismissedUnderrepresentedCategories: boolean;
   dismissedRepetitionGroups: string[];
   dismissedCrossCategoryPairs: string[];
+  suppressedCategoryComparisons?: string[];
   dismissedPreCloseActions: boolean;
   lockedTotalEstimate: number | null;
 };
@@ -153,6 +154,11 @@ type CrossCategorySimilarityPair = {
   matchType: "identical" | "similar";
 };
 
+type RepetitionGroupResolvedBullet = {
+  text: string;
+  category: string;
+};
+
 function normalizeBulletForSimilarity(text: string) {
   return text
     .trim()
@@ -202,6 +208,43 @@ function getCrossCategoryPairKey(left: CategorizedBullet, right: CategorizedBull
   const first = `${left.category}::${left.text}`;
   const second = `${right.category}::${right.text}`;
   return [first, second].sort().join("|||" );
+}
+
+function getCategoryComparisonKey(firstCategory: string, secondCategory: string) {
+  return [normalizeCategoryName(firstCategory), normalizeCategoryName(secondCategory)].sort().join("||");
+}
+
+function clampSummaryLength(value: string, maxChars = 250) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+
+  const truncated = normalized.slice(0, maxChars - 3).trimEnd();
+  return `${truncated}...`;
+}
+
+function getDistinctGroupCategories(
+  group: SmartInsights["repetitionGroups"][number],
+  history: { text: string; category?: string }[],
+  suggestions: Record<string, { category: string; reason: string }>
+) {
+  const categories = group.bullets.map((bulletText) => {
+    const match = history.find((item) => item.text === bulletText);
+    return normalizeCategoryName(match?.category || suggestions[bulletText]?.category || group.category);
+  });
+
+  return Array.from(new Set(categories));
+}
+
+function buildCategoryComparisonKeys(categories: string[]) {
+  const keys: string[] = [];
+  for (let i = 0; i < categories.length; i++) {
+    for (let j = i + 1; j < categories.length; j++) {
+      keys.push(getCategoryComparisonKey(categories[i], categories[j]));
+    }
+  }
+  return keys;
 }
 
 export default function DashboardPanel({
@@ -279,6 +322,7 @@ export default function DashboardPanel({
   const [dismissedUnderrepresentedCategories, setDismissedUnderrepresentedCategories] = useState(false);
   const [dismissedRepetitionGroups, setDismissedRepetitionGroups] = useState<Set<string>>(new Set());
   const [dismissedCrossCategoryPairs, setDismissedCrossCategoryPairs] = useState<Set<string>>(new Set());
+  const [suppressedCategoryComparisons, setSuppressedCategoryComparisons] = useState<Set<string>>(new Set());
   const [dismissedPreCloseActions, setDismissedPreCloseActions] = useState(false);
   const [openConsolidationGroupKey, setOpenConsolidationGroupKey] = useState<string | null>(null);
   const [consolidatedDrafts, setConsolidatedDrafts] = useState<Record<string, string>>({});
@@ -288,6 +332,19 @@ export default function DashboardPanel({
   const [crossCategoryRewordDrafts, setCrossCategoryRewordDrafts] = useState<Record<string, string>>({});
   const [crossCategoryRewordLoadingKey, setCrossCategoryRewordLoadingKey] = useState<string | null>(null);
   const [crossCategoryRewordErrorByKey, setCrossCategoryRewordErrorByKey] = useState<Record<string, string>>({});
+  const [bulletproofSummaries, setBulletproofSummaries] = useState<Record<string, string>>({});
+  const [bulletproofSummaryError, setBulletproofSummaryError] = useState("");
+  const [isLoadingBulletproofSummaries, setIsLoadingBulletproofSummaries] = useState(false);
+  const [bulletproofSummaryRequestKey, setBulletproofSummaryRequestKey] = useState("");
+
+  // Per-bullet Reword and Edit state for repetition group bullets
+  const [repBulletRewordDrafts, setRepBulletRewordDrafts] = useState<Record<string, string>>({});
+  const [repBulletRewordLoadingKey, setRepBulletRewordLoadingKey] = useState<string | null>(null);
+  const [repBulletRewordErrorByKey, setRepBulletRewordErrorByKey] = useState<Record<string, string>>({});
+  const [repBulletEditingKey, setRepBulletEditingKey] = useState<string | null>(null);
+  const [repBulletEditValues, setRepBulletEditValues] = useState<Record<string, string>>({});
+  // tracks which bullet texts have been saved per groupKey; auto-dismisses group when all are resolved
+  const [repGroupResolvedBullets, setRepGroupResolvedBullets] = useState<Record<string, string[]>>({});
 
   useEffect(() => {
     if (!sessionUserId) {
@@ -313,6 +370,7 @@ export default function DashboardPanel({
       setDismissedUnderrepresentedCategories(Boolean(parsed.dismissedUnderrepresentedCategories));
       setDismissedRepetitionGroups(new Set(parsed.dismissedRepetitionGroups ?? []));
       setDismissedCrossCategoryPairs(new Set(parsed.dismissedCrossCategoryPairs ?? []));
+      setSuppressedCategoryComparisons(new Set(parsed.suppressedCategoryComparisons ?? []));
       setDismissedPreCloseActions(Boolean(parsed.dismissedPreCloseActions));
 
       if (typeof parsed.lockedTotalEstimate === "number" && Number.isFinite(parsed.lockedTotalEstimate)) {
@@ -337,6 +395,7 @@ export default function DashboardPanel({
       dismissedUnderrepresentedCategories,
       dismissedRepetitionGroups: Array.from(dismissedRepetitionGroups),
       dismissedCrossCategoryPairs: Array.from(dismissedCrossCategoryPairs),
+      suppressedCategoryComparisons: Array.from(suppressedCategoryComparisons),
       dismissedPreCloseActions,
       lockedTotalEstimate,
     };
@@ -359,6 +418,7 @@ export default function DashboardPanel({
     dismissedUnderrepresentedCategories,
     dismissedRepetitionGroups,
     dismissedCrossCategoryPairs,
+    suppressedCategoryComparisons,
     dismissedPreCloseActions,
     lockedTotalEstimate,
     isGuestSession,
@@ -389,6 +449,100 @@ export default function DashboardPanel({
 
   const getRepetitionGroupKey = (group: SmartInsights["repetitionGroups"][number]) =>
     `${group.theme}|${group.category}|${group.bullets.join("||")}`;
+
+  const suppressGroupCategoryComparisons = (group: SmartInsights["repetitionGroups"][number]) => {
+    const groupCategories = getDistinctGroupCategories(group, history, suggestions);
+    const comparisonKeys = buildCategoryComparisonKeys(groupCategories);
+    if (comparisonKeys.length === 0) {
+      return;
+    }
+
+    setSuppressedCategoryComparisons((prev) => {
+      const next = new Set(prev);
+      comparisonKeys.forEach((key) => next.add(key));
+      return next;
+    });
+  };
+
+  const generateRepetitionBulletReword = async (bulletText: string, category: string) => {
+    if (!aiEnabled) {
+      setRepBulletRewordErrorByKey((prev) => ({ ...prev, [bulletText]: "Dashboard AI is disabled in Settings." }));
+      return;
+    }
+    setRepBulletRewordLoadingKey(bulletText);
+    setRepBulletRewordErrorByKey((prev) => ({ ...prev, [bulletText]: "" }));
+    try {
+      const response = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accomplishment: bulletText,
+          category,
+          rankLevel,
+          generationIntent: "reword-for-category",
+          sourceBullet: bulletText,
+          sourceCategory: category,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "Unable to generate reword draft.");
+      const text = typeof data.bullet === "string" ? data.bullet.trim() : "";
+      if (!text) throw new Error("Unable to generate reword draft.");
+      setRepBulletRewordDrafts((prev) => ({ ...prev, [bulletText]: text }));
+    } catch (error) {
+      setRepBulletRewordErrorByKey((prev) => ({
+        ...prev,
+        [bulletText]: error instanceof Error ? error.message : "Unable to generate reword draft.",
+      }));
+    } finally {
+      setRepBulletRewordLoadingKey(null);
+    }
+  };
+
+    // Finds the actual stored history text matching the AI-returned bullet text (guards against minor AI text drift)
+    const findActualHistoryText = (bulletText: string): string => {
+      if (history.some((item) => item.text === bulletText)) return bulletText;
+      const normalize = (s: string) =>
+        s.replace(/^[-*•\s]+/, "").replace(/\s+/g, " ").trim().toLowerCase();
+      const normalizedBullet = normalize(bulletText);
+      const exact = history.find((item) => normalize(item.text) === normalizedBullet);
+      if (exact) return exact.text;
+      if (normalizedBullet.length > 24) {
+        const sub = history.find((item) => {
+          const n = normalize(item.text);
+          return n.includes(normalizedBullet) || normalizedBullet.includes(n);
+        });
+        if (sub) return sub.text;
+      }
+      return bulletText;
+    };
+
+  const resolveRepetitionBullet = (bulletText: string, group: SmartInsights["repetitionGroups"][number]) => {
+    const groupKey = getRepetitionGroupKey(group);
+    const resolvedForGroup = [...(repGroupResolvedBullets[groupKey] ?? []), bulletText];
+    setRepGroupResolvedBullets((prev) => ({ ...prev, [groupKey]: resolvedForGroup }));
+    if (group.bullets.every((b) => resolvedForGroup.includes(b))) {
+      suppressGroupCategoryComparisons(group);
+      setDismissedRepetitionGroups((prev) => new Set(prev).add(groupKey));
+    }
+  };
+
+  const commitRepetitionBulletReword = (oldText: string, newText: string, group: SmartInsights["repetitionGroups"][number]) => {
+    const trimmed = newText.trim();
+    if (!trimmed) return;
+    onUpdateBullet?.(findActualHistoryText(oldText), trimmed);
+    setRepBulletRewordDrafts((prev) => { const n = { ...prev }; delete n[oldText]; return n; });
+    resolveRepetitionBullet(oldText, group);
+  };
+
+  const commitRepetitionBulletEdit = (oldText: string, group: SmartInsights["repetitionGroups"][number]) => {
+    const newText = (repBulletEditValues[oldText] ?? oldText).trim();
+    if (!newText) return;
+    onUpdateBullet?.(findActualHistoryText(oldText), newText);
+    setRepBulletEditingKey(null);
+    setRepBulletEditValues((prev) => { const n = { ...prev }; delete n[oldText]; return n; });
+    resolveRepetitionBullet(oldText, group);
+  };
 
   const generateConsolidatedDraft = async (
     group: SmartInsights["repetitionGroups"][number],
@@ -473,6 +627,8 @@ export default function DashboardPanel({
       onCommitConsolidatedRepetition(group.bullets, draft, group.category, title || undefined);
     }
 
+    suppressGroupCategoryComparisons(group);
+
     setDismissedRepetitionGroups((prev) => new Set(prev).add(groupKey));
     setOpenConsolidationGroupKey((prev) => (prev === groupKey ? null : prev));
   };
@@ -502,9 +658,11 @@ export default function DashboardPanel({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          accomplishment: `Rewrite this existing mark so it clearly fits the ${selectedBullet.category} category while preserving the original accomplishment and measurable impact: ${selectedBullet.text}`,
+          accomplishment: selectedBullet.text,
           category: selectedBullet.category,
           rankLevel,
+          generationIntent: "alternate-category-rewrite",
+          sourceBullet: selectedBullet.text,
         }),
       });
 
@@ -575,28 +733,9 @@ export default function DashboardPanel({
   const bulletsByCategory: Record<string, string[]> = {};
   categories.forEach((cat) => (bulletsByCategory[cat] = []));
   const categorizedBullets: CategorizedBullet[] = [];
-  const insightCategorizedBullets: CategorizedBullet[] = [];
-  const insightCategoryByBullet = new Map<string, string>();
-
-  (insights?.repetitionGroups || []).forEach((group) => {
-    const normalizedGroupCategory = normalizeCategoryName(group.category);
-    const matchedGroupCategory = categories.find(
-      (cat) => cat.toLowerCase() === normalizedGroupCategory.toLowerCase()
-    );
-
-    group.bullets.forEach((bulletText) => {
-      if (!insightCategoryByBullet.has(bulletText)) {
-        insightCategoryByBullet.set(bulletText, group.category);
-      }
-
-      if (matchedGroupCategory) {
-        insightCategorizedBullets.push({ text: bulletText, category: matchedGroupCategory });
-      }
-    });
-  });
 
   history.forEach((item) => {
-    const rawCategory = item.category || suggestions[item.text]?.category || insightCategoryByBullet.get(item.text);
+    const rawCategory = item.category || suggestions[item.text]?.category;
     if (!rawCategory) return;
 
     // Normalize legacy category naming variants before counting.
@@ -613,7 +752,7 @@ export default function DashboardPanel({
   const crossCategorySimilarityPairs: CrossCategorySimilarityPair[] = [];
   const seenCrossCategoryPairKeys = new Set<string>();
 
-  const crossCategoryDetectionSource = [...categorizedBullets, ...insightCategorizedBullets];
+  const crossCategoryDetectionSource = categorizedBullets;
 
   for (let i = 0; i < crossCategoryDetectionSource.length; i++) {
     for (let j = i + 1; j < crossCategoryDetectionSource.length; j++) {
@@ -626,6 +765,11 @@ export default function DashboardPanel({
 
       const matchType = getCrossCategoryMatchType(left.text, right.text);
       if (!matchType) {
+        continue;
+      }
+
+      const categoryComparisonKey = getCategoryComparisonKey(left.category, right.category);
+      if (suppressedCategoryComparisons.has(categoryComparisonKey)) {
         continue;
       }
 
@@ -833,6 +977,10 @@ export default function DashboardPanel({
     setCrossCategoryRewordDrafts({});
     setCrossCategoryRewordErrorByKey({});
     setCrossCategoryRewordLoadingKey(null);
+    setBulletproofSummaries({});
+    setBulletproofSummaryError("");
+    setIsLoadingBulletproofSummaries(false);
+    setBulletproofSummaryRequestKey("");
 
     try {
       await Promise.all([
@@ -929,6 +1077,10 @@ export default function DashboardPanel({
       setCrossCategoryRewordDrafts({});
       setCrossCategoryRewordErrorByKey({});
       setCrossCategoryRewordLoadingKey(null);
+      setBulletproofSummaries({});
+      setBulletproofSummaryError("");
+      setIsLoadingBulletproofSummaries(false);
+      setBulletproofSummaryRequestKey("");
     }
   }, [hasCategoryBullets]);
 
@@ -943,6 +1095,119 @@ export default function DashboardPanel({
   const getBarWidth = (mark: number) => {
     return ((mark - MIN_MARK) / (MAX_MARK - MIN_MARK)) * 100;
   };
+
+  const getRecommendedScore = (categoryName: string) => {
+    const mark = getBarHeight(counts[categoryName]);
+    const evaluation = evaluations[categoryName];
+
+    return counts[categoryName] > 0 && evaluation
+      ? Math.min(MAX_MARK, Math.max(MIN_MARK, Math.round((mark + evaluation.compiledScore) / 2)))
+      : mark;
+  };
+
+  const bulletproofSevenCategories = categories.filter(
+    (categoryName) => counts[categoryName] > 0 && getRecommendedScore(categoryName) === MAX_MARK
+  );
+  const bulletproofSummaryCategories = Object.fromEntries(
+    bulletproofSevenCategories.map((categoryName) => [categoryName, bulletsByCategory[categoryName] ?? []])
+  );
+  const bulletproofRequestKey = JSON.stringify({
+    rankLevel,
+    categories: bulletproofSummaryCategories,
+  });
+
+  useEffect(() => {
+    const requestPayload = JSON.parse(bulletproofRequestKey) as {
+      rankLevel: string;
+      categories: Record<string, string[]>;
+    };
+    const categoryNames = Object.keys(requestPayload.categories);
+
+    if (!hasAnalyzedDashboard || !aiEnabled) {
+      setBulletproofSummaries({});
+      setBulletproofSummaryError("");
+      setIsLoadingBulletproofSummaries(false);
+      setBulletproofSummaryRequestKey("");
+      return;
+    }
+
+    if (categoryNames.length === 0) {
+      setBulletproofSummaries({});
+      setBulletproofSummaryError("");
+      setIsLoadingBulletproofSummaries(false);
+      setBulletproofSummaryRequestKey("");
+      return;
+    }
+
+    if (bulletproofSummaryRequestKey === bulletproofRequestKey) {
+      return;
+    }
+
+    if (isLoadingBulletproofSummaries) {
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingBulletproofSummaries(true);
+    setBulletproofSummaryError("");
+
+    void (async () => {
+      try {
+        const response = await fetch("/api/summarize-bulletproof-seven", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            rankLevel: requestPayload.rankLevel,
+            categories: requestPayload.categories,
+          }),
+        });
+        const data = (await response.json()) as {
+          summaries?: Record<string, string>;
+          error?: string;
+        };
+
+        if (!response.ok) {
+          throw new Error(data.error || "Unable to build Bulletproof 7 summaries.");
+        }
+
+        const summaries = Object.fromEntries(
+          categoryNames.map((categoryName) => {
+            const raw = typeof data.summaries?.[categoryName] === "string" ? data.summaries[categoryName] : "";
+            return [categoryName, clampSummaryLength(raw)];
+          })
+        );
+
+        if (!cancelled) {
+          setBulletproofSummaries(summaries);
+          setBulletproofSummaryRequestKey(bulletproofRequestKey);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setBulletproofSummaries({});
+          setBulletproofSummaryError(
+            error instanceof Error ? error.message : "Unable to build Bulletproof 7 summaries."
+          );
+          setBulletproofSummaryRequestKey("");
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingBulletproofSummaries(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    aiEnabled,
+    bulletproofRequestKey,
+    bulletproofSevenCategories.length,
+    bulletproofSummaryRequestKey,
+    hasAnalyzedDashboard,
+    isLoadingBulletproofSummaries,
+    rankLevel,
+  ]);
 
   const totalEstimate = categories.reduce((sum, cat) => {
     const count = counts[cat];
@@ -973,13 +1238,49 @@ export default function DashboardPanel({
     ])
   );
   const eligibleRepetitionGroups = insights
-    ? insights.repetitionGroups.filter(
-        (group) =>
-          !group.bullets.some((bullet) =>
-            crossCategoryBulletTextSet.has(normalizeBulletForSimilarity(bullet))
-          )
-      )
+    ? insights.repetitionGroups.filter((group) => {
+        const hasCrossCategoryBulletOverlap = group.bullets.some((bullet) =>
+          crossCategoryBulletTextSet.has(normalizeBulletForSimilarity(bullet))
+        );
+        if (hasCrossCategoryBulletOverlap) {
+          return false;
+        }
+
+        const groupCategories = getDistinctGroupCategories(group, history, suggestions);
+        const comparisonKeys = buildCategoryComparisonKeys(groupCategories);
+        if (comparisonKeys.length === 0) {
+          return true;
+        }
+
+        return comparisonKeys.some((key) => !suppressedCategoryComparisons.has(key));
+      })
     : [];
+  const repetitionGroupResolvedBullets = new Map<string, RepetitionGroupResolvedBullet[]>();
+  const repetitionGroupCategoryLabels = new Map<string, string>();
+
+  eligibleRepetitionGroups.forEach((group) => {
+    const groupIdentityKey = group.theme + "||" + group.bullets.join("||");
+    const resolvedBullets = group.bullets.map((bulletText) => {
+      const matchedHistoryItem = history.find((item) => item.text === bulletText);
+      const resolvedCategory = matchedHistoryItem?.category || suggestions[bulletText]?.category || group.category;
+
+      return {
+        text: bulletText,
+        category: resolvedCategory,
+      };
+    });
+
+    repetitionGroupResolvedBullets.set(groupIdentityKey, resolvedBullets);
+
+    const distinctCategories = Array.from(
+      new Set(resolvedBullets.map((bullet) => normalizeCategoryName(bullet.category)))
+    );
+
+    repetitionGroupCategoryLabels.set(
+      groupIdentityKey,
+      distinctCategories.length <= 1 ? resolvedBullets[0]?.category || group.category : "Multiple Categories"
+    );
+  });
   const visibleRepetitionCount = eligibleRepetitionGroups.filter(
     (group) => !dismissedRepetitionGroups.has(getRepetitionGroupKey(group))
   ).length;
@@ -1025,7 +1326,7 @@ export default function DashboardPanel({
       </div>
 
       {/* ── AI Smart Insights Section ── */}
-      <div className="mt-6 border-t border-gray-200 pt-6">
+      <div className="dashboard-smart-insights mt-6 border-t border-gray-200 pt-6">
         <div className="space-y-5">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h3 className="text-base font-semibold text-gray-800">AI Smart Insights</h3>
@@ -1060,7 +1361,7 @@ export default function DashboardPanel({
           <div className="space-y-5">
 
             {visibleUnderrepresentedCount > 0 && (
-            <div className="rounded-xl border border-orange-200 bg-orange-50 overflow-hidden">
+            <div className="insight-panel insight-panel-orange rounded-xl border border-orange-200 bg-orange-50 overflow-hidden">
               <div className="flex items-center gap-2 px-4 py-3">
                 <button
                   type="button"
@@ -1111,7 +1412,7 @@ export default function DashboardPanel({
                   ) : (
                     <ul className="space-y-3">
                       {localUnderrepresentedCategories.map((item, i) => (
-                        <li key={i} className="rounded-lg bg-white border border-orange-100 p-3">
+                        <li key={i} className="insight-card rounded-lg bg-white border border-orange-100 p-3">
                           <div className="flex items-center justify-between mb-1">
                             <p className="text-xs font-semibold text-gray-700">{item.category}</p>
                             <span className="text-xs text-orange-600 font-medium">
@@ -1134,7 +1435,7 @@ export default function DashboardPanel({
                 (item) => !dismissedBullets.has(item.bullet)
               );
               return (
-                <div className="rounded-xl border border-yellow-200 bg-yellow-50 overflow-hidden">
+                <div className="insight-panel insight-panel-yellow rounded-xl border border-yellow-200 bg-yellow-50 overflow-hidden">
                   <div className="flex items-center gap-2 px-4 py-3">
                     <button
                       type="button"
@@ -1199,7 +1500,7 @@ export default function DashboardPanel({
                           {visible.map((item, i) => {
                             const isEditing = Object.prototype.hasOwnProperty.call(editingBullets, item.bullet);
                             return (
-                              <li key={i} className="rounded-lg bg-white border border-yellow-100 p-3">
+                              <li key={i} className="insight-card rounded-lg bg-white border border-yellow-100 p-3">
                                 <p className="text-xs text-gray-400 uppercase tracking-wide font-semibold mb-1">{item.category}</p>
                                 <p className="text-xs text-gray-600 italic mb-2">&ldquo;{item.bullet}&rdquo;</p>
                                 <div className="flex items-start gap-1.5 mb-3">
@@ -1270,7 +1571,7 @@ export default function DashboardPanel({
 
             {/* Repetition Detected */}
             {visibleRepetitionInsightCount > 0 && (
-            <div className="rounded-xl border border-purple-200 bg-purple-50 overflow-hidden">
+            <div className="insight-panel insight-panel-purple rounded-xl border border-purple-200 bg-purple-50 overflow-hidden">
               <div className="flex items-center gap-2 px-4 py-3">
                 <button
                   type="button"
@@ -1332,7 +1633,7 @@ export default function DashboardPanel({
               {openInsightSections.repetition && (
                 <div className="px-4 pb-4">
                   {visibleCrossCategorySimilarityCount > 0 && (
-                    <div className="mb-4 rounded-lg border border-purple-200 bg-white p-3">
+                    <div className="insight-card mb-4 rounded-lg border border-purple-200 bg-white p-3">
                       <div className="mb-2 flex items-center justify-between gap-2">
                         <p className="text-xs font-semibold uppercase tracking-wide text-purple-700">
                           Cross-Category Similarity Dialogue
@@ -1342,7 +1643,7 @@ export default function DashboardPanel({
                         </span>
                       </div>
                       <p className="mb-3 text-xs text-gray-600">
-                        These bullets look identical or very similar across different categories. Reword each one so it better matches its own category.
+                        These bullets look too close across different categories. Generate a category-specific rewrite for either mark only when you need clearer differentiation. If they already read as distinct category evidence, dismiss the item.
                       </p>
                       <ul className="space-y-3">
                         {crossCategorySimilarityPairs
@@ -1354,7 +1655,7 @@ export default function DashboardPanel({
                             const rightDraft = crossCategoryRewordDrafts[rightKey] || "";
 
                             return (
-                              <li key={pair.key} className="rounded-md border border-purple-100 bg-purple-50 p-3">
+                              <li key={pair.key} className="insight-subpanel rounded-md border border-purple-100 bg-purple-50 p-3">
                                 <div className="mb-2 flex items-center justify-between gap-2">
                                   <p className="text-xs font-semibold text-purple-700">
                                     Pair {index + 1}: {pair.matchType === "identical" ? "Identical" : "Very Similar"}
@@ -1371,12 +1672,12 @@ export default function DashboardPanel({
                                 </div>
 
                                 <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-                                  <div className="rounded-md border border-purple-100 bg-white p-2">
+                                  <div className="insight-card rounded-md border border-purple-100 bg-white p-2">
                                     <p className="mb-1 text-xs font-semibold text-gray-700">{pair.left.category}</p>
                                     <p className="text-xs text-gray-600">&ldquo;{pair.left.text}&rdquo;</p>
 
                                     {(leftDraft || crossCategoryRewordErrorByKey[leftKey]) && (
-                                      <div className="mt-3 rounded-md border border-purple-200 bg-white p-2">
+                                      <div className="insight-card mt-3 rounded-md border border-purple-200 bg-white p-2">
                                         <p className="mb-1 text-xs font-semibold text-purple-700">Draft for {pair.left.category}</p>
                                         <textarea
                                           className="w-full resize-none rounded-md border border-purple-200 bg-white px-2.5 py-2 text-xs italic text-gray-800 focus:outline-none focus:ring-1 focus:ring-purple-300"
@@ -1424,12 +1725,12 @@ export default function DashboardPanel({
                                       {crossCategoryRewordLoadingKey === leftKey ? "Rewording..." : `Reword for ${pair.left.category}`}
                                     </button>
                                   </div>
-                                  <div className="rounded-md border border-purple-100 bg-white p-2">
+                                  <div className="insight-card rounded-md border border-purple-100 bg-white p-2">
                                     <p className="mb-1 text-xs font-semibold text-gray-700">{pair.right.category}</p>
                                     <p className="text-xs text-gray-600">&ldquo;{pair.right.text}&rdquo;</p>
 
                                     {(rightDraft || crossCategoryRewordErrorByKey[rightKey]) && (
-                                      <div className="mt-3 rounded-md border border-purple-200 bg-white p-2">
+                                      <div className="insight-card mt-3 rounded-md border border-purple-200 bg-white p-2">
                                         <p className="mb-1 text-xs font-semibold text-purple-700">Draft for {pair.right.category}</p>
                                         <textarea
                                           className="w-full resize-none rounded-md border border-purple-200 bg-white px-2.5 py-2 text-xs italic text-gray-800 focus:outline-none focus:ring-1 focus:ring-purple-300"
@@ -1495,38 +1796,161 @@ export default function DashboardPanel({
                         .filter((group) => !dismissedRepetitionGroups.has(getRepetitionGroupKey(group)))
                         .map((group, i) => {
                           const groupKey = getRepetitionGroupKey(group);
+                          const groupIdentityKey = group.theme + "||" + group.bullets.join("||");
+                          const resolvedCategoryLabel = repetitionGroupCategoryLabels.get(groupIdentityKey) || group.category;
+                          const isMultiCategory = resolvedCategoryLabel === "Multiple Categories";
                           const isOpen = openConsolidationGroupKey === groupKey;
                           const isReprompting = consolidationLoadingKey === groupKey;
                           return (
-                        <li key={i} className="rounded-lg bg-white border border-purple-100 p-3">
+                        <li key={i} className="insight-card rounded-lg bg-white border border-purple-100 p-3">
                           <div className="flex items-center justify-between mb-2">
                             <p className="text-xs font-semibold text-purple-700">{group.theme}</p>
                             <div className="flex items-center gap-2">
-                              <span className="text-xs text-purple-500 font-medium">{group.bullets.length} bullets</span>
+                              <span className="text-xs text-purple-500 font-medium">
+                                {(repetitionGroupResolvedBullets.get(groupIdentityKey) || []).filter(b => !(repGroupResolvedBullets[groupKey] ?? []).includes(b.text)).length} bullets
+                              </span>
                               <button
                                 type="button"
-                                onClick={() => setDismissedRepetitionGroups((prev) => new Set(prev).add(groupKey))}
+                                onClick={() => {
+                                  suppressGroupCategoryComparisons(group);
+                                  setDismissedRepetitionGroups((prev) => new Set(prev).add(groupKey));
+                                }}
                                 className="rounded border border-purple-200 bg-white px-1.5 py-0.5 text-xs font-semibold text-purple-600 hover:bg-purple-100 transition-colors"
                                 title="Dismiss suggestion"
                                 aria-label="Dismiss suggestion"
                               >
-                                Exit
+                                Dismiss
                               </button>
                             </div>
                           </div>
-                          <p className="text-xs text-gray-400 uppercase tracking-wide font-semibold mb-1">{group.category}</p>
+                          <p className="text-xs text-gray-400 uppercase tracking-wide font-semibold mb-1">
+                            {resolvedCategoryLabel}
+                          </p>
                           <ul className="mb-2 space-y-1">
-                            {group.bullets.map((b, j) => (
-                              <li key={j} className="text-xs text-gray-600 italic">&bull; {b}</li>
-                            ))}
+                            {(repetitionGroupResolvedBullets.get(group.theme + "||" + group.bullets.join("||")) || [])
+                              .filter((bullet) => !(repGroupResolvedBullets[groupKey] ?? []).includes(bullet.text))
+                              .map((bullet, j) => {
+                              const isEditing = repBulletEditingKey === bullet.text;
+                              const isRewording = repBulletRewordLoadingKey === bullet.text;
+                              const rewordDraft = repBulletRewordDrafts[bullet.text];
+                              const rewordError = repBulletRewordErrorByKey[bullet.text];
+                              return (
+                              <li key={j} className="rounded-md border border-gray-300 bg-gray-50 px-2 py-2 text-xs text-gray-700">
+                                <div className="flex items-start justify-between gap-2 italic mb-1.5">
+                                  <div className="flex min-w-0 items-start gap-1.5">
+                                    <span className="mr-1 inline-flex shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold not-italic text-gray-700">
+                                      {bullet.category}
+                                    </span>
+                                    <span className="min-w-0">&bull; {bullet.text}</span>
+                                  </div>
+                                  {isMultiCategory && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        resolveRepetitionBullet(bullet.text, group);
+                                      }}
+                                      className="shrink-0 rounded border border-gray-300 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-gray-600 hover:bg-gray-100 transition-colors"
+                                      title={`Dismiss ${bullet.category} from this comparison`}
+                                      aria-label={`Dismiss ${bullet.category} from this comparison`}
+                                    >
+                                      x
+                                    </button>
+                                  )}
+                                </div>
+                                {isMultiCategory && (<>
+                                <div className="flex gap-2 not-italic">
+                                  <button
+                                    type="button"
+                                    disabled={isRewording}
+                                    onClick={() => void generateRepetitionBulletReword(bullet.text, bullet.category)}
+                                    className="rounded border border-blue-300 bg-blue-600 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    {isRewording ? "Rewording..." : "Reword"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setRepBulletEditingKey(bullet.text);
+                                      setRepBulletEditValues((prev) => ({ ...prev, [bullet.text]: bullet.text }));
+                                    }}
+                                    className="rounded border border-gray-300 bg-white px-2 py-0.5 text-[10px] font-semibold text-gray-700 hover:bg-gray-100 transition-colors"
+                                  >
+                                    Edit
+                                  </button>
+                                </div>
+                                {rewordError && <p className="mt-1 text-[10px] text-red-600 not-italic">{rewordError}</p>}
+                                {rewordDraft && !isRewording && (
+                                  <div className="mt-2 rounded-md border border-gray-300 bg-white p-2.5 space-y-2 not-italic">
+                                    <p className="text-[10px] font-bold text-gray-600 uppercase tracking-wide">Reword Draft</p>
+                                    <p className="text-xs text-gray-800 leading-relaxed">{rewordDraft}</p>
+                                    <div className="flex gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => commitRepetitionBulletReword(bullet.text, rewordDraft, group)}
+                                        className="rounded bg-blue-600 px-2.5 py-1 text-[10px] font-semibold text-white hover:bg-blue-500 transition-colors"
+                                      >
+                                        Save
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => void generateRepetitionBulletReword(bullet.text, bullet.category)}
+                                        disabled={isRewording}
+                                        className="rounded border border-blue-300 bg-white px-2.5 py-1 text-[10px] font-semibold text-blue-700 hover:bg-blue-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                      >
+                                        Retry
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setRepBulletRewordDrafts((prev) => { const n = { ...prev }; delete n[bullet.text]; return n; })}
+                                        className="ml-auto rounded border border-gray-300 bg-transparent px-2.5 py-1 text-[10px] font-semibold text-gray-600 hover:bg-gray-100 transition-colors"
+                                      >
+                                        Dismiss
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                                {isEditing && (
+                                  <div className="mt-2 space-y-1.5 not-italic">
+                                    <textarea
+                                      className="w-full rounded-md border border-purple-200 bg-white px-2 py-1.5 text-xs text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-purple-300 resize-none"
+                                      rows={3}
+                                      value={repBulletEditValues[bullet.text] ?? bullet.text}
+                                      onChange={(e) => setRepBulletEditValues((prev) => ({ ...prev, [bullet.text]: e.target.value }))}
+                                      autoFocus
+                                    />
+                                    <div className="flex gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => commitRepetitionBulletEdit(bullet.text, group)}
+                                        className="rounded bg-purple-500 px-2.5 py-1 text-[10px] font-semibold text-white hover:bg-purple-400 transition-colors"
+                                      >
+                                        Save
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => { setRepBulletEditingKey(null); setRepBulletEditValues((prev) => { const n = { ...prev }; delete n[bullet.text]; return n; }); }}
+                                        className="rounded border border-purple-600 bg-transparent px-2.5 py-1 text-[10px] font-semibold text-purple-300 hover:bg-purple-800 transition-colors"
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                                </>)}
+                              </li>
+                              );
+                            })}
                           </ul>
+                          {!isMultiCategory && (
                           <div className="flex items-start gap-1.5">
                             <svg className="h-3.5 w-3.5 text-purple-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                               <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
                             </svg>
                             <p className="text-xs text-gray-700">{group.suggestion}</p>
                           </div>
+                          )}
 
+                          {!isMultiCategory && (
                           <div className="mt-3">
                             <button
                               type="button"
@@ -1536,9 +1960,10 @@ export default function DashboardPanel({
                               Consolidate and Reprompt
                             </button>
                           </div>
+                          )}
 
-                          {isOpen && (
-                            <div className="mt-3 rounded-md border border-purple-200 bg-purple-50 p-3 space-y-2">
+                          {!isMultiCategory && isOpen && (
+                            <div className="insight-subpanel mt-3 rounded-md border border-purple-200 bg-purple-50 p-3 space-y-2">
                               <p className="text-xs font-semibold text-purple-700">Consolidated Mark Draft</p>
                               <textarea
                                 className="w-full rounded-md border border-purple-200 bg-white px-2.5 py-2 text-xs text-gray-800 focus:outline-none focus:ring-1 focus:ring-purple-300 resize-none"
@@ -1589,7 +2014,7 @@ export default function DashboardPanel({
 
             {/* Before Marks Close */}
             {visiblePreCloseCount > 0 && (
-            <div className="rounded-xl border border-green-200 bg-green-50 overflow-hidden">
+            <div className="insight-panel insight-panel-green rounded-xl border border-green-200 bg-green-50 overflow-hidden">
               <div className="flex items-center gap-2 px-4 py-3">
                 <button
                   type="button"
@@ -1631,7 +2056,7 @@ export default function DashboardPanel({
                   ) : (
                     <ul className="space-y-3">
                       {insights.preCloseActions.map((item, i) => (
-                        <li key={i} className="rounded-lg bg-white border border-green-100 p-3">
+                        <li key={i} className="insight-card rounded-lg bg-white border border-green-100 p-3">
                           <div className="flex items-start justify-between gap-3 mb-2">
                             <p className="text-xs text-gray-700 flex-1">{item.action}</p>
                             <span className={`shrink-0 text-xs font-bold ${
@@ -1676,14 +2101,7 @@ export default function DashboardPanel({
               const subCategories = primaryCategoryGroups[primaryCategory] || [];
               const groupMaxScore = subCategories.length * MAX_MARK;
               const groupRecommendedScore = subCategories.reduce((sum, cat) => {
-                const mark = getBarHeight(counts[cat]);
-                const evaluation = evaluations[cat];
-                const recommendedScore =
-                  counts[cat] > 0 && evaluation
-                    ? Math.min(MAX_MARK, Math.max(MIN_MARK, Math.round((mark + evaluation.compiledScore) / 2)))
-                    : mark;
-
-                return sum + recommendedScore;
+                return sum + getRecommendedScore(cat);
               }, 0);
 
               return (
@@ -1717,10 +2135,7 @@ export default function DashboardPanel({
                       const mark = getBarHeight(count);
                       const barWidth = `${getBarWidth(mark)}%`;
                       const evaluation = evaluations[cat];
-                      const recommendedScore =
-                        count > 0 && evaluation
-                          ? Math.min(MAX_MARK, Math.max(MIN_MARK, Math.round((mark + evaluation.compiledScore) / 2)))
-                          : mark;
+                      const recommendedScore = getRecommendedScore(cat);
 
                       const scoreColors = {
                         bar:    recommendedScore === 4 ? "bg-red-500"        : recommendedScore === 5 ? "bg-yellow-400"    : recommendedScore === 6 ? "bg-green-400"     : "bg-green-700",
@@ -1812,6 +2227,47 @@ export default function DashboardPanel({
           <br />
           Recommended Mark - the combination of AI Quality and Bullet Score
         </p>
+      </div>
+
+      <div className="bg-white p-6 rounded-xl shadow-md">
+        <div className="bulletproof-seven-panel rounded-xl border border-indigo-200 bg-indigo-50 p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <h3 className="text-base font-semibold text-indigo-900">Your Bulletproof "7"</h3>
+            <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-700">
+              {bulletproofSevenCategories.length} {bulletproofSevenCategories.length === 1 ? "Category" : "Categories"}
+            </span>
+          </div>
+
+          {!hasAnalyzedDashboard ? (
+            <p className="text-sm text-indigo-700">Run Analyze Dashboard to generate Bulletproof 7 recommendations.</p>
+          ) : !aiEnabled ? (
+            <p className="text-sm text-indigo-700">Dashboard AI is disabled in Settings.</p>
+          ) : isLoadingBulletproofSummaries ? (
+            <p className="text-sm text-indigo-700">Building consolidated 7-level summaries...</p>
+          ) : bulletproofSummaryError ? (
+            <p className="text-sm text-red-600">{bulletproofSummaryError}</p>
+          ) : bulletproofSevenCategories.length === 0 ? (
+            <p className="text-sm text-indigo-700">
+              No categories currently project a 7/7 recommendation based on bullet strength and AI quality.
+            </p>
+          ) : (
+            <ul className="space-y-3">
+              {bulletproofSevenCategories.map((categoryName) => {
+                const summary = bulletproofSummaries[categoryName] || "Summary unavailable.";
+                return (
+                  <li key={categoryName} className="rounded-lg border border-indigo-100 bg-white p-3">
+                    <div className="mb-1 flex items-center justify-between gap-3">
+                      <p className="text-sm font-semibold text-gray-800">{categoryName}</p>
+                      <span className="rounded-md bg-green-100 px-2 py-0.5 text-xs font-bold text-green-800">7/7</span>
+                    </div>
+                    <p className="text-sm text-gray-700">{summary}</p>
+                    <p className="mt-1 text-xs text-gray-500">{summary.length}/250 chars</p>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
       </div>
     </div>
   );

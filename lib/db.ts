@@ -48,6 +48,14 @@ export async function ensureSchema(): Promise<void> {
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TEXT`;
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_status TEXT NOT NULL DEFAULT 'free'`;
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_lower TEXT`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ`;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_unique
+    ON users (email_lower)
+    WHERE email_lower IS NOT NULL
+  `;
 
   await sql`
     CREATE TABLE IF NOT EXISTS guidance_datasets (
@@ -58,6 +66,20 @@ export async function ensureSchema(): Promise<void> {
       chunks       TEXT NOT NULL DEFAULT '[]',
       generated_at TEXT NOT NULL DEFAULT '',
       uploaded_by  TEXT NOT NULL DEFAULT ''
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS guidance_upload_log (
+      id                SERIAL PRIMARY KEY,
+      rank              TEXT NOT NULL,
+      source            TEXT NOT NULL DEFAULT 'Official Marking Guide',
+      file_name         TEXT NOT NULL DEFAULT '',
+      output_file       TEXT NOT NULL DEFAULT '',
+      chunk_count       INTEGER NOT NULL DEFAULT 0,
+      uploaded_at       TEXT NOT NULL DEFAULT '',
+      uploaded_by       TEXT NOT NULL DEFAULT '',
+      replaced_existing BOOLEAN NOT NULL DEFAULT FALSE
     )
   `;
 

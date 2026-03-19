@@ -13,6 +13,7 @@ import MarksPackageBuilderPanel from "../components/MarksPackageBuilderPanel";
 import SettingsPanel from "../components/SettingsPanel";
 import LogPanel from "../components/LogPanel";
 import TutorialModal from "../components/TutorialModal";
+import { isGuidanceAdminUsername } from "@/lib/admin";
 import {
   GENERATE_REQUEST_MAX_BYTES,
   getUtf8ByteLength,
@@ -60,12 +61,16 @@ export default function Home() {
     categories: Array<{ name: string; reason: string }>;
     originalAction: string;
     primaryCategory: string;
+    sourceBullet: string;
     sourceTitle?: string;
+    sourceDate: string;
+    sourceDates?: string[];
   };
   const [bullet, setBullet] = useState<{text: string; category: string; title?: string; guidanceSections?: string[]} | null>(null);
   type HistoryItem = {
     text: string;
     date: string;
+    dates?: string[];
     category?: string;
     markingPeriod?: string;
     title?: string;
@@ -88,6 +93,7 @@ export default function Home() {
   const [pendingLogPull, setPendingLogPull] = useState<number | null>(null);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [pulledLogDate, setPulledLogDate] = useState<string | null>(null);
+  const [pulledLogDates, setPulledLogDates] = useState<string[]>([]);
   const [pulledLogIndex, setPulledLogIndex] = useState<number | null>(null);
   const [pulledLogEntryId, setPulledLogEntryId] = useState<string | null>(null);
   const [pulledGroupedEntryIndexes, setPulledGroupedEntryIndexes] = useState<number[]>([]);
@@ -115,6 +121,11 @@ export default function Home() {
       .replace(/[“”"']/g, "")
       .replace(/[.;:,!?]+$/, "")
       .replace(/\s+/g, " ");
+
+  const normalizeDateList = (dates?: string[]) =>
+    (dates ?? [])
+      .filter((date): date is string => typeof date === "string" && date.length > 0)
+      .filter((date, index, arr) => arr.indexOf(date) === index);
 
   const findExistingOfficialMarkForAction = (actionText: string) => {
     if (editingIndex !== null) {
@@ -184,10 +195,23 @@ export default function Home() {
     status: "uploading" | "uploaded" | "failed";
     detail?: string;
   } | null>(null);
+  type GuidanceUploadHistoryEntry = {
+    rank: string;
+    source: string;
+    fileName: string;
+    outputFile: string;
+    chunkCount: number;
+    uploadedAt: string;
+    uploadedBy: string;
+    replacedExisting: boolean;
+  };
+  const [guidanceUploadHistory, setGuidanceUploadHistory] = useState<GuidanceUploadHistoryEntry[]>([]);
 
   // ======================================================
   // UI STATE
   // ======================================================
+  const [syncFailed, setSyncFailed] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("log");
@@ -206,6 +230,7 @@ export default function Home() {
     username: string;
     isGuest?: boolean;
     needsTutorial?: boolean;
+    needsEmail?: boolean;
     lastLoginAt?: string | null;
   };
   const [authLoading, setAuthLoading] = useState(true);
@@ -217,7 +242,12 @@ export default function Home() {
   const [guestRankLevel, setGuestRankLevel] = useState("E4");
   const [guestRating, setGuestRating] = useState("BM - Boatswain's Mate");
   const [authUsername, setAuthUsername] = useState("");
+  const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
+  const [emailPromptDismissed, setEmailPromptDismissed] = useState(false);
+  const [emailPromptInput, setEmailPromptInput] = useState("");
+  const [emailPromptBusy, setEmailPromptBusy] = useState(false);
+  const [emailPromptError, setEmailPromptError] = useState("");
   const [signupStep, setSignupStep] = useState<1 | 2>(1);
   const [pendingUser, setPendingUser] = useState<SessionUser | null>(null);
   const [signupRankLevel, setSignupRankLevel] = useState("E4");
@@ -225,11 +255,14 @@ export default function Home() {
   const [signupUserName, setSignupUserName] = useState("");
   const [signupUserUnit, setSignupUserUnit] = useState("");
   const [signupBulletStyle, setSignupBulletStyle] = useState("Short/Concise");
+  const canManageOfficialGuidance = isGuidanceAdminUsername(authUser?.username);
 
   const formattedLastLogin = authUser?.lastLoginAt
     ? new Date(authUser.lastLoginAt).toLocaleString()
     : null;
   const isGuestSession = authUser?.isGuest === true;
+  const showAddEmailPrompt =
+    !!authUser && !isGuestSession && authUser.needsEmail === true && !emailPromptDismissed;
   const rankLevelRef = useRef(rankLevel);
   const ratingRef = useRef(rating);
 
@@ -240,6 +273,33 @@ export default function Home() {
   useEffect(() => {
     ratingRef.current = rating;
   }, [rating]);
+
+  const loadGuidanceUploadHistory = useCallback(async () => {
+    if (!canManageOfficialGuidance) {
+      setGuidanceUploadHistory([]);
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/admin/upload-official-guidance", { method: "GET" });
+      const data = (await response.json()) as {
+        entries?: GuidanceUploadHistoryEntry[];
+        error?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(data.error || "Unable to load guidance upload history.");
+      }
+
+      setGuidanceUploadHistory(Array.isArray(data.entries) ? data.entries : []);
+    } catch {
+      setGuidanceUploadHistory([]);
+    }
+  }, [canManageOfficialGuidance]);
+
+  useEffect(() => {
+    void loadGuidanceUploadHistory();
+  }, [loadGuidanceUploadHistory]);
 
   type UserDataKey =
     | "history"
@@ -268,6 +328,9 @@ export default function Home() {
       }
 
       const res = await fetch(`/api/user-data?key=${encodeURIComponent(key)}`);
+      if (!res.ok) {
+        throw new Error(`Load failed (${res.status})`);
+      }
       const data = (await res.json()) as { value?: T | null };
       return data.value ?? null;
     },
@@ -281,11 +344,15 @@ export default function Home() {
         return;
       }
 
-      await fetch("/api/user-data", {
+      const res = await fetch("/api/user-data", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ key, value }),
       });
+
+      if (!res.ok) {
+        throw new Error(`Save failed (${res.status})`);
+      }
     },
     [getGuestStorageKey, isGuestSession]
   );
@@ -322,6 +389,9 @@ export default function Home() {
         if (!cancelled) {
           const sessionUser = data.authenticated ? data.user ?? null : null;
           setAuthUser(sessionUser);
+          if (!sessionUser || sessionUser.isGuest || !sessionUser.needsEmail) {
+            setEmailPromptDismissed(false);
+          }
 
           if (sessionUser?.isGuest) {
             const profilePromptCompleted =
@@ -355,6 +425,7 @@ export default function Home() {
     setAuthError("");
 
     const username = authUsername.trim();
+    const email = authEmail.trim();
     const password = authPassword;
 
     if (!username || !password) {
@@ -369,7 +440,11 @@ export default function Home() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify(
+          authMode === "login"
+            ? { identifier: username, username, password }
+            : { username, email, password }
+        ),
       });
 
       const data = (await res.json()) as {
@@ -387,6 +462,9 @@ export default function Home() {
         setSignupStep(2);
       } else {
         setAuthUser(data.user);
+        setEmailPromptDismissed(false);
+        setEmailPromptInput("");
+        setEmailPromptError("");
         setShowNoticeModal(true);
       }
       setAuthPassword("");
@@ -472,6 +550,10 @@ export default function Home() {
       }
       setAuthUser(null);
       setAuthPassword("");
+      setAuthEmail("");
+      setEmailPromptDismissed(false);
+      setEmailPromptInput("");
+      setEmailPromptError("");
       setHistory([]);
       setLogEntries([]);
       setSuggestions({});
@@ -482,7 +564,28 @@ export default function Home() {
       setInput("");
       setCategory("");
       setActiveTab("log");
+      setSyncFailed(false);
+      setLoadFailed(false);
     }
+  };
+
+  const handleRetrySave = () => {
+    if (!authUser || isGuestSession || loadFailed) return;
+    saveUserData("history", history).then(() => setSyncFailed(false)).catch(() => setSyncFailed(true));
+    saveUserData("log", logEntries).catch(() => setSyncFailed(true));
+    saveUserData("settings", {
+      rankLevel,
+      rating,
+      userName,
+      userUnit,
+      bulletStyle,
+      aiGeneratorEnabled,
+      aiLogImportEnabled,
+      aiDashboardInsightsEnabled,
+      aiMarksPackageEnabled,
+      darkModeEnabled,
+      highContrastEnabled,
+    }).catch(() => setSyncFailed(true));
   };
 
   const handleDeleteAccount = async () => {
@@ -505,6 +608,10 @@ export default function Home() {
 
     setAuthUser(null);
     setAuthPassword("");
+    setAuthEmail("");
+    setEmailPromptDismissed(false);
+    setEmailPromptInput("");
+    setEmailPromptError("");
     setHistory([]);
     setLogEntries([]);
     setSuggestions({});
@@ -564,10 +671,10 @@ export default function Home() {
             setHistory([]);
           }
         }
-      } catch {
-        setHistory([]);
-      } finally {
+
         historyHydratedRef.current = true;
+      } catch {
+        setLoadFailed(true);
       }
     })();
   }, [authUser, isGuestSession, loadUserData, saveUserData]);
@@ -625,10 +732,10 @@ export default function Home() {
             setLogEntries([]);
           }
         }
-      } catch {
-        setLogEntries([]);
-      } finally {
+
         logHydratedRef.current = true;
+      } catch {
+        setLoadFailed(true);
       }
     })();
   }, [authUser, isGuestSession, loadUserData, saveUserData]);
@@ -726,10 +833,11 @@ export default function Home() {
             setHighContrastEnabled(loaded.highContrastEnabled);
           }
         }
+
+        settingsHydratedRef.current = true;
       } catch {
         // Keep the defaults set above.
-      } finally {
-        settingsHydratedRef.current = true;
+        setLoadFailed(true);
       }
     })();
   }, [authUser, isGuestSession, loadUserData, saveUserData]);
@@ -739,7 +847,10 @@ export default function Home() {
     if (!settingsHydratedRef.current) {
       return;
     }
-    void saveUserData("settings", {
+    if (loadFailed) {
+      return;
+    }
+    saveUserData("settings", {
       rankLevel,
       rating,
       userName,
@@ -751,7 +862,7 @@ export default function Home() {
       aiMarksPackageEnabled,
       darkModeEnabled,
       highContrastEnabled,
-    });
+    }).then(() => setSyncFailed(false)).catch(() => setSyncFailed(true));
   }, [
     rankLevel,
     rating,
@@ -850,6 +961,17 @@ export default function Home() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const showBottomScrollButton =
+    activeTab === "log" || activeTab === "history" || activeTab === "dashboard";
+  const bottomScrollButtonClass = "bg-blue-700 text-white hover:bg-blue-800 focus:ring-blue-400";
+
+  const handleScrollToBottom = useCallback(() => {
+    window.scrollTo({
+      top: document.documentElement.scrollHeight,
+      behavior: "smooth",
+    });
+  }, []);
+
   const handleCloseTutorial = async () => {
     setShowTutorialModal(false);
 
@@ -895,8 +1017,11 @@ export default function Home() {
     if (!historyHydratedRef.current) {
       return;
     }
-    void saveUserData("history", history);
-  }, [history, authUser, saveUserData]);
+    if (loadFailed) {
+      return;
+    }
+    saveUserData("history", history).then(() => setSyncFailed(false)).catch(() => setSyncFailed(true));
+  }, [history, authUser, loadFailed, saveUserData]);
 
   useEffect(() => {
     if (!authUser) {
@@ -906,8 +1031,11 @@ export default function Home() {
     if (!logHydratedRef.current) {
       return;
     }
-    void saveUserData("log", logEntries);
-  }, [logEntries, authUser, saveUserData]);
+    if (loadFailed) {
+      return;
+    }
+    saveUserData("log", logEntries).then(() => setSyncFailed(false)).catch(() => setSyncFailed(true));
+  }, [logEntries, authUser, loadFailed, saveUserData]);
 
   // ======================================================
   // GENERATE BULLET
@@ -965,12 +1093,20 @@ export default function Home() {
     return "";
   };
 
-  const generateBulletDraft = async (accomplishment: string, preferredCategory?: string) => {
+  const generateBulletDraft = async (
+    accomplishment: string,
+    options?: {
+      preferredCategory?: string;
+      generationIntent?: string;
+      sourceBullet?: string;
+      sourceCategory?: string;
+    }
+  ) => {
     if (!aiGeneratorEnabled) {
       throw new Error("Generator AI is disabled in Settings.");
     }
 
-    const finalCategory = await resolveCategoryForText(accomplishment, preferredCategory);
+    const finalCategory = await resolveCategoryForText(accomplishment, options?.preferredCategory);
 
     const payload = {
       accomplishment,
@@ -982,7 +1118,9 @@ export default function Home() {
       percentImproved,
       hoursSaved,
       missionImpact,
-      generationIntent: "final-polished-official-mark",
+      generationIntent: options?.generationIntent ?? "final-polished-official-mark",
+      sourceBullet: options?.sourceBullet,
+      sourceCategory: options?.sourceCategory,
     };
 
     const payloadBytes = getUtf8ByteLength(JSON.stringify(payload));
@@ -1056,7 +1194,9 @@ export default function Home() {
     const wasUserSelected = !!category;
 
     try {
-      const generatedDraft = await generateBulletDraft(trimmedInput, category || undefined);
+      const generatedDraft = await generateBulletDraft(trimmedInput, {
+        preferredCategory: category || undefined,
+      });
 
       setBullet({ text: generatedDraft.text, category: generatedDraft.category, title: generatedDraft.title, guidanceSections: generatedDraft.guidanceSections });
       setWasCategoryUserSelected(wasUserSelected);
@@ -1177,7 +1317,9 @@ export default function Home() {
     try {
       const drafts = await Promise.all(
         splitBulletRecommendation.splitActions.map(async (action, index) => {
-          const generatedDraft = await generateBulletDraft(action, category || undefined);
+          const generatedDraft = await generateBulletDraft(action, {
+            preferredCategory: category || undefined,
+          });
           return {
             id: `split-draft-${index}`,
             action,
@@ -1226,7 +1368,9 @@ export default function Home() {
     setSplitBulletDraftRepromptingId(draftId);
 
     try {
-      const regeneratedDraft = await generateBulletDraft(targetDraft.action, targetDraft.category);
+      const regeneratedDraft = await generateBulletDraft(targetDraft.action, {
+        preferredCategory: targetDraft.category,
+      });
 
       setSplitBulletDrafts((prevDrafts) =>
         prevDrafts.map((draft) =>
@@ -1246,13 +1390,17 @@ export default function Home() {
     bulletText: string,
     action: string,
     primaryCategory: string,
-    sourceTitle?: string
+    sourceTitle?: string,
+    sourceDates?: string[]
   ) => {
     if (!aiGeneratorEnabled) {
       setAltCategorySuggestion(null);
       setAltCategoryDrafts({});
       return;
     }
+
+    const normalizedSourceDates = normalizeDateList(sourceDates);
+    const sourceDate = normalizedSourceDates[0] || new Date().toISOString();
 
     setAltCategorySuggestion(null);
     setAltCategoryDrafts({});
@@ -1272,7 +1420,10 @@ export default function Home() {
             categories: data.categories,
             originalAction: action,
             primaryCategory,
+            sourceBullet: bulletText,
             sourceTitle,
+            sourceDate,
+            sourceDates: normalizedSourceDates.length > 0 ? normalizedSourceDates : undefined,
           });
         }
       } catch {
@@ -1286,7 +1437,12 @@ export default function Home() {
     if (!altCategorySuggestion) return;
     setAltCategoryDrafts((prev) => ({ ...prev, [categoryName]: { text: "", title: "", generating: true } }));
     try {
-      const draft = await generateBulletDraft(altCategorySuggestion.originalAction, categoryName);
+      const draft = await generateBulletDraft(altCategorySuggestion.originalAction, {
+        preferredCategory: categoryName,
+        generationIntent: "alternate-category-rewrite",
+        sourceBullet: altCategorySuggestion.sourceBullet,
+        sourceCategory: altCategorySuggestion.primaryCategory,
+      });
       const title = altCategorySuggestion.sourceTitle?.trim() || draft.title;
       setAltCategoryDrafts((prev) => ({
         ...prev,
@@ -1308,15 +1464,18 @@ export default function Home() {
     if (!draftEntry?.text) return;
 
     const originalAction = altCategorySuggestion.originalAction.trim();
+    const sourceDates = normalizeDateList(altCategorySuggestion.sourceDates);
+    const itemDate = sourceDates[0] || altCategorySuggestion.sourceDate || new Date().toISOString();
 
     setHistory((prev) => {
       if (prev.some((h) => h.text === draftEntry.text)) return prev;
       return [
         {
           text: draftEntry.text,
-          date: new Date().toISOString(),
+          date: itemDate,
+          dates: sourceDates.length > 0 ? sourceDates : undefined,
           category: categoryName,
-          markingPeriod: computeMarkingPeriod(new Date().toISOString(), rankLevel),
+          markingPeriod: computeMarkingPeriod(itemDate, rankLevel),
           title: draftEntry.title,
           originalAction,
         },
@@ -1337,13 +1496,27 @@ export default function Home() {
       return;
     }
 
-    const splitItemDate = pulledLogDate !== null ? pulledLogDate : new Date().toISOString();
     const sourceLogEntry = pulledLogIndex != null ? logEntries[pulledLogIndex] : undefined;
     const sourceLogEntryId = pulledLogEntryId ?? sourceLogEntry?.id;
     const sourceLogEntryPreviousGroup = sourceLogEntry?.group;
     const splitGroupedEntries = pulledGroupedEntryIndexes
       .map((i) => logEntries[i])
       .filter((e): e is LogEntry => e !== undefined);
+    const groupedEntryDates = splitGroupedEntries.flatMap((entry) =>
+      Array.isArray(entry.dates) && entry.dates.length > 0
+        ? entry.dates
+        : entry.date
+          ? [entry.date]
+          : []
+    );
+    const splitItemDates = normalizeDateList(
+      pulledLogDates.length > 0
+        ? pulledLogDates
+        : pulledLogDate
+          ? [pulledLogDate]
+          : groupedEntryDates
+    );
+    const splitItemDate = splitItemDates[0] || new Date().toISOString();
     const sourceGroupedLogEntryIds = splitGroupedEntries
       .map((e) => e.id)
       .filter((id): id is string => typeof id === "string" && id.length > 0);
@@ -1356,6 +1529,7 @@ export default function Home() {
         .map((draft) => ({
           text: draft.text,
           date: splitItemDate,
+          dates: splitItemDates.length > 0 ? splitItemDates : undefined,
           category: draft.category,
           markingPeriod: splitItemDate ? computeMarkingPeriod(splitItemDate, rankLevel) : "",
           title: draft.title,
@@ -1390,6 +1564,7 @@ export default function Home() {
       return prevEntries;
     });
     setPulledLogDate(null);
+    setPulledLogDates([]);
     setPulledLogIndex(null);
     setPulledLogEntryId(null);
     setPulledGroupedEntryIndexes([]);
@@ -1402,7 +1577,13 @@ export default function Home() {
     setActiveTab("history");
     const firstDraft = selectedDrafts[0];
     if (firstDraft) {
-      triggerAltCategoryAnalysis(firstDraft.text, firstDraft.action, firstDraft.category, firstDraft.title);
+      triggerAltCategoryAnalysis(
+        firstDraft.text,
+        firstDraft.action,
+        firstDraft.category,
+        firstDraft.title,
+        splitItemDates
+      );
     }
   };
 
@@ -1462,13 +1643,27 @@ export default function Home() {
         return prevHistory;
       }
 
-      const itemDate = pulledLogDate !== null ? pulledLogDate : new Date().toISOString();
       const sourceLogEntry = pulledLogIndex != null ? logEntries[pulledLogIndex] : undefined;
       const sourceLogEntryId = pulledLogEntryId ?? sourceLogEntry?.id;
       const sourceLogEntryPreviousGroup = sourceLogEntry?.group;
       const groupedEntries = pulledGroupedEntryIndexes
         .map((i) => logEntries[i])
         .filter((e): e is LogEntry => e !== undefined);
+      const groupedEntryDates = groupedEntries.flatMap((entry) =>
+        Array.isArray(entry.dates) && entry.dates.length > 0
+          ? entry.dates
+          : entry.date
+            ? [entry.date]
+            : []
+      );
+      const itemDates = normalizeDateList(
+        pulledLogDates.length > 0
+          ? pulledLogDates
+          : pulledLogDate
+            ? [pulledLogDate]
+            : groupedEntryDates
+      );
+      const itemDate = itemDates[0] || new Date().toISOString();
       const sourceGroupedLogEntryIds = groupedEntries
         .map((e) => e.id)
         .filter((id): id is string => typeof id === "string" && id.length > 0);
@@ -1476,6 +1671,7 @@ export default function Home() {
       const newItem: HistoryItem = {
         text: bullet.text,
         date: itemDate,
+        dates: itemDates.length > 0 ? itemDates : undefined,
         category: bullet.category,
         markingPeriod: itemDate ? computeMarkingPeriod(itemDate, rankLevel) : "",
         title: bullet.title,
@@ -1509,6 +1705,7 @@ export default function Home() {
       return prevEntries;
     });
     setPulledLogDate(null);
+    setPulledLogDates([]);
     setPulledLogIndex(null);
     setPulledLogEntryId(null);
     setPulledGroupedEntryIndexes([]);
@@ -1517,7 +1714,30 @@ export default function Home() {
     setInput("");
 
     setActiveTab("history");
-    triggerAltCategoryAnalysis(bullet.text, input.trim(), bullet.category, bullet.title);
+    const groupedEntryDatesForAlt = pulledGroupedEntryIndexes
+      .map((i) => logEntries[i])
+      .filter((entry): entry is LogEntry => entry !== undefined)
+      .flatMap((entry) =>
+        Array.isArray(entry.dates) && entry.dates.length > 0
+          ? entry.dates
+          : entry.date
+            ? [entry.date]
+            : []
+      );
+    const altSuggestionDates = normalizeDateList(
+      pulledLogDates.length > 0
+        ? pulledLogDates
+        : pulledLogDate
+          ? [pulledLogDate]
+          : groupedEntryDatesForAlt
+    );
+    triggerAltCategoryAnalysis(
+      bullet.text,
+      input.trim(),
+      bullet.category,
+      bullet.title,
+      altSuggestionDates
+    );
   };
 
   // ======================================================
@@ -1788,7 +2008,7 @@ export default function Home() {
     setSettingsMessage("All bullets cleared.");
   };
 
-  const handleUploadGuidancePdf = async (file: File, source: string, ranks: string[]) => {
+  const handleUploadGuidancePdf = async (file: File, ranks: string[]) => {
     if (!file) {
       setSettingsMessage("Choose a PDF file to upload.");
       return;
@@ -1810,7 +2030,7 @@ export default function Home() {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      formData.append("source", source.trim() || "Official Marking Guide");
+      formData.append("source", "Official Marking Guide");
       for (const rank of ranks) {
         formData.append("ranks", rank);
       }
@@ -1825,6 +2045,7 @@ export default function Home() {
         message?: string;
         chunks?: number;
         outputFile?: string;
+        uploadHistory?: GuidanceUploadHistoryEntry[];
       };
 
       if (!response.ok) {
@@ -1838,6 +2059,11 @@ export default function Home() {
         status: "uploaded",
         detail: `${data.message || "Upload complete."}${suffix}`,
       });
+      if (Array.isArray(data.uploadHistory) && data.uploadHistory.length) {
+        setGuidanceUploadHistory((prev) => [...data.uploadHistory!, ...prev].slice(0, 100));
+      } else {
+        await loadGuidanceUploadHistory();
+      }
       setActiveTab("settings");
     } catch (error) {
       const errorMessage =
@@ -1875,6 +2101,41 @@ export default function Home() {
     setRating(guestRating);
     sessionStorage.setItem(GUEST_PROFILE_PROMPT_COMPLETED_KEY, "1");
     setShowGuestProfilePrompt(false);
+  };
+
+  const handleAddEmail = async () => {
+    if (!authUser || authUser.isGuest) {
+      return;
+    }
+
+    setEmailPromptError("");
+    setEmailPromptBusy(true);
+    try {
+      const res = await fetch("/api/auth/add-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: emailPromptInput.trim() }),
+      });
+
+      const data = (await res.json()) as {
+        error?: string;
+        user?: SessionUser;
+      };
+
+      if (!res.ok || !data.user) {
+        setEmailPromptError(data.error || "Unable to save email.");
+        return;
+      }
+
+      setAuthUser(data.user);
+      setEmailPromptDismissed(false);
+      setEmailPromptInput("");
+      setEmailPromptError("");
+    } catch {
+      setEmailPromptError("Unable to save email right now.");
+    } finally {
+      setEmailPromptBusy(false);
+    }
   };
 
   if (authLoading) {
@@ -2010,15 +2271,32 @@ export default function Home() {
 
           <div className="mt-6 space-y-4">
             <div>
-              <label className="block text-sm font-medium text-slate-700">Username</label>
+              <label className="block text-sm font-medium text-slate-700">
+                {authMode === "login" ? "Username or Email" : "Username"}
+              </label>
               <input
                 type="text"
                 value={authUsername}
                 onChange={(e) => setAuthUsername(e.target.value)}
                 className="mt-2 w-full rounded-md border border-slate-300 p-3"
-                autoComplete="username"
+                autoComplete={authMode === "login" ? "username" : "username"}
               />
             </div>
+
+            {authMode === "signup" && (
+              <div>
+                <label className="block text-sm font-medium text-slate-700">
+                  Email <span className="font-normal text-slate-400">(recommended)</span>
+                </label>
+                <input
+                  type="email"
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  className="mt-2 w-full rounded-md border border-slate-300 p-3"
+                  autoComplete="email"
+                />
+              </div>
+            )}
 
             <div>
               <label className="block text-sm font-medium text-slate-700">Password</label>
@@ -2051,6 +2329,7 @@ export default function Home() {
                 setAuthError("");
                 setSignupStep(1);
                 setPendingUser(null);
+                setAuthEmail("");
                 setAuthMode(authMode === "login" ? "signup" : "login");
               }}
               className="w-full text-sm font-medium text-blue-700 hover:text-blue-800"
@@ -2108,6 +2387,28 @@ export default function Home() {
             <p className="text-sm font-medium text-slate-700">
               Signed in as <span className="font-bold text-slate-900">{authUser.username}</span>
             </p>
+            {syncFailed ? (
+              <p className="mt-1 text-xs font-medium text-red-600">
+                ⚠ Data failed to sync.{" "}
+                <button
+                  onClick={handleRetrySave}
+                  className="underline hover:text-red-800"
+                >
+                  Retry
+                </button>
+              </p>
+            ) : null}
+            {loadFailed ? (
+              <p className="mt-1 text-xs font-medium text-red-600">
+                ⚠ Failed to load your data.{" "}
+                <button
+                  onClick={() => window.location.reload()}
+                  className="underline hover:text-red-800"
+                >
+                  Reload page
+                </button>
+              </p>
+            ) : null}
           </div>
           <div className="flex items-center gap-3">
             {formattedLastLogin ? (
@@ -2129,6 +2430,16 @@ export default function Home() {
           setActiveTab={handleTabChange}
           dashboardRecommendationCount={dashboardRecommendationCount}
         />
+
+        {loadFailed ? (
+          <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-900 shadow-sm" role="status" aria-live="polite">
+            <p className="text-sm font-semibold">Read-only safe mode is active.</p>
+            <p className="mt-1 text-sm">
+              One or more data sections failed to load, so saving is temporarily paused to protect your existing data.
+              Reload the page to retry loading.
+            </p>
+          </div>
+        ) : null}
 
         {activeTab === "generator" && (
           <GeneratorPanel
@@ -2161,8 +2472,10 @@ export default function Home() {
             handleRepromptSplitBulletDraft={handleRepromptSplitBulletDraft}
             handleCommitSplitBulletDrafts={handleCommitSplitBulletDrafts}
             handleCommitBullet={handleCommitBullet}
-            onLogEntryPulled={({ date, index, groupedIndexes }) => {
-              setPulledLogDate(date);
+            onLogEntryPulled={({ dates, index, groupedIndexes }) => {
+              const normalizedDates = normalizeDateList(dates);
+              setPulledLogDate(normalizedDates[0] ?? null);
+              setPulledLogDates(normalizedDates);
               setPulledLogIndex(index);
               setPulledLogEntryId(index == null ? null : logEntries[index]?.id ?? null);
               setPulledGroupedEntryIndexes(groupedIndexes ?? []);
@@ -2195,7 +2508,15 @@ export default function Home() {
             onPullEntry={handlePullLogEntryToGenerator}
             onReloadCommittedEntry={(text) => {
               setInput(text.text);
-              setPulledLogDate(text.date || null);
+              const normalizedDates = normalizeDateList(
+                Array.isArray(text.dates) && text.dates.length > 0
+                  ? text.dates
+                  : text.date
+                    ? [text.date]
+                    : []
+              );
+              setPulledLogDate(normalizedDates[0] ?? null);
+              setPulledLogDates(normalizedDates);
               setPulledLogIndex(text.index);
               setPulledLogEntryId(text.id ?? logEntries[text.index]?.id ?? null);
               setActiveTab("generator");
@@ -2215,7 +2536,9 @@ export default function Home() {
             onUpdateBullet={(oldText, newText) => {
               setHistory((prev) =>
                 prev.map((item) =>
-                  item.text === oldText ? { ...item, text: newText } : item
+                  item.text === oldText
+                    ? { ...item, text: newText, date: item.date || new Date().toISOString() }
+                    : item
                 )
               );
               setSuggestions((prev) => {
@@ -2280,30 +2603,86 @@ export default function Home() {
                     .replace(/[.;:,!?]+$/, "")
                     .replace(/\s+/g, " ");
 
-                const normalizedOriginalBullets = originalBullets.map(normalizeBulletText);
-                const normalizedOriginalSet = new Set(normalizedOriginalBullets);
-
-                const isMatchToOriginal = (historyText: string) => {
-                  const normalizedHistoryText = normalizeBulletText(historyText);
-                  if (normalizedOriginalSet.has(normalizedHistoryText)) {
-                    return true;
-                  }
-
-                  // Fallback for slight wording drift after in-app edits.
-                  return normalizedOriginalBullets.some((normalizedOriginal) =>
-                    normalizedOriginal.length > 24 &&
-                    (normalizedHistoryText.includes(normalizedOriginal) ||
-                      normalizedOriginal.includes(normalizedHistoryText))
-                  );
+                const normalizeCategoryKey = (value: string | undefined) => {
+                  if (!value) return "";
+                  const normalized = value.trim().toLowerCase();
+                  return normalized === "customs, courtesies, and traditions"
+                    ? "customs, courtesies and traditions"
+                    : normalized;
                 };
 
-                const matchedItems = prevHistory.filter((item) => isMatchToOriginal(item.text));
+                const resolveItemCategory = (item: HistoryItem) =>
+                  item.category || suggestions[item.text]?.category;
+
+                const tokenSet = (value: string) =>
+                  new Set(value.split(" ").filter((token) => token.length > 2));
+
+                const computeSimilarity = (left: string, right: string) => {
+                  if (!left || !right) return 0;
+                  if (left === right) return 1;
+                  if ((left.includes(right) || right.includes(left)) && Math.min(left.length, right.length) >= 24) {
+                    return 0.9;
+                  }
+
+                  const leftTokens = tokenSet(left);
+                  const rightTokens = tokenSet(right);
+                  const allTokens = new Set([...leftTokens, ...rightTokens]);
+                  if (allTokens.size === 0) return 0;
+
+                  let overlap = 0;
+                  for (const token of leftTokens) {
+                    if (rightTokens.has(token)) overlap++;
+                  }
+
+                  return overlap / allTokens.size;
+                };
+
+                const normalizedOriginalBullets = originalBullets.map(normalizeBulletText);
+                const normalizedHistory = prevHistory.map((item) => normalizeBulletText(item.text));
+                const usedHistoryIndexes = new Set<number>();
+                const matchedHistoryIndexes: number[] = [];
+
+                normalizedOriginalBullets.forEach((normalizedOriginal) => {
+                  if (!normalizedOriginal) return;
+
+                  const exactIndex = normalizedHistory.findIndex(
+                    (historyText, historyIndex) =>
+                      !usedHistoryIndexes.has(historyIndex) && historyText === normalizedOriginal
+                  );
+
+                  if (exactIndex >= 0) {
+                    usedHistoryIndexes.add(exactIndex);
+                    matchedHistoryIndexes.push(exactIndex);
+                    return;
+                  }
+
+                  let bestIndex = -1;
+                  let bestScore = 0;
+                  normalizedHistory.forEach((historyText, historyIndex) => {
+                    if (usedHistoryIndexes.has(historyIndex)) return;
+                    const score = computeSimilarity(normalizedOriginal, historyText);
+                    if (score > bestScore) {
+                      bestScore = score;
+                      bestIndex = historyIndex;
+                    }
+                  });
+
+                  if (bestIndex >= 0 && bestScore >= 0.82) {
+                    usedHistoryIndexes.add(bestIndex);
+                    matchedHistoryIndexes.push(bestIndex);
+                  }
+                });
+
+                const matchedIndexSet = new Set(matchedHistoryIndexes);
+                const matchedItems = matchedHistoryIndexes
+                  .map((historyIndex) => prevHistory[historyIndex])
+                  .filter((item): item is HistoryItem => Boolean(item));
                 const sourceItem =
                   matchedItems.find(
                     (item) =>
                       normalizeBulletText(item.text) === normalizeBulletText(originalBullets[0] || "")
                   ) || matchedItems[0];
-                const filtered = prevHistory.filter((item) => !isMatchToOriginal(item.text));
+                const filtered = prevHistory.filter((_, historyIndex) => !matchedIndexSet.has(historyIndex));
 
                 if (filtered.some((item) => item.text === consolidatedBullet)) {
                   return filtered;
@@ -2317,12 +2696,104 @@ export default function Home() {
                     ? title.trim()
                     : sourceItem?.title;
 
+                const collectedDates = Array.from(
+                  new Set(
+                    matchedItems.flatMap((item) => {
+                      const itemDates = Array.isArray(item.dates) && item.dates.length > 0
+                        ? item.dates
+                        : item.date
+                          ? [item.date]
+                          : [];
+
+                      return itemDates.filter((value) => {
+                        if (typeof value !== "string" || !value.trim()) {
+                          return false;
+                        }
+                        const parsed = new Date(value);
+                        return !Number.isNaN(parsed.getTime());
+                      });
+                    })
+                  )
+                ).sort((left, right) => new Date(left).getTime() - new Date(right).getTime());
+
+                const matchedCategories = Array.from(
+                  new Set(
+                    matchedItems
+                      .map((item) => resolveItemCategory(item))
+                      .filter((itemCategory): itemCategory is string => typeof itemCategory === "string" && itemCategory.trim().length > 0)
+                      .map((itemCategory) => normalizeCategoryKey(itemCategory))
+                      .filter((itemCategory) => itemCategory.length > 0)
+                  )
+                );
+
+                const singleMatchedCategory =
+                  matchedCategories.length === 1
+                    ? matchedItems
+                        .map((item) => resolveItemCategory(item))
+                        .find(
+                          (itemCategory) =>
+                            typeof itemCategory === "string" &&
+                            normalizeCategoryKey(itemCategory) === matchedCategories[0]
+                        )
+                    : undefined;
+
+                const finalCategory =
+                  (typeof singleMatchedCategory === "string" && singleMatchedCategory.trim().length > 0
+                    ? singleMatchedCategory.trim()
+                    : typeof category === "string" && category.trim().length > 0
+                      ? category.trim()
+                      : sourceItem
+                        ? resolveItemCategory(sourceItem) || "Military Bearing"
+                        : "Military Bearing");
+
+                const collectedSourceLogEntryIds = Array.from(
+                  new Set(
+                    matchedItems
+                      .map((item) => item.sourceLogEntryId)
+                      .filter(
+                        (entryId): entryId is string =>
+                          typeof entryId === "string" && entryId.trim().length > 0
+                      )
+                  )
+                );
+
+                const collectedGroupedLogEntryIds = Array.from(
+                  new Set(
+                    matchedItems.flatMap((item) =>
+                      Array.isArray(item.sourceGroupedLogEntryIds)
+                        ? item.sourceGroupedLogEntryIds.filter(
+                            (entryId): entryId is string =>
+                              typeof entryId === "string" && entryId.trim().length > 0
+                          )
+                        : []
+                    )
+                  )
+                );
+
+                const sourceGroupedLogEntryIds = Array.from(
+                  new Set([...collectedGroupedLogEntryIds, ...collectedSourceLogEntryIds])
+                );
+
+                const sourceLogEntryId = collectedSourceLogEntryIds[0];
+                const sourceLogEntryPreviousGroup =
+                  sourceItem?.sourceLogEntryPreviousGroup ||
+                  matchedItems.find((item) => item.sourceLogEntryPreviousGroup)?.sourceLogEntryPreviousGroup;
+                const sourceGroupedLogEntryGroupName =
+                  sourceItem?.sourceGroupedLogEntryGroupName ||
+                  matchedItems.find((item) => item.sourceGroupedLogEntryGroupName)?.sourceGroupedLogEntryGroupName;
+
                 const newItem = {
                   text: consolidatedBullet,
                   date: sourceDate,
-                  category,
+                  ...(collectedDates.length > 0 ? { dates: collectedDates } : {}),
+                  category: finalCategory,
                   markingPeriod: sourceMarkingPeriod,
                   title: resolvedTitle,
+                  originalAction: sourceItem?.originalAction,
+                  ...(sourceLogEntryId ? { sourceLogEntryId } : {}),
+                  ...(sourceLogEntryPreviousGroup ? { sourceLogEntryPreviousGroup } : {}),
+                  ...(sourceGroupedLogEntryIds.length > 0 ? { sourceGroupedLogEntryIds } : {}),
+                  ...(sourceGroupedLogEntryGroupName ? { sourceGroupedLogEntryGroupName } : {}),
                 };
 
                 return [newItem, ...filtered];
@@ -2387,11 +2858,12 @@ export default function Home() {
             settingsMessage={settingsMessage}
             guidanceUploadBusy={guidanceUploadBusy}
             guidanceUploadStatus={guidanceUploadStatus}
-            canManageOfficialGuidance={authUser?.username?.trim().toLowerCase() === "nathancpark11"}
+            guidanceUploadHistory={guidanceUploadHistory}
+            canManageOfficialGuidance={canManageOfficialGuidance}
             onExportBackup={handleExportBackup}
             onImportBackup={handleImportBackup}
-            onUploadGuidancePdf={(file, source, ranks) => {
-              void handleUploadGuidancePdf(file, source, ranks);
+            onUploadGuidancePdf={(file, ranks) => {
+              void handleUploadGuidancePdf(file, ranks);
             }}
             onClearAllBullets={handleClearAllBullets}
             onClearDailyLog={handleClearLogEntries}
@@ -2418,6 +2890,17 @@ export default function Home() {
             Settings
           </button>
         </div>
+
+        {showBottomScrollButton && (
+          <button
+            type="button"
+            onClick={handleScrollToBottom}
+            aria-label="Scroll to bottom"
+            className={`fixed right-4 bottom-4 z-40 rounded-full px-4 py-3 text-sm font-semibold shadow-lg transition focus:outline-none focus:ring-2 focus:ring-offset-2 sm:right-6 sm:bottom-6 ${bottomScrollButtonClass}`}
+          >
+            Bottom
+          </button>
+        )}
       </div>
 
       {altCategorySuggestion && altCategorySuggestion.categories.length > 0 && (
@@ -2468,12 +2951,12 @@ export default function Home() {
                     </div>
                     <p className="mt-1 text-xs text-gray-500">{reason}</p>
                     {generatedText && (
-                      <div className="mt-3 rounded-md border border-blue-100 bg-blue-50 p-3">
-                        <p className="text-sm font-semibold text-gray-900">{generatedText}</p>
+                      <div className="generated-bullet-preview mt-3 rounded-md border border-blue-100 bg-blue-50 p-3">
+                        <p className="generated-bullet-preview-text text-sm font-semibold text-gray-900">{generatedText}</p>
                         {draftEntry?.guidanceSections && draftEntry.guidanceSections.length > 0 && (
-                          <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 p-2">
+                          <div className="generated-bullet-reference mt-2 rounded-md border border-emerald-200 bg-emerald-50 p-2">
                             {draftEntry.guidanceSections.map((section, i) => (
-                              <p key={i} className="text-xs text-emerald-800">{section}</p>
+                              <p key={i} className="generated-bullet-reference-text text-xs text-emerald-800">{section}</p>
                             ))}
                           </div>
                         )}
@@ -2661,6 +3144,54 @@ export default function Home() {
                 className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
               >
                 Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAddEmailPrompt && !showNoticeModal && !showGuestProfilePrompt && !showTutorialModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-lg rounded-xl bg-white p-6 shadow-2xl sm:p-8">
+            <h3 className="text-xl font-bold text-slate-900">Add Account Email</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              Add an email so you can recover your account if you forget your password.
+            </p>
+
+            <div className="mt-5">
+              <label className="block text-sm font-medium text-slate-700">Email</label>
+              <input
+                type="email"
+                value={emailPromptInput}
+                onChange={(e) => setEmailPromptInput(e.target.value)}
+                className="mt-2 w-full rounded-md border border-slate-300 p-3"
+                autoComplete="email"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    void handleAddEmail();
+                  }
+                }}
+              />
+              {emailPromptError ? (
+                <p className="mt-2 text-sm text-red-600">{emailPromptError}</p>
+              ) : null}
+            </div>
+
+            <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setEmailPromptDismissed(true)}
+                className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+              >
+                Not Now
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleAddEmail()}
+                disabled={emailPromptBusy}
+                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {emailPromptBusy ? "Saving..." : "Save Email"}
               </button>
             </div>
           </div>

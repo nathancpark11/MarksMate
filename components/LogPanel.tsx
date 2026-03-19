@@ -18,7 +18,7 @@ type LogPanelProps = {
   onDeleteEntry: (index: number) => void;
   onAssignGroup: (entryIndexes: number[], groupName: string) => void;
   onPullEntry?: (index: number) => void;
-  onReloadCommittedEntry?: (payload: { text: string; index: number; date: string; id?: string }) => void;
+  onReloadCommittedEntry?: (payload: { text: string; index: number; date: string; dates?: string[]; id?: string }) => void;
 };
 
 export default function LogPanel({
@@ -478,18 +478,18 @@ export default function LogPanel({
       <p className="mt-4 text-sm italic text-gray-600">Tap on any log entry to load into generator.</p>
 
       {isManualGroupingOpen && (
-        <div className="sticky top-(--tab-bar-top-offset) z-30 mt-4 -mx-4 rounded-xl border border-amber-300 bg-amber-50/90 px-2 py-8 shadow-md backdrop-blur supports-backdrop-filter:bg-amber-50/80 sm:-mx-6 sm:top-6">
+        <div className="log-edit-groups-panel sticky top-(--tab-bar-top-offset) z-30 mt-4 -mx-4 rounded-xl border border-amber-300 bg-amber-50/90 px-2 py-8 shadow-md backdrop-blur supports-backdrop-filter:bg-amber-50/80 sm:-mx-6 sm:top-6">
           <div className="flex items-center justify-center gap-2 overflow-x-auto whitespace-nowrap">
             <input
               value={groupNameInput}
               onChange={(e) => setGroupNameInput(e.target.value)}
               placeholder="Group name (e.g. SAR, PT, Training)"
-              className="w-64 rounded-md border border-amber-300 bg-white px-3 py-2 text-sm"
+              className="log-edit-groups-input w-64 rounded-md border border-amber-300 bg-white px-3 py-2 text-sm"
             />
             <button
               type="button"
               onClick={handleAssignSelectedToGroup}
-              className="rounded-md bg-amber-600 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-700"
+              className="log-edit-groups-primary rounded-md bg-amber-600 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-700"
             >
               Assign to Group ({selectedCount})
             </button>
@@ -503,7 +503,7 @@ export default function LogPanel({
             <button
               type="button"
               onClick={() => setIsManualGroupingOpen(false)}
-              className="rounded-md border border-amber-400 bg-white px-3 py-2 text-sm font-semibold text-amber-800 hover:bg-amber-100"
+              className="log-edit-groups-exit rounded-md border border-amber-400 bg-white px-3 py-2 text-sm font-semibold text-amber-800 hover:bg-amber-100"
             >
               Exit
             </button>
@@ -628,7 +628,7 @@ export default function LogPanel({
             <button
               type="button"
               onClick={() => setShowUsed((prev) => !prev)}
-              className="flex w-full items-center justify-between rounded-lg border border-green-200 bg-green-50 px-4 py-2 text-sm font-semibold text-green-800 hover:bg-green-100"
+              className="used-group-toggle flex w-full items-center justify-between rounded-lg border border-green-200 bg-green-50 px-4 py-2 text-sm font-semibold text-green-800 hover:bg-green-100"
             >
               <span>Used ({usedEntries.length})</span>
               <span>{showUsed ? "▲" : "▼"}</span>
@@ -639,7 +639,7 @@ export default function LogPanel({
                 {usedEntries.map(({ entry, index }) => (
                   <div
                     key={`${entry.date || entry.dates?.join("|") || "no-date"}-${index}`}
-                    className={`rounded-lg border p-3 ${
+                    className={`used-group-entry rounded-lg border p-3 ${
                       isManualGroupingOpen && selectedEntryIndexes.has(index)
                         ? "border-amber-400 bg-amber-50"
                         : "border-green-300 bg-green-50"
@@ -652,15 +652,15 @@ export default function LogPanel({
                         title={isManualGroupingOpen ? "Tap to select for grouping" : "Reload into Generator"}
                         className="min-w-0 flex-1 text-left"
                       >
-                        <p className="text-sm text-green-900">{entry.text}</p>
+                        <p className="used-group-text text-sm text-green-900">{entry.text}</p>
                         {((entry.dates && entry.dates.length > 0) || entry.date) && (
-                          <p className="mt-1 text-xs text-green-700">
+                          <p className="used-group-meta mt-1 text-xs text-green-700">
                             {entry.dates && entry.dates.length > 0
                               ? formatImportedDates(entry.dates)
                               : new Date(entry.date).toLocaleDateString()}
                           </p>
                         )}
-                        <p className="mt-1 text-xs font-semibold text-green-700">Committed as Official Mark</p>
+                        <p className="used-group-meta mt-1 text-xs font-semibold text-green-700">Committed as Official Mark</p>
                       </button>
                       <button
                         type="button"
@@ -668,7 +668,7 @@ export default function LogPanel({
                           e.stopPropagation();
                           setDeleteConfirmIndex(index);
                         }}
-                        className="rounded-md px-2 py-1 text-sm font-semibold text-green-600 hover:bg-green-100 hover:text-red-600"
+                        className="used-group-delete rounded-md px-2 py-1 text-sm font-semibold text-green-600 hover:bg-green-100 hover:text-red-600"
                         aria-label="Delete log entry"
                         title="Delete"
                       >
@@ -710,6 +710,7 @@ export default function LogPanel({
                       text: entry.text,
                       index: reloadConfirmIndex,
                       date: entry.dates?.[0] ?? entry.date,
+                      dates: entry.dates,
                       id: entry.id,
                     });
                   }

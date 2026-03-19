@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { parseLimitedJsonBody } from "@/lib/aiRequestGuards";
 import { requireSessionUser } from "@/lib/auth";
+import { isGuidanceAdminUsername } from "@/lib/admin";
 import { validateCombinedAiInputs } from "@/lib/promptSpamGuard";
 import { enforceRateLimits } from "@/lib/rateLimit";
 import { getRequestId, logApiError, logApiRequestMetadata } from "@/lib/safeLogging";
@@ -21,21 +22,23 @@ export async function POST(req: Request) {
   let inputLength = 0;
 
   try {
-    const { response: authResponse } = await requireSessionUser();
-    if (authResponse) {
-      return authResponse;
+    const { user, response: authResponse } = await requireSessionUser();
+    if (authResponse || !user) {
+      return authResponse ?? Response.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const rateLimitResponse = enforceRateLimits(req, [
-      {
-        key: "smart-insights-per-hour",
-        maxRequests: 3,
-        windowMs: 60 * 60 * 1000,
-        errorMessage: "Hourly rate limit reached for dashboard analysis.",
-      },
-    ]);
-    if (rateLimitResponse) {
-      return rateLimitResponse;
+    if (!isGuidanceAdminUsername(user.username)) {
+      const rateLimitResponse = enforceRateLimits(req, [
+        {
+          key: "smart-insights-per-hour",
+          maxRequests: 3,
+          windowMs: 60 * 60 * 1000,
+          errorMessage: "Hourly rate limit reached for dashboard analysis.",
+        },
+      ]);
+      if (rateLimitResponse) {
+        return rateLimitResponse;
+      }
     }
 
     if (!process.env.OPENAI_API_KEY) {
