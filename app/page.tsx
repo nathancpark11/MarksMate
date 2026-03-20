@@ -43,6 +43,7 @@ export default function Home() {
   const [percentImproved, setPercentImproved] = useState("");
   const [hoursSaved, setHoursSaved] = useState("");
   const [missionImpact, setMissionImpact] = useState("");
+  const [useAbbreviations, setUseAbbreviations] = useState(false);
 
   // ======================================================
   // OUTPUT + HISTORY STATE
@@ -1137,6 +1138,7 @@ export default function Home() {
       rankLevel,
       rating,
       bulletStyle,
+      useAbbreviations,
       peopleAffected,
       percentImproved,
       hoursSaved,
@@ -2558,6 +2560,8 @@ export default function Home() {
             setHoursSaved={setHoursSaved}
             missionImpact={missionImpact}
             setMissionImpact={setMissionImpact}
+            useAbbreviations={useAbbreviations}
+            setUseAbbreviations={setUseAbbreviations}
             logEntries={logEntries}
             error={error}
             loading={loading}

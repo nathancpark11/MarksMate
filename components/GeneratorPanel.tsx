@@ -55,6 +55,8 @@ type GeneratorPanelProps = {
   setHoursSaved: (value: string) => void;
   missionImpact: string;
   setMissionImpact: (value: string) => void;
+  useAbbreviations: boolean;
+  setUseAbbreviations: (value: boolean) => void;
   logEntries: LogEntry[];
   error: string;
   loading: boolean;
@@ -99,6 +101,8 @@ export default function GeneratorPanel({
   setHoursSaved,
   missionImpact,
   setMissionImpact,
+  useAbbreviations,
+  setUseAbbreviations,
   logEntries,
   error,
   loading,
@@ -505,6 +509,25 @@ export default function GeneratorPanel({
         placeholder={"Optional (Highly Recommended): What was the result or mission impact?\nExample: 03 airmen graduated AST A-School"}
       />
       <p className="mt-2 text-sm italic text-gray-500">If blank, AI will suggest an impact when generated.</p>
+
+      <div className="mt-6 flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+        <div>
+          <p className="text-sm font-semibold text-gray-900">Abbreviations</p>
+          <p className="text-xs text-gray-600">Controls whether generated marks use CG abbreviations.</p>
+        </div>
+        <button
+          type="button"
+          aria-pressed={useAbbreviations}
+          onClick={() => setUseAbbreviations(!useAbbreviations)}
+          className={`rounded-md px-4 py-2 text-sm font-semibold transition-colors ${
+            useAbbreviations
+              ? "bg-blue-600 text-white hover:bg-blue-700"
+              : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+          }`}
+        >
+          {useAbbreviations ? "Abbreviations: On" : "Abbreviations: Off"}
+        </button>
+      </div>
 
       <label className="block mt-6 text-sm font-medium">Category (optional - AI will suggest if blank)</label>
       <select

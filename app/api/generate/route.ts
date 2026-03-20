@@ -210,6 +210,7 @@ export async function POST(req: Request) {
       percentImproved,
       hoursSaved,
       missionImpact,
+      useAbbreviations,
       generationIntent,
       sourceBullet,
       sourceCategory,
@@ -223,6 +224,7 @@ export async function POST(req: Request) {
       percentImproved?: unknown;
       hoursSaved?: unknown;
       missionImpact?: unknown;
+      useAbbreviations?: unknown;
       generationIntent?: unknown;
       sourceBullet?: unknown;
       sourceCategory?: unknown;
@@ -255,6 +257,8 @@ export async function POST(req: Request) {
     const percentImprovedValue =
       typeof percentImproved === "string" && percentImproved ? percentImproved : "";
     const hoursSavedValue = typeof hoursSaved === "string" && hoursSaved ? hoursSaved : "";
+    const useAbbreviationsValue =
+      typeof useAbbreviations === "boolean" ? useAbbreviations : true;
     const generationIntentValue =
       typeof generationIntent === "string" && generationIntent ? generationIntent : "";
     const sourceBulletValue = typeof sourceBullet === "string" ? sourceBullet.trim() : "";
@@ -326,6 +330,14 @@ Reword rules:
 `
       : "";
 
+    const abbreviationsGuidance = useAbbreviationsValue
+  ? `
+- When writing the bullet, prioritize the following approved Coast Guard abbreviations where appropriate:
+
+Approved Abbreviations:
+additional=add'l, administration=admin, administrative separation=ADSEP, advancement list=adv lst, and=&, approved=appvd, area of responsibility=AOR, air station=airsta/A/S, attention=attn, auxiliary=aux, between=btwn, building=bld, Captain of the Port=COTP, certification=cert, chief petty officer=CPO, civilian=civ, Coast Guard=CG, command=cmd, Command Duty Officer=CDO, Command Master Chief=CMC, Commandant (office)=Comdt, Commandant (person)=CCG, Commanding Officer=CO, communication=comms, conference=conf, coordinate(d)=coord, demonstrate(d)=demo('), department=dept, department head=DH, Department of Defense=DoD, discrepancies=discreps, division=div, enlisted personnel=Enl Pers, evaluation(s)=eval(s), Executive Officer=XO, Federal=Fed, Federal On Scene Coordinator=FOSC, forward=fwd, from=fm/frm, government=Govt, graduate school=grad school, headquarters=hdqrts, Coast Guard headquarters=CGHQ, high visibility=hi-vis, hours=hrs, identify/identified=ID/ID's, in support of=ISO, Incident Command Post=ICP, Incident Command System=ICS, Incident Commander=IC, included=incl('d), increased=incr('d), intelligence=intel, international=intn'l/intl, junior=jr, Junior Officer(s)=JO(s), knowledge=knwlg, law enforcement=LE, leader=ldr, leadership=ldrshp, letter=ltr, level=lvl, management=mgmnt, manager=mgr/mngr, Master Chief Petty Officer of the Coast Guard=MCPOCG, maximum/maximized=max/max'd, medical evacuation=MEDVAC, meeting=mtg, member=Mbr/SVM/ROM, message=msg, national=nat'l, officer=offcr, Officer in Charge=OIC, Officer of the Day=OOD, Operational Tempo=OPTEMPO, operations=ops, opportunity=oppty, Outside Continental United States=OCONUS, package(s)=pkg(s), passenger(s)=Pax(s)/psngr(s), performance=perf, Personal Protective Equipment=PPE, position=posn, preparation=prep, prepared=prep'd, President of the United States=POTUS, Vice President of the United States=VPOTUS, professional=prof'l, project=proj, quarter/quarterly=qtr/qtrl'y, received=rvd, recommendation=recomd, letter of recommendation=ltr of rec, regulations=regs, representative=rep, represented=rep'd, requested=reqst'd, required=req'd, schedule=sched, search and rescue=SAR, Sector=Sec, Sector Command Center=SCC, senior=sr, service=svs/Svs, square miles=sq mi, station=STA/stas/sta, subject=subj, subject matter specialist=SME, subordinate=subord, system=sys, technical=tech'l, temporary=temp, Temporary Assigned Duty=TDY, thousand=K, through=thru, training=trng, travel=tvl, underway=U/W, vessel=vsl, Vice Commandant=VCG, violations=vios, visibility=vis, weather=wx, with regard to=wrt, year=Yr`
+  : "- Avoid abbreviated wording unless the user already provided it in the accomplishment.";
+
     const userPrompt = `
 You are writing performance evaluation bullets for a U.S. Coast Guard member.
 
@@ -343,10 +355,7 @@ Rules:
 - Do not ignore provided mission impact
 - Do not invent numbers that were not provided
 ${impactInclusionRule}
-- When writing the bullet, prioritize the following approved Coast Guard abbreviations where appropriate:
-
-Approved Abbreviations:
-additional=add'l, administration=admin, administrative separation=ADSEP, advancement list=adv lst, and=&, approved=appvd, area of responsibility=AOR, air station=airsta/A/S, attention=attn, auxiliary=aux, between=btwn, building=bld, Captain of the Port=COTP, certification=cert, chief petty officer=CPO, civilian=civ, Coast Guard=CG, command=cmd, Command Duty Officer=CDO, Command Master Chief=CMC, Commandant (office)=Comdt, Commandant (person)=CCG, Commanding Officer=CO, communication=comms, conference=conf, coordinate(d)=coord, demonstrate(d)=demo('), department=dept, department head=DH, Department of Defense=DoD, discrepancies=discreps, division=div, enlisted personnel=Enl Pers, evaluation(s)=eval(s), Executive Officer=XO, Federal=Fed, Federal On Scene Coordinator=FOSC, forward=fwd, from=fm/frm, government=Govt, graduate school=grad school, headquarters=hdqrts, Coast Guard headquarters=CGHQ, high visibility=hi-vis, hours=hrs, identify/identified=ID/ID's, in support of=ISO, Incident Command Post=ICP, Incident Command System=ICS, Incident Commander=IC, included=incl('d), increased=incr('d), intelligence=intel, international=intn'l/intl, junior=jr, Junior Officer(s)=JO(s), knowledge=knwlg, law enforcement=LE, leader=ldr, leadership=ldrshp, letter=ltr, level=lvl, management=mgmnt, manager=mgr/mngr, Master Chief Petty Officer of the Coast Guard=MCPOCG, maximum/maximized=max/max'd, medical evacuation=MEDVAC, meeting=mtg, member=Mbr/SVM/ROM, message=msg, national=nat'l, officer=offcr, Officer in Charge=OIC, Officer of the Day=OOD, Operational Tempo=OPTEMPO, operations=ops, opportunity=oppty, Outside Continental United States=OCONUS, package(s)=pkg(s), passenger(s)=Pax(s)/psngr(s), performance=perf, Personal Protective Equipment=PPE, position=posn, preparation=prep, prepared=prep'd, President of the United States=POTUS, Vice President of the United States=VPOTUS, professional=prof'l, project=proj, quarter/quarterly=qtr/qtrl'y, received=rvd, recommendation=recomd, letter of recommendation=ltr of rec, regulations=regs, representative=rep, represented=rep'd, requested=reqst'd, required=req'd, schedule=sched, search and rescue=SAR, Sector=Sec, Sector Command Center=SCC, senior=sr, service=svs/Svs, square miles=sq mi, station=STA/stas/sta, subject=subj, subject matter specialist=SME, subordinate=subord, system=sys, technical=tech'l, temporary=temp, Temporary Assigned Duty=TDY, thousand=K, through=thru, training=trng, travel=tvl, underway=U/W, vessel=vsl, Vice Commandant=VCG, violations=vios, visibility=vis, weather=wx, with regard to=wrt, year=Yr
+${abbreviationsGuidance}
 
 Structure:
 Action → Result → Impact
