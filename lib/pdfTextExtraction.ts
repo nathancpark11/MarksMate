@@ -232,9 +232,16 @@ function renderPdfItems(items: PdfTextItem[]) {
 async function extractWithPdfJs(fileBuffer: Buffer) {
   await ensurePdfRuntimePolyfills();
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+
+  if (pdfjs.GlobalWorkerOptions) {
+    pdfjs.GlobalWorkerOptions.workerSrc = "";
+    pdfjs.GlobalWorkerOptions.workerPort = null;
+  }
+
   const documentInit = {
     data: new Uint8Array(fileBuffer),
     disableWorker: true,
+    worker: null,
     useWorkerFetch: false,
     isEvalSupported: false,
     disableFontFace: true,
@@ -293,13 +300,13 @@ function getErrorMessage(error: unknown) {
 
 export async function extractTextFromPdfBuffer(fileBuffer: Buffer) {
   try {
-    return await extractWithPdfJs(fileBuffer);
-  } catch (pdfJsError) {
+    return await extractWithPdfParse(fileBuffer);
+  } catch (pdfParseError) {
     try {
-      return await extractWithPdfParse(fileBuffer);
-    } catch (pdfParseError) {
+      return await extractWithPdfJs(fileBuffer);
+    } catch (pdfJsError) {
       throw new Error(
-        `PDF extraction failed. pdfjs-dist: ${getErrorMessage(pdfJsError)}. pdf-parse: ${getErrorMessage(pdfParseError)}.`
+        `PDF extraction failed. pdf-parse: ${getErrorMessage(pdfParseError)}. pdfjs-dist: ${getErrorMessage(pdfJsError)}.`
       );
     }
   }
