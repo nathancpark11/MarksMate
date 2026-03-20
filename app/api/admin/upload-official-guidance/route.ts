@@ -1,4 +1,3 @@
-import { PDFParse } from "pdf-parse";
 import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { requireSessionUser } from "@/lib/auth";
@@ -21,6 +20,24 @@ type ParsedUploadRequest = {
   source: string;
   uniqueRanks: string[];
 };
+
+async function extractPdfText(fileBuffer: Buffer) {
+  const pdfParseModule = await import("pdf-parse");
+  const PDFParseClass = pdfParseModule.PDFParse;
+
+  if (typeof PDFParseClass !== "function") {
+    throw new Error("PDF parser is unavailable in this runtime.");
+  }
+
+  const parser = new PDFParseClass({ data: fileBuffer });
+
+  try {
+    const parsed = await parser.getText();
+    return typeof parsed.text === "string" ? parsed.text : "";
+  } finally {
+    await parser.destroy().catch(() => undefined);
+  }
+}
 
 type UploadHistoryEntry = {
   rank: string;
@@ -569,10 +586,7 @@ export async function POST(req: Request) {
 
     const { fileName, fileBuffer, source, uniqueRanks } = parsedUpload;
 
-    const parser = new PDFParse({ data: fileBuffer });
-    const parsed = await parser.getText();
-    const normalized = normalizeText(parsed.text || "");
-    await parser.destroy();
+    const normalized = normalizeText(await extractPdfText(fileBuffer));
 
     if (!normalized) {
       return Response.json({ error: "No text could be extracted from that PDF." }, { status: 400 });
