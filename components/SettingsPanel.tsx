@@ -32,6 +32,7 @@ type SettingsPanelProps = {
     status: "uploading" | "uploaded" | "failed";
     detail?: string;
   } | null;
+  guidanceDeleteBusyRank: string | null;
   guidanceUploadHistory: Array<{
     rank: string;
     source: string;
@@ -46,6 +47,7 @@ type SettingsPanelProps = {
   onExportBackup: () => void;
   onImportBackup: (file: File) => void;
   onUploadGuidancePdf: (file: File, ranks: string[]) => void;
+  onDeleteGuidanceForRank: (rank: string) => void;
   onClearAllBullets: () => void;
   onClearDailyLog: () => void;
   onReviewTutorial: () => void;
@@ -80,11 +82,13 @@ export default function SettingsPanel({
   settingsMessage,
   guidanceUploadBusy,
   guidanceUploadStatus,
+  guidanceDeleteBusyRank,
   guidanceUploadHistory,
   canManageOfficialGuidance,
   onExportBackup,
   onImportBackup,
   onUploadGuidancePdf,
+  onDeleteGuidanceForRank,
   onClearAllBullets,
   onClearDailyLog,
   onReviewTutorial,
@@ -468,8 +472,18 @@ export default function SettingsPanel({
                       <p className="truncate text-blue-800">{entry.fileName || entry.outputFile || entry.source}</p>
                     </div>
                     <div className="shrink-0 text-right text-[11px] text-blue-800">
-                      <p>{formatUploadTimestamp(entry.uploadedAt)}</p>
-                      {entry.replacedExisting ? <p>Overwrote prior upload</p> : null}
+                      <div className="flex items-center justify-end gap-2">
+                        <p>{formatUploadTimestamp(entry.uploadedAt)}</p>
+                        <button
+                          type="button"
+                          onClick={() => onDeleteGuidanceForRank(entry.rank)}
+                          disabled={guidanceDeleteBusyRank !== null}
+                          className="rounded border border-red-300 bg-white px-2 py-1 text-[11px] font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {guidanceDeleteBusyRank === entry.rank ? "Deleting..." : "Delete"}
+                        </button>
+                      </div>
+                      {entry.replacedExisting ? <p className="mt-1">Overwrote prior upload</p> : null}
                     </div>
                   </div>
                 ))}

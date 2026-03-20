@@ -1,5 +1,5 @@
 import { PDFParse } from "pdf-parse";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { requireSessionUser } from "@/lib/auth";
 import { isGuidanceAdminUsername } from "@/lib/admin";
@@ -264,6 +264,59 @@ async function appendLocalUploadHistory(entries: UploadHistoryEntry[]) {
   }
 }
 
+async function removeLocalUploadHistoryByRank(rank: string) {
+  try {
+    const existing = await readLocalUploadHistory();
+    const filtered = existing.filter((entry) => entry.rank !== rank);
+    await mkdir(LOCAL_GUIDANCE_DIR, { recursive: true });
+    await writeFile(LOCAL_UPLOAD_LOG_PATH, `${JSON.stringify(filtered, null, 2)}\n`, "utf8");
+  } catch {
+    // Local file logging can fail in read-only deployments.
+  }
+}
+
+async function removeLocalGuidanceFile(rank: string) {
+  try {
+    await unlink(path.join(LOCAL_GUIDANCE_DIR, rankFileName(rank)));
+  } catch {
+    // File may not exist or FS may be read-only.
+  }
+}
+
+async function loadMergedUploadHistoryEntries() {
+  let dbEntries: UploadHistoryEntry[] = [];
+  try {
+    await ensureSchema();
+    const { rows } = await sql`
+      SELECT rank, source, file_name, output_file, chunk_count, uploaded_at, uploaded_by, replaced_existing
+      FROM guidance_upload_log
+      ORDER BY uploaded_at DESC, id DESC
+      LIMIT 500
+    `;
+
+    dbEntries = rows
+      .map((row) =>
+        normalizeUploadHistoryEntry({
+          rank: typeof row.rank === "string" ? row.rank : "",
+          source: typeof row.source === "string" ? row.source : "Official Marking Guide",
+          fileName: typeof row.file_name === "string" ? row.file_name : "",
+          outputFile: typeof row.output_file === "string" ? row.output_file : "",
+          chunkCount: typeof row.chunk_count === "number" ? row.chunk_count : 0,
+          uploadedAt: typeof row.uploaded_at === "string" ? row.uploaded_at : "",
+          uploadedBy: typeof row.uploaded_by === "string" ? row.uploaded_by : "",
+          replacedExisting: Boolean(row.replaced_existing),
+        })
+      )
+      .filter((entry): entry is UploadHistoryEntry => Boolean(entry));
+  } catch {
+    dbEntries = [];
+  }
+
+  const localEntries = await readLocalUploadHistory();
+  const inferredFileEntries = localEntries.length ? [] : await inferUploadHistoryFromGuidanceFiles();
+  return mergeUploadHistoryEntries(dbEntries, localEntries, inferredFileEntries).slice(0, 100);
+}
+
 async function mirrorGuidanceToLocalFiles(params: {
   ranks: string[];
   source: string;
@@ -343,41 +396,62 @@ export async function GET() {
       return response;
     }
 
-    let dbEntries: UploadHistoryEntry[] = [];
-    try {
-      await ensureSchema();
-      const { rows } = await sql`
-        SELECT rank, source, file_name, output_file, chunk_count, uploaded_at, uploaded_by, replaced_existing
-        FROM guidance_upload_log
-        ORDER BY uploaded_at DESC, id DESC
-        LIMIT 500
-      `;
-
-      dbEntries = rows
-        .map((row) =>
-          normalizeUploadHistoryEntry({
-            rank: typeof row.rank === "string" ? row.rank : "",
-            source: typeof row.source === "string" ? row.source : "Official Marking Guide",
-            fileName: typeof row.file_name === "string" ? row.file_name : "",
-            outputFile: typeof row.output_file === "string" ? row.output_file : "",
-            chunkCount: typeof row.chunk_count === "number" ? row.chunk_count : 0,
-            uploadedAt: typeof row.uploaded_at === "string" ? row.uploaded_at : "",
-            uploadedBy: typeof row.uploaded_by === "string" ? row.uploaded_by : "",
-            replacedExisting: Boolean(row.replaced_existing),
-          })
-        )
-        .filter((entry): entry is UploadHistoryEntry => Boolean(entry));
-    } catch {
-      dbEntries = [];
-    }
-
-    const localEntries = await readLocalUploadHistory();
-    const inferredFileEntries = localEntries.length ? [] : await inferUploadHistoryFromGuidanceFiles();
-    const entries = mergeUploadHistoryEntries(dbEntries, localEntries, inferredFileEntries).slice(0, 100);
+    const entries = await loadMergedUploadHistoryEntries();
 
     return Response.json({ entries }, { status: 200 });
   } catch {
     return Response.json({ error: "Unable to load guidance upload history right now." }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: Request) {
+  try {
+    const { user, response } = await requireGuidanceAdmin();
+    if (response || !user) {
+      return response ?? Response.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const rateLimitResponse = enforceRateLimits(req, [
+      {
+        key: "delete-official-guidance-per-hour",
+        maxRequests: 30,
+        windowMs: 60 * 60 * 1000,
+        errorMessage: "Rate limit reached for guidance deletions.",
+      },
+    ]);
+    if (rateLimitResponse) {
+      return rateLimitResponse;
+    }
+
+    const body = (await req.json().catch(() => null)) as { rank?: string } | null;
+    const normalizedRank = normalizeRank(typeof body?.rank === "string" ? body.rank : "");
+    if (!normalizedRank) {
+      return Response.json({ error: "A valid rank is required (E3-E7)." }, { status: 400 });
+    }
+
+    await ensureSchema();
+    await sql`DELETE FROM guidance_datasets WHERE ranks_key = ${normalizedRank}`;
+    await sql`DELETE FROM guidance_upload_log WHERE rank = ${normalizedRank}`;
+
+    await Promise.all([
+      removeLocalGuidanceFile(normalizedRank),
+      removeLocalUploadHistoryByRank(normalizedRank),
+    ]);
+
+    clearOfficialGuidanceCache();
+
+    const entries = await loadMergedUploadHistoryEntries();
+
+    return Response.json(
+      {
+        ok: true,
+        message: `Deleted official guidance for ${normalizedRank}.`,
+        entries,
+      },
+      { status: 200 }
+    );
+  } catch {
+    return Response.json({ error: "Unable to delete guidance right now." }, { status: 500 });
   }
 }
 

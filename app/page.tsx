@@ -127,6 +127,25 @@ export default function Home() {
       .filter((date): date is string => typeof date === "string" && date.length > 0)
       .filter((date, index, arr) => arr.indexOf(date) === index);
 
+  const getApiPayload = async <T,>(response: Response): Promise<{ data: T | null; nonJsonText: string | null }> => {
+    const contentType = (response.headers.get("content-type") || "").toLowerCase();
+
+    if (contentType.includes("application/json")) {
+      try {
+        return { data: (await response.json()) as T, nonJsonText: null };
+      } catch {
+        return { data: null, nonJsonText: null };
+      }
+    }
+
+    try {
+      const bodyText = await response.text();
+      return { data: null, nonJsonText: bodyText.slice(0, 200).replace(/\s+/g, " ").trim() };
+    } catch {
+      return { data: null, nonJsonText: null };
+    }
+  };
+
   const findExistingOfficialMarkForAction = (actionText: string) => {
     if (editingIndex !== null) {
       return null;
@@ -195,6 +214,7 @@ export default function Home() {
     status: "uploading" | "uploaded" | "failed";
     detail?: string;
   } | null>(null);
+  const [guidanceDeleteBusyRank, setGuidanceDeleteBusyRank] = useState<string | null>(null);
   type GuidanceUploadHistoryEntry = {
     rank: string;
     source: string;
@@ -282,16 +302,17 @@ export default function Home() {
 
     try {
       const response = await fetch("/api/admin/upload-official-guidance", { method: "GET" });
-      const data = (await response.json()) as {
+      const { data, nonJsonText } = await getApiPayload<{
         entries?: GuidanceUploadHistoryEntry[];
         error?: string;
-      };
+      }>(response);
 
       if (!response.ok) {
-        throw new Error(data.error || "Unable to load guidance upload history.");
+        const details = data?.error || nonJsonText || `HTTP ${response.status}`;
+        throw new Error(`Unable to load guidance upload history. ${details}`);
       }
 
-      setGuidanceUploadHistory(Array.isArray(data.entries) ? data.entries : []);
+      setGuidanceUploadHistory(Array.isArray(data?.entries) ? data.entries : []);
     } catch {
       setGuidanceUploadHistory([]);
     }
@@ -2040,27 +2061,30 @@ export default function Home() {
         body: formData,
       });
 
-      const data = (await response.json()) as {
+      const { data, nonJsonText } = await getApiPayload<{
         error?: string;
         message?: string;
         chunks?: number;
         outputFile?: string;
         uploadHistory?: GuidanceUploadHistoryEntry[];
-      };
+      }>(response);
+      const payload = data ?? {};
 
       if (!response.ok) {
-        throw new Error(data.error || "Upload failed.");
+        const details = payload.error || nonJsonText || `HTTP ${response.status}`;
+        throw new Error(`Upload failed. ${details}`);
       }
 
-      const suffix = typeof data.chunks === "number" ? ` (${data.chunks} chunks)` : "";
-      setSettingsMessage(`${data.message || "Guidance uploaded."}${suffix}`);
+      const suffix = typeof payload.chunks === "number" ? ` (${payload.chunks} chunks)` : "";
+      setSettingsMessage(`${payload.message || "Guidance uploaded."}${suffix}`);
       setGuidanceUploadStatus({
-        fileName: data.outputFile || file.name,
+        fileName: payload.outputFile || file.name,
         status: "uploaded",
-        detail: `${data.message || "Upload complete."}${suffix}`,
+        detail: `${payload.message || "Upload complete."}${suffix}`,
       });
-      if (Array.isArray(data.uploadHistory) && data.uploadHistory.length) {
-        setGuidanceUploadHistory((prev) => [...data.uploadHistory!, ...prev].slice(0, 100));
+      const uploadHistory = Array.isArray(payload.uploadHistory) ? payload.uploadHistory : [];
+      if (uploadHistory.length) {
+        setGuidanceUploadHistory((prev) => [...uploadHistory, ...prev].slice(0, 100));
       } else {
         await loadGuidanceUploadHistory();
       }
@@ -2078,6 +2102,65 @@ export default function Home() {
       });
     } finally {
       setGuidanceUploadBusy(false);
+    }
+  };
+
+  const handleDeleteGuidanceForRank = async (rank: string) => {
+    if (!rank) {
+      return;
+    }
+
+    const confirmed = window.confirm(`Delete official guidance for ${rank}? This cannot be undone.`);
+    if (!confirmed) {
+      return;
+    }
+
+    setGuidanceDeleteBusyRank(rank);
+    setSettingsMessage(`Deleting guidance for ${rank}...`);
+
+    try {
+      const response = await fetch("/api/admin/upload-official-guidance", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ rank }),
+      });
+
+      const { data, nonJsonText } = await getApiPayload<{
+        error?: string;
+        message?: string;
+        entries?: GuidanceUploadHistoryEntry[];
+      }>(response);
+      const payload = data ?? {};
+
+      if (!response.ok) {
+        const details = payload.error || nonJsonText || `HTTP ${response.status}`;
+        throw new Error(`Delete failed. ${details}`);
+      }
+
+      setSettingsMessage(payload.message || `Deleted guidance for ${rank}.`);
+      setGuidanceUploadStatus({
+        fileName: rank,
+        status: "uploaded",
+        detail: payload.message || `Deleted guidance for ${rank}.`,
+      });
+
+      if (Array.isArray(payload.entries)) {
+        setGuidanceUploadHistory(payload.entries);
+      } else {
+        await loadGuidanceUploadHistory();
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Unable to delete guidance right now.";
+      setSettingsMessage(errorMessage);
+      setGuidanceUploadStatus({
+        fileName: rank,
+        status: "failed",
+        detail: errorMessage,
+      });
+    } finally {
+      setGuidanceDeleteBusyRank(null);
     }
   };
 
@@ -2858,12 +2941,16 @@ export default function Home() {
             settingsMessage={settingsMessage}
             guidanceUploadBusy={guidanceUploadBusy}
             guidanceUploadStatus={guidanceUploadStatus}
+            guidanceDeleteBusyRank={guidanceDeleteBusyRank}
             guidanceUploadHistory={guidanceUploadHistory}
             canManageOfficialGuidance={canManageOfficialGuidance}
             onExportBackup={handleExportBackup}
             onImportBackup={handleImportBackup}
             onUploadGuidancePdf={(file, ranks) => {
               void handleUploadGuidancePdf(file, ranks);
+            }}
+            onDeleteGuidanceForRank={(rank) => {
+              void handleDeleteGuidanceForRank(rank);
             }}
             onClearAllBullets={handleClearAllBullets}
             onClearDailyLog={handleClearLogEntries}
