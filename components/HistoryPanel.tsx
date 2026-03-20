@@ -72,7 +72,7 @@ export default function HistoryPanel({
 
   const toStoredDateValue = (dateInputValue: string, fallbackDate: string): string => {
     if (!dateInputValue.trim()) {
-      return fallbackDate;
+      return "";
     }
 
     const parsed = new Date(`${dateInputValue}T12:00:00`);

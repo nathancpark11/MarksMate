@@ -1856,11 +1856,17 @@ export default function Home() {
 
     const currentItem = history[index];
     const previousText = currentItem?.text;
-    const parsedNextDate = typeof nextDate === "string" ? new Date(nextDate) : null;
-    const resolvedDate =
-      parsedNextDate && !Number.isNaN(parsedNextDate.getTime())
-        ? parsedNextDate.toISOString()
-        : currentItem?.date;
+    let resolvedDate = currentItem?.date ?? "";
+    if (typeof nextDate === "string") {
+      if (!nextDate.trim()) {
+        resolvedDate = "";
+      } else {
+        const parsedNextDate = new Date(nextDate);
+        if (!Number.isNaN(parsedNextDate.getTime())) {
+          resolvedDate = parsedNextDate.toISOString();
+        }
+      }
+    }
 
     setHistory((prev) =>
       prev.map((item, itemIndex) => {
@@ -1872,9 +1878,9 @@ export default function Home() {
         return {
           ...item,
           text: trimmedText,
-          date: resolvedDate ?? item.date,
+          date: resolvedDate,
           category: trimmedCategory ? trimmedCategory : item.category,
-          markingPeriod: resolvedDate ? computeMarkingPeriod(resolvedDate, rankLevel) : item.markingPeriod,
+          markingPeriod: resolvedDate ? computeMarkingPeriod(resolvedDate, rankLevel) : "",
         };
       })
     );
