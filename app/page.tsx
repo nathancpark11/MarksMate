@@ -5,6 +5,7 @@
 // ======================================================
 import { useCallback, useEffect, useRef, useState } from "react";
 import GeneratorPanel from "../components/GeneratorPanel";
+import CategoryReferencePanel from "../components/CategoryReferencePanel";
 import HistoryPanel from "../components/HistoryPanel";
 import TabBar from "../components/TabBar";
 import DashboardPanel from "../components/DashboardPanel";
@@ -2547,49 +2548,52 @@ export default function Home() {
         ) : null}
 
         {activeTab === "generator" && (
-          <GeneratorPanel
-            input={input}
-            setInput={setInput}
-            category={category}
-            setCategory={setCategory}
-            peopleAffected={peopleAffected}
-            setPeopleAffected={setPeopleAffected}
-            percentImproved={percentImproved}
-            setPercentImproved={setPercentImproved}
-            hoursSaved={hoursSaved}
-            setHoursSaved={setHoursSaved}
-            missionImpact={missionImpact}
-            setMissionImpact={setMissionImpact}
-            useAbbreviations={useAbbreviations}
-            setUseAbbreviations={setUseAbbreviations}
-            logEntries={logEntries}
-            error={error}
-            loading={loading}
-            bullet={bullet}
-            splitBulletRecommendation={splitBulletRecommendation}
-            splitBulletRecommendationLoading={splitBulletRecommendationLoading}
-            splitBulletDrafts={splitBulletDrafts}
-            splitBulletDraftsLoading={splitBulletDraftsLoading}
-            splitBulletDraftRepromptingId={splitBulletDraftRepromptingId}
-            wasCategoryUserSelected={wasCategoryUserSelected}
-            handleGenerate={handleGenerate}
-            handleGenerateMarkAsIs={handleGenerateMarkAsIs}
-            handleApplySplitRecommendation={handleApplySplitRecommendation}
-            handleClearSplitBulletDrafts={handleClearSplitBulletDrafts}
-            handleRepromptSplitBulletDraft={handleRepromptSplitBulletDraft}
-            handleCommitSplitBulletDrafts={handleCommitSplitBulletDrafts}
-            handleCommitBullet={handleCommitBullet}
-            onLogEntryPulled={({ dates, index, groupedIndexes }) => {
-              const normalizedDates = normalizeDateList(dates);
-              setPulledLogDate(normalizedDates[0] ?? null);
-              setPulledLogDates(normalizedDates);
-              setPulledLogIndex(index);
-              setPulledLogEntryId(index == null ? null : logEntries[index]?.id ?? null);
-              setPulledGroupedEntryIndexes(groupedIndexes ?? []);
-            }}
-            pendingLogPull={pendingLogPull}
-            onPendingLogPullConsumed={() => setPendingLogPull(null)}
-          />
+          <>
+            <GeneratorPanel
+              input={input}
+              setInput={setInput}
+              category={category}
+              setCategory={setCategory}
+              peopleAffected={peopleAffected}
+              setPeopleAffected={setPeopleAffected}
+              percentImproved={percentImproved}
+              setPercentImproved={setPercentImproved}
+              hoursSaved={hoursSaved}
+              setHoursSaved={setHoursSaved}
+              missionImpact={missionImpact}
+              setMissionImpact={setMissionImpact}
+              useAbbreviations={useAbbreviations}
+              setUseAbbreviations={setUseAbbreviations}
+              logEntries={logEntries}
+              error={error}
+              loading={loading}
+              bullet={bullet}
+              splitBulletRecommendation={splitBulletRecommendation}
+              splitBulletRecommendationLoading={splitBulletRecommendationLoading}
+              splitBulletDrafts={splitBulletDrafts}
+              splitBulletDraftsLoading={splitBulletDraftsLoading}
+              splitBulletDraftRepromptingId={splitBulletDraftRepromptingId}
+              wasCategoryUserSelected={wasCategoryUserSelected}
+              handleGenerate={handleGenerate}
+              handleGenerateMarkAsIs={handleGenerateMarkAsIs}
+              handleApplySplitRecommendation={handleApplySplitRecommendation}
+              handleClearSplitBulletDrafts={handleClearSplitBulletDrafts}
+              handleRepromptSplitBulletDraft={handleRepromptSplitBulletDraft}
+              handleCommitSplitBulletDrafts={handleCommitSplitBulletDrafts}
+              handleCommitBullet={handleCommitBullet}
+              onLogEntryPulled={({ dates, index, groupedIndexes }) => {
+                const normalizedDates = normalizeDateList(dates);
+                setPulledLogDate(normalizedDates[0] ?? null);
+                setPulledLogDates(normalizedDates);
+                setPulledLogIndex(index);
+                setPulledLogEntryId(index == null ? null : logEntries[index]?.id ?? null);
+                setPulledGroupedEntryIndexes(groupedIndexes ?? []);
+              }}
+              pendingLogPull={pendingLogPull}
+              onPendingLogPullConsumed={() => setPendingLogPull(null)}
+            />
+            <CategoryReferencePanel />
+          </>
         )}
 
         {activeTab === "history" && (
