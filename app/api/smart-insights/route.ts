@@ -11,6 +11,10 @@ const client = new OpenAI({
 });
 
 const DASHBOARD_ANALYSIS_MODEL = process.env.OPENAI_MODEL_DASHBOARD_ANALYSIS ?? process.env.OPENAI_MODEL_STRONG ?? "gpt-4.1";
+const DASHBOARD_INPUT_GUARD_LIMITS = {
+  maxItems: 240,
+  maxCombinedChars: 40000,
+};
 
 function stripCodeFences(value: string) {
   return value.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
@@ -103,7 +107,10 @@ export async function POST(req: Request) {
     const flattenedBullets = Object.values(normalizedBulletsByCategory)
       .flat()
       .filter(Boolean);
-    const promptSpamError = validateCombinedAiInputs([...flattenedBullets, ...normalizedCategories]);
+    const promptSpamError = validateCombinedAiInputs(
+      [...flattenedBullets, ...normalizedCategories],
+      DASHBOARD_INPUT_GUARD_LIMITS
+    );
     if (promptSpamError) {
       return Response.json({ error: promptSpamError }, { status: 400 });
     }

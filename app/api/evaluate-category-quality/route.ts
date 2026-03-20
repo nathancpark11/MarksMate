@@ -12,6 +12,10 @@ const client = new OpenAI({
 });
 
 const DASHBOARD_ANALYSIS_MODEL = process.env.OPENAI_MODEL_DASHBOARD_ANALYSIS ?? process.env.OPENAI_MODEL_STRONG ?? "gpt-4.1";
+const DASHBOARD_INPUT_GUARD_LIMITS = {
+  maxItems: 240,
+  maxCombinedChars: 40000,
+};
 
 type CategoryEvaluations = Record<
   string,
@@ -137,7 +141,7 @@ export async function POST(req: Request) {
       category,
       ...bullets.filter((bullet): bullet is string => typeof bullet === "string"),
     ]);
-    const promptSpamError = validateCombinedAiInputs(categoryInputs);
+    const promptSpamError = validateCombinedAiInputs(categoryInputs, DASHBOARD_INPUT_GUARD_LIMITS);
     if (promptSpamError) {
       return Response.json({ error: promptSpamError }, { status: 400 });
     }
