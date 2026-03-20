@@ -21,7 +21,7 @@ import {
 } from "@/lib/generationValidation";
 
 export default function Home() {
-  const MAX_GUIDANCE_UPLOAD_BYTES = 4 * 1024 * 1024;
+  const MAX_GUIDANCE_UPLOAD_BYTES = 3 * 1024 * 1024;
 
   type TutorialStep =
     | "log"
@@ -2063,16 +2063,22 @@ export default function Home() {
     setSettingsMessage("Uploading guidance PDF and indexing sections...");
 
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("source", "Official Marking Guide");
-      for (const rank of ranks) {
-        formData.append("ranks", rank);
-      }
+      const fileBuffer = await file.arrayBuffer();
+      const fileBase64 = btoa(
+        Array.from(new Uint8Array(fileBuffer), (byte) => String.fromCharCode(byte)).join("")
+      );
 
       const response = await fetch("/api/admin/upload-official-guidance", {
         method: "POST",
-        body: formData,
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          fileName: file.name,
+          fileBase64,
+          source: "Official Marking Guide",
+          ranks,
+        }),
       });
 
       const { data, nonJsonText } = await getApiPayload<{

@@ -9,11 +9,18 @@ import { sql, ensureSchema } from "@/lib/db";
 
 export const runtime = "nodejs";
 
-// Vercel Functions accept up to 4.5 MB request bodies. Keep the app limit below
-// that so deployed uploads fail fast with JSON instead of a platform HTML error.
-const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
+// JSON/base64 upload bodies expand the original PDF size, so keep the raw file
+// limit below Vercel's 4.5 MB function payload ceiling.
+const MAX_UPLOAD_BYTES = 3 * 1024 * 1024;
 const LOCAL_GUIDANCE_DIR = path.join(process.cwd(), "data", "official-guidance");
 const LOCAL_UPLOAD_LOG_PATH = path.join(LOCAL_GUIDANCE_DIR, "upload-log.json");
+
+type ParsedUploadRequest = {
+  fileName: string;
+  fileBuffer: Buffer;
+  source: string;
+  uniqueRanks: string[];
+};
 
 type UploadHistoryEntry = {
   rank: string;
@@ -391,6 +398,85 @@ async function requireGuidanceAdmin() {
   return { user, response: null };
 }
 
+async function parseUploadRequest(req: Request): Promise<ParsedUploadRequest | Response> {
+  const contentType = (req.headers.get("content-type") || "").toLowerCase();
+
+  if (contentType.includes("application/json")) {
+    const body = (await req.json().catch(() => null)) as {
+      fileName?: string;
+      fileBase64?: string;
+      source?: string;
+      ranks?: string[];
+    } | null;
+
+    const fileName = typeof body?.fileName === "string" ? body.fileName.trim() : "";
+    const fileBase64 = typeof body?.fileBase64 === "string" ? body.fileBase64.trim() : "";
+    const source = typeof body?.source === "string" && body.source.trim() ? body.source.trim() : "Official Marking Guide";
+    const uniqueRanks = [...new Set(
+      Array.isArray(body?.ranks)
+        ? body.ranks.map((value) => normalizeRank(typeof value === "string" ? value : "")).filter(Boolean)
+        : []
+    )].sort();
+
+    if (!fileName || !fileBase64) {
+      return Response.json({ error: "A PDF file is required." }, { status: 400 });
+    }
+
+    const fileBuffer = Buffer.from(fileBase64, "base64");
+    if (!fileBuffer.length) {
+      return Response.json({ error: "Unable to read that PDF upload." }, { status: 400 });
+    }
+
+    if (fileBuffer.length > MAX_UPLOAD_BYTES) {
+      return Response.json(
+        { error: `File too large. Maximum size is ${Math.round(MAX_UPLOAD_BYTES / (1024 * 1024))} MB.` },
+        { status: 413 }
+      );
+    }
+
+    if (!uniqueRanks.length) {
+      return Response.json({ error: "Select at least one rank (E3-E7)." }, { status: 400 });
+    }
+
+    return { fileName, fileBuffer, source, uniqueRanks };
+  }
+
+  const formData = await req.formData();
+  const sourceRaw = formData.get("source");
+  const ranksRaw = formData.getAll("ranks");
+  const file = formData.get("file");
+
+  if (!(file instanceof File)) {
+    return Response.json({ error: "A PDF file is required." }, { status: 400 });
+  }
+
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return Response.json(
+      { error: `File too large. Maximum size is ${Math.round(MAX_UPLOAD_BYTES / (1024 * 1024))} MB.` },
+      { status: 413 }
+    );
+  }
+
+  const source = typeof sourceRaw === "string" && sourceRaw.trim() ? sourceRaw.trim() : "Official Marking Guide";
+  const uniqueRanks = [...new Set(
+    ranksRaw
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => normalizeRank(value))
+      .filter(Boolean)
+  )].sort();
+
+  if (!uniqueRanks.length) {
+    return Response.json({ error: "Select at least one rank (E3-E7)." }, { status: 400 });
+  }
+
+  return {
+    fileName: file.name,
+    fileBuffer: Buffer.from(await file.arrayBuffer()),
+    source,
+    uniqueRanks,
+  };
+}
+
 export async function GET() {
   try {
     const { response } = await requireGuidanceAdmin();
@@ -476,36 +562,14 @@ export async function POST(req: Request) {
       return rateLimitResponse;
     }
 
-    const formData = await req.formData();
-    const sourceRaw = formData.get("source");
-    const ranksRaw = formData.getAll("ranks");
-    const file = formData.get("file");
-
-    if (!(file instanceof File)) {
-      return Response.json({ error: "A PDF file is required." }, { status: 400 });
+    const parsedUpload = await parseUploadRequest(req);
+    if (parsedUpload instanceof Response) {
+      return parsedUpload;
     }
 
-    if (file.size > MAX_UPLOAD_BYTES) {
-      return Response.json(
-        { error: `File too large. Maximum size is ${Math.round(MAX_UPLOAD_BYTES / (1024 * 1024))} MB.` },
-        { status: 413 }
-      );
-    }
+    const { fileName, fileBuffer, source, uniqueRanks } = parsedUpload;
 
-    const source = typeof sourceRaw === "string" && sourceRaw.trim() ? sourceRaw.trim() : "Official Marking Guide";
-    const ranks = ranksRaw
-      .filter((value): value is string => typeof value === "string")
-      .map((value) => normalizeRank(value))
-      .filter(Boolean);
-
-    const uniqueRanks = [...new Set(ranks)].sort();
-
-    if (!uniqueRanks.length) {
-      return Response.json({ error: "Select at least one rank (E3-E7)." }, { status: 400 });
-    }
-
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const parser = new PDFParse({ data: buffer });
+    const parser = new PDFParse({ data: fileBuffer });
     const parsed = await parser.getText();
     const normalized = normalizeText(parsed.text || "");
     await parser.destroy();
@@ -597,7 +661,7 @@ export async function POST(req: Request) {
         VALUES (
           ${rank},
           ${source},
-          ${file.name},
+          ${fileName},
           ${outputFile},
           ${chunks.length},
           ${generatedAt},
@@ -610,7 +674,7 @@ export async function POST(req: Request) {
     const uploadHistoryEntries: UploadHistoryEntry[] = uniqueRanks.map((rank) => ({
       rank,
       source,
-      fileName: file.name,
+      fileName,
       outputFile: rankFileName(rank),
       chunkCount: chunks.length,
       uploadedAt: generatedAt,
