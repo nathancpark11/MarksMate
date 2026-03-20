@@ -204,6 +204,19 @@ async function ensurePdfRuntimePolyfills() {
           userAgent: "",
         } as Navigator;
       }
+
+      const workerGlobal = globalThis as typeof globalThis & {
+        pdfjsWorker?: { WorkerMessageHandler?: unknown };
+      };
+
+      if (!workerGlobal.pdfjsWorker?.WorkerMessageHandler) {
+        const workerModule = await import("pdfjs-dist/legacy/build/pdf.worker.min.mjs").catch(
+          async () => await import("pdfjs-dist/legacy/build/pdf.worker.mjs")
+        );
+        workerGlobal.pdfjsWorker = {
+          WorkerMessageHandler: workerModule.WorkerMessageHandler,
+        };
+      }
     })();
   }
 
