@@ -1,7 +1,7 @@
 import mammoth from "mammoth";
-import { PDFParse } from "pdf-parse";
 import { requireSessionUser } from "@/lib/auth";
 import { extractCandidateEntriesFromText } from "@/lib/logImport";
+import { extractTextFromPdfBuffer } from "@/lib/pdfTextExtraction";
 
 const SUPPORTED_EXTENSIONS = new Set([".docx", ".pdf"]);
 
@@ -43,10 +43,7 @@ export async function POST(req: Request) {
       const docxResult = await mammoth.extractRawText({ buffer: fileBuffer });
       extractedText = docxResult.value || "";
     } else {
-      const parser = new PDFParse({ data: fileBuffer });
-      const pdfResult = await parser.getText();
-      extractedText = pdfResult.text || "";
-      await parser.destroy();
+      extractedText = await extractTextFromPdfBuffer(fileBuffer);
     }
 
     const entries = extractCandidateEntriesFromText(extractedText);

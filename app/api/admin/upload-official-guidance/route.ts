@@ -4,6 +4,7 @@ import { requireSessionUser } from "@/lib/auth";
 import { isGuidanceAdminUsername } from "@/lib/admin";
 import { enforceRateLimits } from "@/lib/rateLimit";
 import { clearOfficialGuidanceCache } from "@/lib/officialGuidance";
+import { extractTextFromPdfBuffer } from "@/lib/pdfTextExtraction";
 import { sql, ensureSchema } from "@/lib/db";
 
 export const runtime = "nodejs";
@@ -20,24 +21,6 @@ type ParsedUploadRequest = {
   source: string;
   uniqueRanks: string[];
 };
-
-async function extractPdfText(fileBuffer: Buffer) {
-  const pdfParseModule = await import("pdf-parse");
-  const PDFParseClass = pdfParseModule.PDFParse;
-
-  if (typeof PDFParseClass !== "function") {
-    throw new Error("PDF parser is unavailable in this runtime.");
-  }
-
-  const parser = new PDFParseClass({ data: fileBuffer });
-
-  try {
-    const parsed = await parser.getText();
-    return typeof parsed.text === "string" ? parsed.text : "";
-  } finally {
-    await parser.destroy().catch(() => undefined);
-  }
-}
 
 type UploadHistoryEntry = {
   rank: string;
@@ -586,7 +569,7 @@ export async function POST(req: Request) {
 
     const { fileName, fileBuffer, source, uniqueRanks } = parsedUpload;
 
-    const normalized = normalizeText(await extractPdfText(fileBuffer));
+    const normalized = normalizeText(await extractTextFromPdfBuffer(fileBuffer));
 
     if (!normalized) {
       return Response.json({ error: "No text could be extracted from that PDF." }, { status: 400 });
@@ -723,7 +706,8 @@ export async function POST(req: Request) {
       },
       { status: 200 }
     );
-  } catch {
-    return Response.json({ error: "Unable to upload and index guidance right now." }, { status: 500 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to upload and index guidance right now.";
+    return Response.json({ error: message }, { status: 500 });
   }
 }
