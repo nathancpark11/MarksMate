@@ -232,13 +232,15 @@ function renderPdfItems(items: PdfTextItem[]) {
 async function extractWithPdfJs(fileBuffer: Buffer) {
   await ensurePdfRuntimePolyfills();
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const loadingTask = pdfjs.getDocument({
+  const documentInit = {
     data: new Uint8Array(fileBuffer),
+    disableWorker: true,
     useWorkerFetch: false,
     isEvalSupported: false,
     disableFontFace: true,
     useSystemFonts: false,
-  });
+  } as unknown;
+  const loadingTask = pdfjs.getDocument(documentInit as Parameters<typeof pdfjs.getDocument>[0]);
 
   const pdfDocument = await loadingTask.promise;
 
