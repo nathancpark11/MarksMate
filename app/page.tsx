@@ -681,7 +681,7 @@ export default function Home() {
               let migrated: HistoryItem[] = [];
               if (Array.isArray(parsed) && parsed.length > 0) {
                 migrated = typeof parsed[0] === "string"
-                  ? (parsed as string[]).map((t) => ({ text: t, date: new Date().toISOString() }))
+                  ? (parsed as string[]).map((t) => ({ text: t, date: "" }))
                   : (parsed as HistoryItem[]);
               }
               if (migrated.length > 0) {
@@ -1426,7 +1426,7 @@ export default function Home() {
     }
 
     const normalizedSourceDates = normalizeDateList(sourceDates);
-    const sourceDate = normalizedSourceDates[0] || new Date().toISOString();
+    const sourceDate = normalizedSourceDates[0] || "";
 
     setAltCategorySuggestion(null);
     setAltCategoryDrafts({});
@@ -1491,7 +1491,7 @@ export default function Home() {
 
     const originalAction = altCategorySuggestion.originalAction.trim();
     const sourceDates = normalizeDateList(altCategorySuggestion.sourceDates);
-    const itemDate = sourceDates[0] || altCategorySuggestion.sourceDate || new Date().toISOString();
+    const itemDate = sourceDates[0] || altCategorySuggestion.sourceDate || "";
 
     setHistory((prev) => {
       if (prev.some((h) => h.text === draftEntry.text)) return prev;
@@ -1501,7 +1501,7 @@ export default function Home() {
           date: itemDate,
           dates: sourceDates.length > 0 ? sourceDates : undefined,
           category: categoryName,
-          markingPeriod: computeMarkingPeriod(itemDate, rankLevel),
+          markingPeriod: itemDate ? computeMarkingPeriod(itemDate, rankLevel) : "",
           title: draftEntry.title,
           originalAction,
         },
@@ -1542,7 +1542,7 @@ export default function Home() {
           ? [pulledLogDate]
           : groupedEntryDates
     );
-    const splitItemDate = splitItemDates[0] || new Date().toISOString();
+    const splitItemDate = splitItemDates[0] || "";
     const sourceGroupedLogEntryIds = splitGroupedEntries
       .map((e) => e.id)
       .filter((id): id is string => typeof id === "string" && id.length > 0);
@@ -1614,7 +1614,15 @@ export default function Home() {
   };
 
   const computeMarkingPeriod = (dateStr: string, rank: string): string => {
+    if (!dateStr.trim()) {
+      return "";
+    }
+
     const d = new Date(dateStr);
+    if (Number.isNaN(d.getTime())) {
+      return "";
+    }
+
     const year = d.getFullYear();
     const month = d.getMonth();
     const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -1689,7 +1697,7 @@ export default function Home() {
             ? [pulledLogDate]
             : groupedEntryDates
       );
-      const itemDate = itemDates[0] || new Date().toISOString();
+      const itemDate = itemDates[0] || "";
       const sourceGroupedLogEntryIds = groupedEntries
         .map((e) => e.id)
         .filter((id): id is string => typeof id === "string" && id.length > 0);
@@ -1840,7 +1848,7 @@ export default function Home() {
     }
   };
 
-  const handleUpdateMark = (index: number, nextText: string, nextCategory?: string) => {
+  const handleUpdateMark = (index: number, nextText: string, nextCategory?: string, nextDate?: string) => {
     const trimmedText = nextText.trim();
     if (!trimmedText) {
       return;
@@ -1848,6 +1856,11 @@ export default function Home() {
 
     const currentItem = history[index];
     const previousText = currentItem?.text;
+    const parsedNextDate = typeof nextDate === "string" ? new Date(nextDate) : null;
+    const resolvedDate =
+      parsedNextDate && !Number.isNaN(parsedNextDate.getTime())
+        ? parsedNextDate.toISOString()
+        : currentItem?.date;
 
     setHistory((prev) =>
       prev.map((item, itemIndex) => {
@@ -1859,7 +1872,9 @@ export default function Home() {
         return {
           ...item,
           text: trimmedText,
+          date: resolvedDate ?? item.date,
           category: trimmedCategory ? trimmedCategory : item.category,
+          markingPeriod: resolvedDate ? computeMarkingPeriod(resolvedDate, rankLevel) : item.markingPeriod,
         };
       })
     );
@@ -1997,7 +2012,7 @@ export default function Home() {
 
       if (Array.isArray(parsed.history)) {
         if (parsed.history.length > 0 && typeof parsed.history[0] === "string") {
-          setHistory((parsed.history as string[]).map((t) => ({ text: t, date: new Date().toISOString() })));
+          setHistory((parsed.history as string[]).map((t) => ({ text: t, date: "" })));
         } else {
           setHistory(parsed.history as HistoryItem[]);
         }
@@ -2592,7 +2607,11 @@ export default function Home() {
               pendingLogPull={pendingLogPull}
               onPendingLogPullConsumed={() => setPendingLogPull(null)}
             />
-            <CategoryReferencePanel />
+            <CategoryReferencePanel
+              rankLevel={rankLevel}
+              selectedCategory={category}
+              onSelectCategory={setCategory}
+            />
           </>
         )}
 
@@ -2618,6 +2637,7 @@ export default function Home() {
             onAssignGroup={handleAssignLogGroup}
             onPullEntry={handlePullLogEntryToGenerator}
             onReloadCommittedEntry={(text) => {
+              setCategory("");
               setInput(text.text);
               const normalizedDates = normalizeDateList(
                 Array.isArray(text.dates) && text.dates.length > 0
@@ -2648,7 +2668,7 @@ export default function Home() {
               setHistory((prev) =>
                 prev.map((item) =>
                   item.text === oldText
-                    ? { ...item, text: newText, date: item.date || new Date().toISOString() }
+                    ? { ...item, text: newText, date: item.date || "" }
                     : item
                 )
               );
@@ -2799,9 +2819,9 @@ export default function Home() {
                   return filtered;
                 }
 
-                const sourceDate = sourceItem?.date || new Date().toISOString();
+                const sourceDate = sourceItem?.date || "";
                 const sourceMarkingPeriod =
-                  sourceItem?.markingPeriod || computeMarkingPeriod(sourceDate, rankLevel);
+                  sourceItem?.markingPeriod || (sourceDate ? computeMarkingPeriod(sourceDate, rankLevel) : "");
                 const resolvedTitle =
                   typeof title === "string" && title.trim().length > 0
                     ? title.trim()

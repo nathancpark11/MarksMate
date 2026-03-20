@@ -53,17 +53,49 @@ const CATEGORY_DETAILS: Array<{ name: string; description: string }> = [
   },
 ];
 
-export default function CategoryReferencePanel() {
+type CategoryReferencePanelProps = {
+  rankLevel: string;
+  selectedCategory: string;
+  onSelectCategory: (categoryName: string) => void;
+};
+
+export default function CategoryReferencePanel({
+  rankLevel,
+  selectedCategory,
+  onSelectCategory,
+}: CategoryReferencePanelProps) {
+  const pdfUrl = `/api/official-guidance/pdf?rank=${encodeURIComponent(rankLevel)}`;
+
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-md sm:p-8" aria-label="Category reference">
       <h2 className="text-xl font-bold text-center text-slate-900 sm:text-2xl">Category Reference</h2>
 
+      <div className="mt-4 flex justify-center">
+        <a
+          href={pdfUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex rounded-md border border-blue-300 bg-white px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50"
+        >
+          Open Marking Sheet PDF
+        </a>
+      </div>
+
       <div className="mt-6 grid gap-3 sm:grid-cols-2">
         {CATEGORY_DETAILS.map((category) => (
-          <article key={category.name} className="rounded-md border border-slate-200 bg-slate-50 p-3">
+          <button
+            key={category.name}
+            type="button"
+            onClick={() => onSelectCategory(category.name)}
+            className={`rounded-md border p-3 text-left transition-colors ${
+              selectedCategory === category.name
+                ? "border-blue-400 bg-blue-50"
+                : "border-slate-200 bg-slate-50 hover:border-blue-300 hover:bg-blue-50"
+            }`}
+          >
             <h3 className="text-sm font-semibold text-slate-900">{category.name}</h3>
             <p className="mt-1 text-sm text-slate-700">{category.description}</p>
-          </article>
+          </button>
         ))}
       </div>
     </section>

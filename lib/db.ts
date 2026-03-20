@@ -84,6 +84,18 @@ export async function ensureSchema(): Promise<void> {
   `;
 
   await sql`
+    CREATE TABLE IF NOT EXISTS guidance_pdf_files (
+      id           SERIAL PRIMARY KEY,
+      rank_key     TEXT UNIQUE NOT NULL,
+      file_name    TEXT NOT NULL DEFAULT '',
+      content_type TEXT NOT NULL DEFAULT 'application/pdf',
+      pdf_base64   TEXT NOT NULL,
+      uploaded_at  TEXT NOT NULL DEFAULT '',
+      uploaded_by  TEXT NOT NULL DEFAULT ''
+    )
+  `;
+
+  await sql`
     CREATE TABLE IF NOT EXISTS user_data (
       user_id    TEXT NOT NULL,
       data_key   TEXT NOT NULL,

@@ -160,6 +160,7 @@ export default function GeneratorPanel({
       return;
     }
 
+    setCategory("");
     setInput(pulledText);
 
     if (onLogEntryPulled) {
@@ -177,6 +178,7 @@ export default function GeneratorPanel({
     }
 
     setSelectedLogEntryId("");
+    setCategory("");
     setMissionImpact("");
     setInput(entries.join("\n"));
     onLogEntryPulled?.({ dates: [], index: null, groupedIndexes: entriesToPull.map((e) => e.sourceIndex) });
@@ -315,6 +317,7 @@ export default function GeneratorPanel({
       // Fall back to pulling the text directly so it still populates the Action field.
       const entry = logEntries[pendingLogPull];
       if (entry?.text?.trim()) {
+        setCategory("");
         setInput(entry.text.trim());
       }
     }

@@ -520,6 +520,7 @@ export async function DELETE(req: Request) {
     await ensureSchema();
     await sql`DELETE FROM guidance_datasets WHERE ranks_key = ${normalizedRank}`;
     await sql`DELETE FROM guidance_upload_log WHERE rank = ${normalizedRank}`;
+    await sql`DELETE FROM guidance_pdf_files WHERE rank_key = ${normalizedRank}`;
 
     await Promise.all([
       removeLocalGuidanceFile(normalizedRank),
@@ -568,6 +569,7 @@ export async function POST(req: Request) {
     }
 
     const { fileName, fileBuffer, source, uniqueRanks } = parsedUpload;
+    const fileBase64 = fileBuffer.toString("base64");
 
     const normalized = normalizeText(await extractTextFromPdfBuffer(fileBuffer));
 
@@ -665,6 +667,24 @@ export async function POST(req: Request) {
           ${user.username},
           ${replacedRanks.has(rank)}
         )
+      `;
+
+      await sql`
+        INSERT INTO guidance_pdf_files (rank_key, file_name, content_type, pdf_base64, uploaded_at, uploaded_by)
+        VALUES (
+          ${rank},
+          ${fileName},
+          ${"application/pdf"},
+          ${fileBase64},
+          ${generatedAt},
+          ${user.username}
+        )
+        ON CONFLICT (rank_key) DO UPDATE SET
+          file_name    = EXCLUDED.file_name,
+          content_type = EXCLUDED.content_type,
+          pdf_base64   = EXCLUDED.pdf_base64,
+          uploaded_at  = EXCLUDED.uploaded_at,
+          uploaded_by  = EXCLUDED.uploaded_by
       `;
     }
 

@@ -23,7 +23,7 @@ type HistoryPanelProps = {
   rankLevel: string;
   handleCopy: (text: string) => void;
   handleDelete: (index: number) => void;
-  handleUpdateMark: (index: number, nextText: string, nextCategory?: string) => void;
+  handleUpdateMark: (index: number, nextText: string, nextCategory?: string, nextDate?: string) => void;
   handleReprompt: (index: number) => void;
 };
 
@@ -41,6 +41,7 @@ export default function HistoryPanel({
   const [periodCategoryFilters, setPeriodCategoryFilters] = useState<Record<string, string[]>>({});
   const [editableMarks, setEditableMarks] = useState<Record<number, string>>({});
   const [editableCategories, setEditableCategories] = useState<Record<number, string>>({});
+  const [editableDates, setEditableDates] = useState<Record<number, string>>({});
   const [editingMarks, setEditingMarks] = useState<Record<number, boolean>>({});
 
   const parseValidDate = (dateStr: string): Date | null => {
@@ -55,6 +56,27 @@ export default function HistoryPanel({
   const formatDateOrBlank = (dateStr: string): string => {
     const parsed = parseValidDate(dateStr);
     return parsed ? parsed.toLocaleDateString() : "Not Dated";
+  };
+
+  const toDateInputValue = (dateStr: string): string => {
+    const parsed = parseValidDate(dateStr);
+    if (!parsed) {
+      return "";
+    }
+
+    const year = parsed.getFullYear();
+    const month = `${parsed.getMonth() + 1}`.padStart(2, "0");
+    const day = `${parsed.getDate()}`.padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
+  const toStoredDateValue = (dateInputValue: string, fallbackDate: string): string => {
+    if (!dateInputValue.trim()) {
+      return fallbackDate;
+    }
+
+    const parsed = new Date(`${dateInputValue}T12:00:00`);
+    return Number.isNaN(parsed.getTime()) ? fallbackDate : parsed.toISOString();
   };
 
   const toTitleCase = (value: string): string =>
@@ -82,6 +104,34 @@ export default function HistoryPanel({
         const next: Record<number, string> = {};
         history.forEach((item, index) => {
           next[index] = prev[index] ?? item.category ?? "";
+        });
+        return next;
+      });
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [history]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setEditableDates((prev) => {
+        const next: Record<number, string> = {};
+        history.forEach((item, index) => {
+          const parsed = parseValidDate(item.date);
+          if (prev[index] !== undefined) {
+            next[index] = prev[index];
+            return;
+          }
+
+          if (!parsed) {
+            next[index] = "";
+            return;
+          }
+
+          const year = parsed.getFullYear();
+          const month = `${parsed.getMonth() + 1}`.padStart(2, "0");
+          const day = `${parsed.getDate()}`.padStart(2, "0");
+          next[index] = `${year}-${month}-${day}`;
         });
         return next;
       });
@@ -221,6 +271,10 @@ export default function HistoryPanel({
       ...prev,
       [index]: item.category ?? "",
     }));
+    setEditableDates((prev) => ({
+      ...prev,
+      [index]: toDateInputValue(item.date),
+    }));
     setEditingMarks((prev) => ({ ...prev, [index]: true }));
   };
 
@@ -229,6 +283,10 @@ export default function HistoryPanel({
     setEditableCategories((prev) => ({
       ...prev,
       [index]: item.category ?? "",
+    }));
+    setEditableDates((prev) => ({
+      ...prev,
+      [index]: toDateInputValue(item.date),
     }));
     setEditingMarks((prev) => ({ ...prev, [index]: false }));
   };
@@ -402,11 +460,7 @@ export default function HistoryPanel({
                                       <h3 className="text-sm font-semibold text-gray-900">{toTitleCase(item.title)}</h3>
                                     )}
                                     <p className="text-xs text-gray-400">
-                                      {Array.isArray(item.dates) && item.dates.length > 1
-                                        ? item.dates
-                                            .map((dateValue) => formatDateOrBlank(dateValue))
-                                            .join(", ")
-                                        : formatDateOrBlank(item.date)}
+                                      {formatDateOrBlank(item.date)}
                                     </p>
                                   </div>
                                   <div className="ml-3 flex shrink-0 items-center gap-2">
@@ -438,6 +492,33 @@ export default function HistoryPanel({
                                   <div className="mt-2">
                                     {editingMarks[index] ? (
                                       <>
+                                        <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                                          <label className="flex flex-col gap-1 text-xs font-medium uppercase tracking-wide text-gray-500">
+                                            Mark date
+                                            <input
+                                              type="date"
+                                              value={editableDates[index] ?? toDateInputValue(item.date)}
+                                              onChange={(e) =>
+                                                setEditableDates((prev) => ({
+                                                  ...prev,
+                                                  [index]: e.target.value,
+                                                }))
+                                              }
+                                              className="rounded-md border p-2 text-sm font-normal text-gray-900"
+                                              aria-label="Edit official mark date"
+                                            />
+                                          </label>
+                                          {Array.isArray(item.dates) && item.dates.length > 1 && (
+                                            <div className="rounded-md border border-gray-200 bg-white px-3 py-2">
+                                              <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                                                Source dates
+                                              </p>
+                                              <p className="mt-1 text-sm text-gray-600">
+                                                {item.dates.map((dateValue) => formatDateOrBlank(dateValue)).join(", ")}
+                                              </p>
+                                            </div>
+                                          )}
+                                        </div>
                                         <textarea
                                           value={editableMarks[index] ?? item.text}
                                           onChange={(e) =>
@@ -463,11 +544,12 @@ export default function HistoryPanel({
                                           <button
                                             onClick={() => {
                                               const nextText = (editableMarks[index] ?? item.text).trim();
+                                              const nextDate = toStoredDateValue(editableDates[index] ?? toDateInputValue(item.date), item.date);
                                               if (!nextText) {
                                                 setEditableMarks((prev) => ({ ...prev, [index]: item.text }));
                                                 return;
                                               }
-                                              handleUpdateMark(index, nextText, editableCategories[index] ?? item.category);
+                                              handleUpdateMark(index, nextText, editableCategories[index] ?? item.category, nextDate);
                                               setEditingMarks((prev) => ({ ...prev, [index]: false }));
                                               if (nextText !== item.text) {
                                                 setExpanded((prev) => {
@@ -487,6 +569,11 @@ export default function HistoryPanel({
                                     ) : (
                                       <>
                                         <p className="text-sm">{item.text}</p>
+                                        {Array.isArray(item.dates) && item.dates.length > 1 && (
+                                          <p className="mt-2 text-xs text-gray-500">
+                                            Source dates: {item.dates.map((dateValue) => formatDateOrBlank(dateValue)).join(", ")}
+                                          </p>
+                                        )}
                                         <div className="flex items-center justify-between mt-2">
                                           <div className="flex gap-3">
                                             <button onClick={() => handleCopy(item.text)} className="text-blue-600 text-sm">
