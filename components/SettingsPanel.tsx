@@ -437,7 +437,7 @@ export default function SettingsPanel({
           </button>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-[minmax(0,18rem)_minmax(0,1fr)] md:items-start">
+        <div className="flex flex-col gap-3">
           <div className={`min-w-0 rounded-md border bg-white px-3 py-2 text-xs text-blue-900 md:min-w-88 ${statusCardClass}`}>
             <p className="font-semibold">Upload Status</p>
             <p className="truncate">

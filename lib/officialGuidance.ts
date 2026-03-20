@@ -1,4 +1,6 @@
 import { sql, ensureSchema } from "@/lib/db";
+import { readFile, readdir } from "node:fs/promises";
+import path from "node:path";
 
 type GuidanceChunk = {
   id: string;
@@ -15,6 +17,8 @@ type GuidanceDataset = {
 };
 
 let cachedDatasetsPromise: Promise<GuidanceDataset[]> | null = null;
+const OFFICIAL_GUIDANCE_DIR = path.join(process.cwd(), "data", "official-guidance");
+const LEGACY_GUIDANCE_PATH = path.join(process.cwd(), "data", "official-marking-guidance.json");
 
 export function clearOfficialGuidanceCache() {
   cachedDatasetsPromise = null;
@@ -105,6 +109,43 @@ function sanitizeDataset(parsed: GuidanceDataset) {
   } as GuidanceDataset;
 }
 
+async function loadGuidanceDatasetsFromFiles() {
+  const datasets: GuidanceDataset[] = [];
+
+  try {
+    const entries = await readdir(OFFICIAL_GUIDANCE_DIR, { withFileTypes: true });
+    const jsonFiles = entries.filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".json"));
+
+    for (const entry of jsonFiles) {
+      try {
+        const raw = await readFile(path.join(OFFICIAL_GUIDANCE_DIR, entry.name), "utf8");
+        const parsed = JSON.parse(raw) as GuidanceDataset;
+        const sanitized = sanitizeDataset(parsed);
+        if (sanitized) {
+          datasets.push(sanitized);
+        }
+      } catch {
+        // Skip malformed file datasets.
+      }
+    }
+  } catch {
+    // Ignore missing guidance directory.
+  }
+
+  if (datasets.length) {
+    return datasets;
+  }
+
+  try {
+    const raw = await readFile(LEGACY_GUIDANCE_PATH, "utf8");
+    const parsed = JSON.parse(raw) as GuidanceDataset;
+    const sanitized = sanitizeDataset(parsed);
+    return sanitized ? [sanitized] : [];
+  } catch {
+    return [];
+  }
+}
+
 async function loadGuidanceDatasets() {
   if (!cachedDatasetsPromise) {
     cachedDatasetsPromise = (async () => {
@@ -127,9 +168,14 @@ async function loadGuidanceDatasets() {
             // Skip malformed rows.
           }
         }
-        return datasets;
+
+        if (datasets.length) {
+          return datasets;
+        }
+
+        return await loadGuidanceDatasetsFromFiles();
       } catch {
-        return [];
+        return await loadGuidanceDatasetsFromFiles();
       }
     })();
   }

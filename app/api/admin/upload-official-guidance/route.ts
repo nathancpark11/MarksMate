@@ -1,4 +1,6 @@
 import { PDFParse } from "pdf-parse";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { requireSessionUser } from "@/lib/auth";
 import { isGuidanceAdminUsername } from "@/lib/admin";
 import { enforceRateLimits } from "@/lib/rateLimit";
@@ -8,6 +10,19 @@ import { sql, ensureSchema } from "@/lib/db";
 export const runtime = "nodejs";
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+const LOCAL_GUIDANCE_DIR = path.join(process.cwd(), "data", "official-guidance");
+const LOCAL_UPLOAD_LOG_PATH = path.join(LOCAL_GUIDANCE_DIR, "upload-log.json");
+
+type UploadHistoryEntry = {
+  rank: string;
+  source: string;
+  fileName: string;
+  outputFile: string;
+  chunkCount: number;
+  uploadedAt: string;
+  uploadedBy: string;
+  replacedExisting: boolean;
+};
 
 function normalizeRank(value: string) {
   const match = value.trim().toUpperCase().replace(/\s+/g, "").match(/E-?(\d+)/);
@@ -115,6 +130,173 @@ function sanitizeFileNameSegment(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
 }
 
+function rankFileName(rank: string) {
+  return `${sanitizeFileNameSegment(rank)}.json`;
+}
+
+function normalizeUploadHistoryEntry(value: unknown): UploadHistoryEntry | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const entry = value as Record<string, unknown>;
+  const rank = typeof entry.rank === "string" ? normalizeRank(entry.rank) : "";
+  if (!rank) {
+    return null;
+  }
+
+  return {
+    rank,
+    source: typeof entry.source === "string" && entry.source.trim() ? entry.source.trim() : "Official Marking Guide",
+    fileName: typeof entry.fileName === "string" ? entry.fileName : "",
+    outputFile: typeof entry.outputFile === "string" ? entry.outputFile : rankFileName(rank),
+    chunkCount: typeof entry.chunkCount === "number" ? entry.chunkCount : 0,
+    uploadedAt: typeof entry.uploadedAt === "string" ? entry.uploadedAt : "",
+    uploadedBy: typeof entry.uploadedBy === "string" ? entry.uploadedBy : "",
+    replacedExisting: Boolean(entry.replacedExisting),
+  };
+}
+
+function uploadHistoryKey(entry: UploadHistoryEntry) {
+  return [entry.rank, entry.uploadedAt, entry.uploadedBy, entry.outputFile, entry.fileName, entry.source].join("|");
+}
+
+function sortUploadHistory(entries: UploadHistoryEntry[]) {
+  return [...entries].sort((a, b) => {
+    const aTs = Date.parse(a.uploadedAt || "");
+    const bTs = Date.parse(b.uploadedAt || "");
+    if (Number.isFinite(aTs) && Number.isFinite(bTs) && aTs !== bTs) {
+      return bTs - aTs;
+    }
+    if (a.uploadedAt !== b.uploadedAt) {
+      return a.uploadedAt > b.uploadedAt ? -1 : 1;
+    }
+    return a.rank.localeCompare(b.rank);
+  });
+}
+
+function mergeUploadHistoryEntries(...entrySets: UploadHistoryEntry[][]) {
+  const merged = new Map<string, UploadHistoryEntry>();
+  for (const entries of entrySets) {
+    for (const entry of entries) {
+      const normalized = normalizeUploadHistoryEntry(entry);
+      if (!normalized) {
+        continue;
+      }
+      merged.set(uploadHistoryKey(normalized), normalized);
+    }
+  }
+  return sortUploadHistory([...merged.values()]);
+}
+
+async function readLocalUploadHistory() {
+  try {
+    const raw = await readFile(LOCAL_UPLOAD_LOG_PATH, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [] as UploadHistoryEntry[];
+    }
+
+    return parsed
+      .map((entry) => normalizeUploadHistoryEntry(entry))
+      .filter((entry): entry is UploadHistoryEntry => Boolean(entry));
+  } catch {
+    return [] as UploadHistoryEntry[];
+  }
+}
+
+async function inferUploadHistoryFromGuidanceFiles() {
+  const inferredEntries: UploadHistoryEntry[] = [];
+
+  try {
+    const files = await readdir(LOCAL_GUIDANCE_DIR, { withFileTypes: true });
+    for (const file of files) {
+      if (!file.isFile() || !file.name.toLowerCase().endsWith(".json") || file.name === "upload-log.json") {
+        continue;
+      }
+
+      try {
+        const raw = await readFile(path.join(LOCAL_GUIDANCE_DIR, file.name), "utf8");
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        const rankValue = Array.isArray(parsed.ranks) && typeof parsed.ranks[0] === "string" ? parsed.ranks[0] : "";
+        const rank = normalizeRank(rankValue);
+        if (!rank) {
+          continue;
+        }
+
+        const chunks = Array.isArray(parsed.chunks) ? parsed.chunks.length : 0;
+        inferredEntries.push({
+          rank,
+          source:
+            typeof parsed.source === "string" && parsed.source.trim()
+              ? parsed.source.trim()
+              : "Official Marking Guide",
+          fileName: file.name,
+          outputFile: file.name,
+          chunkCount: chunks,
+          uploadedAt: typeof parsed.generatedAt === "string" ? parsed.generatedAt : "",
+          uploadedBy: typeof parsed.uploadedBy === "string" ? parsed.uploadedBy : "",
+          replacedExisting: false,
+        });
+      } catch {
+        // Ignore malformed guidance files.
+      }
+    }
+  } catch {
+    return [] as UploadHistoryEntry[];
+  }
+
+  return inferredEntries;
+}
+
+async function appendLocalUploadHistory(entries: UploadHistoryEntry[]) {
+  if (!entries.length) {
+    return;
+  }
+
+  try {
+    await mkdir(LOCAL_GUIDANCE_DIR, { recursive: true });
+    const existing = await readLocalUploadHistory();
+    const merged = mergeUploadHistoryEntries(existing, entries).slice(0, 1000);
+    await writeFile(LOCAL_UPLOAD_LOG_PATH, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
+  } catch {
+    // Local file logging can fail in read-only deployments.
+  }
+}
+
+async function mirrorGuidanceToLocalFiles(params: {
+  ranks: string[];
+  source: string;
+  chunks: Array<{ id: string; title: string; text: string; keywords: string[] }>;
+  generatedAt: string;
+  uploadedBy: string;
+}) {
+  const writtenFiles: string[] = [];
+
+  try {
+    await mkdir(LOCAL_GUIDANCE_DIR, { recursive: true });
+
+    for (const rank of params.ranks) {
+      const fileName = rankFileName(rank);
+      const filePath = path.join(LOCAL_GUIDANCE_DIR, fileName);
+      const payload = {
+        source: params.source,
+        ranks: [rank],
+        generatedAt: params.generatedAt,
+        uploadedBy: params.uploadedBy,
+        chunks: params.chunks,
+      };
+
+      await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+      writtenFiles.push(path.posix.join("data/official-guidance", fileName));
+    }
+  } catch {
+    // Writing to local files can fail in read-only deployments. DB persistence remains authoritative.
+  }
+
+  return writtenFiles;
+}
+
 function parseStoredRanks(value: unknown) {
   if (typeof value !== "string") {
     return [] as string[];
@@ -161,24 +343,37 @@ export async function GET() {
       return response;
     }
 
-    await ensureSchema();
-    const { rows } = await sql`
-      SELECT rank, source, file_name, output_file, chunk_count, uploaded_at, uploaded_by, replaced_existing
-      FROM guidance_upload_log
-      ORDER BY uploaded_at DESC, id DESC
-      LIMIT 100
-    `;
+    let dbEntries: UploadHistoryEntry[] = [];
+    try {
+      await ensureSchema();
+      const { rows } = await sql`
+        SELECT rank, source, file_name, output_file, chunk_count, uploaded_at, uploaded_by, replaced_existing
+        FROM guidance_upload_log
+        ORDER BY uploaded_at DESC, id DESC
+        LIMIT 500
+      `;
 
-    const entries = rows.map((row) => ({
-      rank: typeof row.rank === "string" ? row.rank : "",
-      source: typeof row.source === "string" ? row.source : "Official Marking Guide",
-      fileName: typeof row.file_name === "string" ? row.file_name : "",
-      outputFile: typeof row.output_file === "string" ? row.output_file : "",
-      chunkCount: typeof row.chunk_count === "number" ? row.chunk_count : 0,
-      uploadedAt: typeof row.uploaded_at === "string" ? row.uploaded_at : "",
-      uploadedBy: typeof row.uploaded_by === "string" ? row.uploaded_by : "",
-      replacedExisting: Boolean(row.replaced_existing),
-    }));
+      dbEntries = rows
+        .map((row) =>
+          normalizeUploadHistoryEntry({
+            rank: typeof row.rank === "string" ? row.rank : "",
+            source: typeof row.source === "string" ? row.source : "Official Marking Guide",
+            fileName: typeof row.file_name === "string" ? row.file_name : "",
+            outputFile: typeof row.output_file === "string" ? row.output_file : "",
+            chunkCount: typeof row.chunk_count === "number" ? row.chunk_count : 0,
+            uploadedAt: typeof row.uploaded_at === "string" ? row.uploaded_at : "",
+            uploadedBy: typeof row.uploaded_by === "string" ? row.uploaded_by : "",
+            replacedExisting: Boolean(row.replaced_existing),
+          })
+        )
+        .filter((entry): entry is UploadHistoryEntry => Boolean(entry));
+    } catch {
+      dbEntries = [];
+    }
+
+    const localEntries = await readLocalUploadHistory();
+    const inferredFileEntries = localEntries.length ? [] : await inferUploadHistoryFromGuidanceFiles();
+    const entries = mergeUploadHistoryEntries(dbEntries, localEntries, inferredFileEntries).slice(0, 100);
 
     return Response.json({ entries }, { status: 200 });
   } catch {
@@ -257,8 +452,6 @@ export async function POST(req: Request) {
       return Response.json({ error: "No guidance chunks were generated from that PDF." }, { status: 400 });
     }
 
-    const ranksKey = uniqueRanks.join(",");
-    const outputName = `${sanitizeFileNameSegment(ranksKey)}.json`;
     const generatedAt = new Date().toISOString();
 
     await ensureSchema();
@@ -294,6 +487,8 @@ export async function POST(req: Request) {
     }
 
     for (const rank of uniqueRanks) {
+      const outputFile = rankFileName(rank);
+
       await sql`
         INSERT INTO guidance_datasets (ranks_key, source, ranks, chunks, generated_at, uploaded_by)
         VALUES (
@@ -327,7 +522,7 @@ export async function POST(req: Request) {
           ${rank},
           ${source},
           ${file.name},
-          ${outputName},
+          ${outputFile},
           ${chunks.length},
           ${generatedAt},
           ${user.username},
@@ -336,7 +531,20 @@ export async function POST(req: Request) {
       `;
     }
 
+    const uploadHistoryEntries: UploadHistoryEntry[] = uniqueRanks.map((rank) => ({
+      rank,
+      source,
+      fileName: file.name,
+      outputFile: rankFileName(rank),
+      chunkCount: chunks.length,
+      uploadedAt: generatedAt,
+      uploadedBy: user.username,
+      replacedExisting: replacedRanks.has(rank),
+    }));
+
     clearOfficialGuidanceCache();
+
+    await appendLocalUploadHistory(uploadHistoryEntries);
 
     const replacementMessage = replacedRanks.size
       ? ` Replaced existing guidance for ${[...replacedRanks].sort().join(", ")}.`
@@ -348,18 +556,16 @@ export async function POST(req: Request) {
         message: categoryChunks.length
           ? `Indexed ${categoryChunks.length} categories for ${uniqueRanks.join(", ")}.${replacementMessage}`
           : `Uploaded and indexed ${chunks.length} sections for ${uniqueRanks.join(", ")}.${replacementMessage}`,
-        outputFile: outputName,
+        outputFile: uniqueRanks.length === 1 ? rankFileName(uniqueRanks[0]) : `${sanitizeFileNameSegment(uniqueRanks.join("-"))}.json`,
         chunks: chunks.length,
-        uploadHistory: uniqueRanks.map((rank) => ({
-          rank,
+        localFiles: await mirrorGuidanceToLocalFiles({
+          ranks: uniqueRanks,
           source,
-          fileName: file.name,
-          outputFile: outputName,
-          chunkCount: chunks.length,
-          uploadedAt: generatedAt,
+          chunks,
+          generatedAt,
           uploadedBy: user.username,
-          replacedExisting: replacedRanks.has(rank),
-        })),
+        }),
+        uploadHistory: uploadHistoryEntries,
       },
       { status: 200 }
     );

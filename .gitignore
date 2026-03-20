@@ -21,7 +21,9 @@
 /build
 
 # local runtime data
-/data
+/data/*
+!/data/official-guidance/
+!/data/official-guidance/*.json
 
 # misc
 .DS_Store

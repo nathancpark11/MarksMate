@@ -67,8 +67,18 @@ Behavior:
 In-app option:
 
 - Go to Settings -> Official Guidance Admin.
-- Enter a guide name, select one or more ranks, and upload a PDF.
-- The app will extract text, chunk it, write JSON into `data/official-guidance/`, and refresh guidance cache automatically.
+- Select one or more ranks, and upload a PDF.
+- The app stores guidance in the database (`guidance_datasets`) as the primary source.
+- When the app has write access to the project filesystem (local dev/self-hosted), it also mirrors each uploaded rank to `data/official-guidance/eX.json` so you can commit and push those files.
+- Upload history is also mirrored to `data/official-guidance/upload-log.json` when writable, and the admin API merges DB + file history so the Upload Log stays consistent across environments after push.
+- At runtime, guidance loading prefers database rows and falls back to files in `data/official-guidance/` (or `data/official-marking-guidance.json` legacy) when DB rows are unavailable.
+
+Pre-push checklist (Official Guidance):
+
+- Upload guidance from Settings -> Official Guidance Admin.
+- Confirm `data/official-guidance/eX.json` and `data/official-guidance/upload-log.json` changed locally.
+- Commit those files with your code changes.
+- Push and verify Upload Log entries appear in the deployed admin view.
 
 Optional:
 
