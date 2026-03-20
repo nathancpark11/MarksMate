@@ -9,7 +9,9 @@ import { sql, ensureSchema } from "@/lib/db";
 
 export const runtime = "nodejs";
 
-const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+// Vercel Functions accept up to 4.5 MB request bodies. Keep the app limit below
+// that so deployed uploads fail fast with JSON instead of a platform HTML error.
+const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 const LOCAL_GUIDANCE_DIR = path.join(process.cwd(), "data", "official-guidance");
 const LOCAL_UPLOAD_LOG_PATH = path.join(LOCAL_GUIDANCE_DIR, "upload-log.json");
 

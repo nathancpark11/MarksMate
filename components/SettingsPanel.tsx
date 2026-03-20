@@ -404,7 +404,7 @@ export default function SettingsPanel({
       {canManageOfficialGuidance && <section className="official-guidance-admin space-y-4 rounded-lg border border-blue-200 bg-blue-50 p-4 sm:p-5">
         <h3 className="text-lg font-semibold text-blue-900">Official Guidance Admin</h3>
         <p className="text-sm text-blue-800">
-          Upload rank-specific PDF guidance so AI can reference the correct source for E3-E7.
+          Upload rank-specific PDF guidance so AI can reference the correct source for E3-E7. Keep PDFs at 4 MB or smaller for deployed uploads.
         </p>
 
         <div>

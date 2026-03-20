@@ -21,6 +21,8 @@ import {
 } from "@/lib/generationValidation";
 
 export default function Home() {
+  const MAX_GUIDANCE_UPLOAD_BYTES = 4 * 1024 * 1024;
+
   type TutorialStep =
     | "log"
     | "generator"
@@ -2032,6 +2034,18 @@ export default function Home() {
   const handleUploadGuidancePdf = async (file: File, ranks: string[]) => {
     if (!file) {
       setSettingsMessage("Choose a PDF file to upload.");
+      return;
+    }
+
+    if (file.size > MAX_GUIDANCE_UPLOAD_BYTES) {
+      const maxMb = Math.round(MAX_GUIDANCE_UPLOAD_BYTES / (1024 * 1024));
+      const errorMessage = `Guidance PDF must be ${maxMb} MB or smaller for deployed uploads.`;
+      setSettingsMessage(errorMessage);
+      setGuidanceUploadStatus({
+        fileName: file.name,
+        status: "failed",
+        detail: errorMessage,
+      });
       return;
     }
 
