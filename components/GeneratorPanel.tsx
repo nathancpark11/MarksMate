@@ -326,28 +326,28 @@ export default function GeneratorPanel({
   }, [pendingLogPull]);
 
   return (
-    <div className="bg-white p-4 sm:p-8 rounded-xl shadow-md">
+    <div className="bg-(--surface-1) p-4 sm:p-8 rounded-xl shadow-md">
       <h1 className="text-2xl sm:text-3xl font-bold text-center leading-tight">
         Mark Generator
       </h1>
 
-      <p className="text-center text-gray-600 mt-2">
+      <p className="text-center text-(--text-soft) mt-2">
         Generate professional evaluation bullets.
       </p>
 
-      <div className="pull-log-box mt-6 rounded-lg border border-blue-200 bg-blue-50 p-3 sm:p-4">
+      <div className="pull-log-box mt-6 rounded-lg border border-(--color-secondary) bg-(--color-secondary-soft) p-3 sm:p-4">
         <div className="flex items-center justify-between gap-3">
-          <p className="text-sm font-semibold text-blue-900">Pull From Daily Log</p>
+          <p className="text-sm font-semibold text-(--color-primary)">Pull From Daily Log</p>
 
           {/* Toggle switch */}
-          <div className="flex rounded-md border border-blue-300 bg-white p-0.5 text-xs font-semibold">
+          <div className="flex rounded-md border border-(--color-secondary) bg-(--surface-1) p-0.5 text-xs font-semibold">
             <button
               type="button"
               onClick={() => handleSwitchPullMode("entry")}
               className={`rounded px-3 py-1.5 transition-colors ${
                 pullMode === "entry"
-                  ? "bg-blue-700 text-white"
-                  : "text-blue-700 hover:bg-blue-50"
+                  ? "btn-primary"
+                  : "text-(--color-primary) hover:bg-(--color-secondary-soft)"
               }`}
             >
               Single Entry
@@ -357,8 +357,8 @@ export default function GeneratorPanel({
               onClick={() => handleSwitchPullMode("group")}
               className={`rounded px-3 py-1.5 transition-colors ${
                 pullMode === "group"
-                  ? "bg-blue-700 text-white"
-                  : "text-blue-700 hover:bg-blue-50"
+                  ? "btn-primary"
+                  : "text-(--color-primary) hover:bg-(--color-secondary-soft)"
               }`}
             >
               Custom Group
@@ -368,7 +368,7 @@ export default function GeneratorPanel({
 
         {pullMode === "entry" && (
           <>
-            <p className="mt-1 text-xs text-blue-800">
+            <p className="mt-1 text-xs text-(--color-primary)">
               Pick a Daily Log entry and it will be pulled into Action automatically.
             </p>
             <div className="mt-3 flex w-full items-center gap-2">
@@ -376,7 +376,7 @@ export default function GeneratorPanel({
                 type="button"
                 onClick={() => handleStepLogEntry(-1)}
                 disabled={dailyLogItems.length < 2}
-                className="rounded-md border border-blue-300 bg-white px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+                className="btn-secondary rounded-md px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60"
                 aria-label="Previous daily log entry"
                 title="Previous"
               >
@@ -402,7 +402,7 @@ export default function GeneratorPanel({
                 type="button"
                 onClick={() => handleStepLogEntry(1)}
                 disabled={dailyLogItems.length < 2}
-                className="rounded-md border border-blue-300 bg-white px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+                className="btn-secondary rounded-md px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60"
                 aria-label="Next daily log entry"
                 title="Next"
               >
@@ -414,7 +414,7 @@ export default function GeneratorPanel({
 
         {pullMode === "group" && (
           <>
-            <p className="mt-1 text-xs text-blue-800">
+            <p className="mt-1 text-xs text-(--color-primary)">
               Select a custom group and pull all entries or only the ones you choose.
             </p>
             <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center">
@@ -436,7 +436,7 @@ export default function GeneratorPanel({
                 type="button"
                 onClick={handlePullAllGroupedEntries}
                 disabled={!selectedGroupName || selectedGroupEntries.length === 0}
-                className="rounded-md border border-blue-300 bg-white px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+                className="btn-secondary rounded-md px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Pull All
               </button>
@@ -444,18 +444,18 @@ export default function GeneratorPanel({
                 type="button"
                 onClick={handlePullSelectedGroupedEntries}
                 disabled={!selectedGroupName || selectedGroupedEntryIds.length === 0}
-                className="rounded-md bg-blue-700 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
+                className="btn-primary rounded-md px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Pull Selected
               </button>
             </div>
 
             {selectedGroupName && selectedGroupEntries.length > 0 && (
-              <div className="mt-2 max-h-36 space-y-1 overflow-y-auto rounded-md border border-blue-200 bg-white p-2">
+              <div className="mt-2 max-h-36 space-y-1 overflow-y-auto rounded-md border border-(--color-secondary) bg-(--surface-1) p-2">
                 {selectedGroupEntries.map((entry) => (
                   <label
                     key={entry.id}
-                    className="flex cursor-pointer items-start gap-2 rounded-md px-2 py-1 text-sm text-blue-900 hover:bg-blue-50"
+                    className="flex cursor-pointer items-start gap-2 rounded-md px-2 py-1 text-sm text-(--color-primary) hover:bg-(--color-secondary-soft)"
                   >
                     <input
                       type="checkbox"
@@ -479,7 +479,7 @@ export default function GeneratorPanel({
             setInput("");
             setMissionImpact("");
           }}
-          className="rounded-md border border-gray-300 px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-100"
+          className="btn-secondary rounded-md px-3 py-1 text-xs font-semibold"
         >
           Clear
         </button>
@@ -498,7 +498,7 @@ export default function GeneratorPanel({
           <button
             type="button"
             onClick={() => setMissionImpact("")}
-            className="rounded-md border border-gray-300 px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-100"
+            className="btn-secondary rounded-md px-3 py-1 text-xs font-semibold"
           >
             Clear
           </button>
@@ -511,12 +511,12 @@ export default function GeneratorPanel({
         className="mt-2 h-24 w-full border rounded-md p-3"
         placeholder={"Optional (Highly Recommended): What was the result or mission impact?\nExample: 03 airmen graduated AST A-School"}
       />
-      <p className="mt-2 text-sm italic text-gray-500">If blank, AI will suggest an impact when generated.</p>
+      <p className="mt-2 text-sm italic text-(--text-soft)">If blank, AI will suggest an impact when generated.</p>
 
-      <div className="mt-6 flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+      <div className="mt-6 flex items-center justify-between gap-3 rounded-lg border border-(--border-muted) bg-(--surface-2) p-3">
         <div>
-          <p className="text-sm font-semibold text-gray-900">Abbreviations</p>
-          <p className="text-xs text-gray-600">Controls whether generated marks use CG abbreviations.</p>
+          <p className="text-sm font-semibold text-(--text-strong)">Abbreviations</p>
+          <p className="text-xs text-(--text-soft)">Controls whether generated marks use CG abbreviations.</p>
         </div>
         <button
           type="button"
@@ -524,8 +524,8 @@ export default function GeneratorPanel({
           onClick={() => setUseAbbreviations(!useAbbreviations)}
           className={`rounded-md px-4 py-2 text-sm font-semibold transition-colors ${
             useAbbreviations
-              ? "bg-blue-600 text-white hover:bg-blue-700"
-              : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+              ? "btn-primary"
+              : "btn-secondary"
           }`}
         >
           {useAbbreviations ? "Abbreviations: On" : "Abbreviations: Off"}
@@ -577,13 +577,13 @@ export default function GeneratorPanel({
         />
       </div>
 
-      {error && <p className="text-red-600 text-sm mt-2">{error}</p>}
+      {error && <p className="text-(--color-danger) text-sm mt-2">{error}</p>}
 
       <div className="mt-6 flex flex-col justify-center gap-2 sm:flex-row">
         <button
           onClick={handleGenerate}
           disabled={loading}
-          className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-blue-300"
+          className="btn-primary px-6 py-2 rounded-md disabled:opacity-60"
         >
           {loading ? "Generating..." : "Generate Mark"}
         </button>
@@ -591,7 +591,7 @@ export default function GeneratorPanel({
           type="button"
           onClick={handleGenerateMarkAsIs}
           disabled={loading}
-          className="px-6 py-2 rounded-md border border-green-600 bg-green-600 text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-green-300"
+          className="btn-success px-6 py-2 rounded-md border border-(--color-success) disabled:cursor-not-allowed disabled:opacity-60"
         >
           {loading ? "Committing..." : "Generate Mark As Is"}
         </button>
@@ -601,19 +601,19 @@ export default function GeneratorPanel({
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/45 p-4 sm:items-center">
           <div className="my-4 max-h-[calc(100dvh-2rem)] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-5 shadow-2xl [WebkitOverflowScrolling:touch] sm:p-6">
             <div className="flex items-center justify-between gap-3">
-              <h2 className="text-lg font-semibold text-gray-900">Generated Bullet</h2>
+              <h2 className="text-lg font-semibold text-(--text-strong)">Generated Bullet</h2>
               <button
                 onClick={() => setIsBulletModalOpen(false)}
-                className="rounded-md border border-gray-300 px-3 py-1 text-sm text-gray-700 hover:bg-gray-100"
+                className="btn-secondary rounded-md px-3 py-1 text-sm"
               >
                 Exit
               </button>
             </div>
 
-            <div className="generated-bullet-preview mt-4 rounded-md border bg-gray-50 p-4">
-              <p className="generated-bullet-preview-text text-sm text-gray-800">{bullet.text}</p>
+            <div className="generated-bullet-preview mt-4 rounded-md border border-(--border-muted) bg-(--surface-2) p-4">
+              <p className="generated-bullet-preview-text text-sm text-(--text-strong)">{bullet.text}</p>
               {!wasCategoryUserSelected && bullet.category && (
-                <p className="generated-bullet-preview-category mt-3 text-sm font-medium text-blue-700">
+                <p className="generated-bullet-preview-category mt-3 text-sm font-medium text-(--color-primary)">
                   AI Recommended Category: {bullet.category}
                 </p>
               )}
@@ -626,7 +626,7 @@ export default function GeneratorPanel({
               )}
 
               {splitBulletRecommendationLoading && (
-                <p className="generated-bullet-preview-loading mt-3 text-sm text-blue-700">
+                <p className="generated-bullet-preview-loading mt-3 text-sm text-(--color-primary)">
                   AI is checking whether this accomplishment should be split into multiple marks...
                 </p>
               )}
@@ -635,8 +635,8 @@ export default function GeneratorPanel({
                 <div
                   className={`generated-bullet-split-recommendation mt-3 rounded-md border p-3 text-sm ${
                     splitBulletRecommendation.shouldSplit
-                      ? "generated-bullet-split-recommendation-amber border-amber-300 bg-amber-50 text-amber-900"
-                      : "generated-bullet-split-recommendation-blue border-blue-200 bg-blue-50 text-blue-900"
+                      ? "generated-bullet-split-recommendation-amber border-(--color-warning) bg-(--color-warning-soft) text-(--color-warning)"
+                      : "generated-bullet-split-recommendation-blue border-(--color-secondary) bg-(--color-secondary-soft) text-(--color-primary)"
                   }`}
                 >
                   <p className="font-semibold">
@@ -661,7 +661,7 @@ export default function GeneratorPanel({
                           setIsBulletModalOpen(false);
                           void handleApplySplitRecommendation();
                         }}
-                        className="mt-3 rounded-md bg-amber-600 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-700"
+                        className="mt-3 rounded-md bg-(--color-warning) px-3 py-2 text-sm font-semibold text-(--color-text-on-strong) hover:brightness-95"
                       >
                         Generate Separate Drafts
                       </button>
@@ -675,7 +675,7 @@ export default function GeneratorPanel({
               <button
                 onClick={handleGenerate}
                 disabled={loading}
-                className="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:bg-blue-300"
+                className="btn-primary rounded-md px-4 py-2 disabled:opacity-60"
               >
                 {loading ? "Reprompting..." : "Reprompt"}
               </button>
@@ -687,7 +687,7 @@ export default function GeneratorPanel({
                     handleCommitBullet();
                   }, 0);
                 }}
-                className="rounded-md bg-green-600 px-4 py-2 text-white hover:bg-green-700"
+                className="btn-success rounded-md px-4 py-2"
               >
                 Commit as Mark
               </button>
@@ -700,13 +700,13 @@ export default function GeneratorPanel({
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/45 p-4 sm:items-center">
           <div className="my-4 max-h-[calc(100dvh-2rem)] w-full max-w-3xl overflow-y-auto rounded-xl bg-white p-5 shadow-2xl [WebkitOverflowScrolling:touch] sm:p-6">
             <div className="flex items-center justify-between gap-3">
-              <h2 className="text-lg font-semibold text-gray-900">Split Mark Drafts</h2>
+              <h2 className="text-lg font-semibold text-(--text-strong)">Split Mark Drafts</h2>
               <button
                 onClick={() => {
                   setIsSplitDraftModalOpen(false);
                   handleClearSplitBulletDrafts();
                 }}
-                className="rounded-md border border-gray-300 px-3 py-1 text-sm text-gray-700 hover:bg-gray-100"
+                className="btn-secondary rounded-md px-3 py-1 text-sm"
               >
                 Exit
               </button>
@@ -755,14 +755,14 @@ export default function GeneratorPanel({
 
                           <div className="min-w-0 flex-1">
                             <p className="text-sm italic text-gray-900">Prompt: {draft.action}</p>
-                            <p className="mt-2 text-sm font-semibold text-gray-900">{draft.text}</p>
+                            <p className="mt-2 text-sm font-semibold text-(--text-strong)">{draft.text}</p>
                             <p className="mt-2 text-xs font-medium text-blue-700">Category: {draft.category}</p>
                             <div className="mt-3 flex justify-end">
                               <button
                                 type="button"
                                 onClick={() => void handleRepromptSplitBulletDraft(draft.id)}
                                 disabled={isReprompting}
-                                className="rounded-md border border-blue-300 px-3 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                className="rounded-md border border-blue-300 px-3 py-1 text-xs font-semibold text-(--color-primary) hover:bg-(--color-secondary-soft) disabled:cursor-not-allowed disabled:opacity-60"
                               >
                                 {isReprompting ? "Reprompting..." : "Reprompt"}
                               </button>
@@ -792,7 +792,7 @@ export default function GeneratorPanel({
                       handleCommitSplitBulletDrafts(selectedSplitDraftIds);
                     }}
                     disabled={selectedSplitDraftIds.length === 0}
-                    className="rounded-md bg-green-600 px-4 py-2 text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-green-300"
+                    className="btn-success rounded-md px-4 py-2 disabled:cursor-not-allowed disabled:bg-green-300"
                   >
                     Commit Selected
                   </button>
@@ -805,3 +805,4 @@ export default function GeneratorPanel({
     </div>
   );
 }
+

@@ -7,6 +7,8 @@ const ALLOWED_KEYS = new Set([
   "log",
   "settings",
   "dashboardTotalEstimate",
+  "savedBulletproofSevens",
+  "bulletproofSevenAnalysis",
   "exportHistory",
 ]);
 

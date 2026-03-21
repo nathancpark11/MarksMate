@@ -13,7 +13,6 @@ type RateLimitResult = {
 type RateLimitStore = Map<string, number[]>;
 
 declare global {
-  // eslint-disable-next-line no-var
   var __ipRateLimitStore: RateLimitStore | undefined;
 }
 

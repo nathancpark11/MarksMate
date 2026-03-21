@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { parseLimitedJsonBody } from "@/lib/aiRequestGuards";
+import { logAiUsageEvent } from "@/lib/analytics/logging";
 import { requireSessionUser } from "@/lib/auth";
 import { validateCombinedAiInputs } from "@/lib/promptSpamGuard";
 import { enforceRateLimits } from "@/lib/rateLimit";
@@ -17,12 +18,14 @@ export async function POST(req: Request) {
   const routeName = "/api/build-marks-package";
   const requestId = getRequestId(req);
   let inputLength = 0;
+  let userIdForLogging: string | null = null;
 
   try {
-    const { response: authResponse } = await requireSessionUser();
-    if (authResponse) {
-      return authResponse;
+    const { user, response: authResponse } = await requireSessionUser();
+    if (authResponse || !user) {
+      return authResponse ?? Response.json({ error: "Unauthorized" }, { status: 401 });
     }
+    userIdForLogging = user.id;
 
     const rateLimitResponse = enforceRateLimits(req, [
       {
@@ -151,6 +154,16 @@ Rules:
       temperature: 0.4,
     });
 
+    await logAiUsageEvent({
+      userId: user.id,
+      endpoint: routeName,
+      model: "gpt-3.5-turbo",
+      promptTokens: completion.usage?.prompt_tokens,
+      completionTokens: completion.usage?.completion_tokens,
+      totalTokens: completion.usage?.total_tokens,
+      success: true,
+    });
+
     const raw = completion.choices[0]?.message?.content?.trim() || "{}";
     const parsed = JSON.parse(stripCodeFences(raw)) as {
       categorySummaries?: { category: string; summary: string }[];
@@ -178,6 +191,20 @@ Rules:
           : "",
     });
   } catch (error: unknown) {
+    if (userIdForLogging) {
+      try {
+        await logAiUsageEvent({
+          userId: userIdForLogging,
+          endpoint: routeName,
+          model: "gpt-3.5-turbo",
+          success: false,
+          errorMessage: error instanceof Error ? error.message : "Unknown error",
+        });
+      } catch {
+        // Avoid masking the original endpoint failure.
+      }
+    }
+
     logApiError("build-marks-package error", error, { requestId, routeName, inputLength, success: false });
     logApiRequestMetadata({ requestId, routeName, inputLength, success: false, status: 500 });
     return Response.json({ error: "Unable to build the marks package right now. Please try again." }, { status: 500 });

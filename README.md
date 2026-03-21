@@ -106,3 +106,71 @@ node scripts/extract-official-guidance.mjs --input=data/your-file.pdf --output=d
 - Keep OpenAI calls in route handlers like `app/api/*/route.ts`.
 - Do not import `openai` in client components.
 - In browser devtools, you should never see the value of `OPENAI_API_KEY`.
+
+## Admin Analytics Export System
+
+This app now includes a protected admin analytics tab and server-side Excel export.
+
+### What Was Added
+
+- Admin-only dashboard tab: `Admin Analytics`
+- Protected analytics API: `GET /api/admin/analytics/overview`
+- Protected export API: `GET /api/admin/analytics/export`
+- Server-side `.xlsx` generation with `exceljs`
+- Raw AI usage event logging (`ai_usage_logs`)
+- Summary metrics tables (`user_metrics`, `monthly_metrics`)
+- Centralized model/token pricing utility for cost estimates
+
+### Access Control
+
+- Analytics APIs require an authenticated session and admin username check.
+- Non-admin users receive `403` from admin analytics routes.
+- Exported data contains metrics/cost aggregates and masked identifiers only.
+
+### Dependency
+
+- `exceljs` is required for XLSX generation.
+
+### Analytics Data Model
+
+Schema initialization now includes these analytics tables:
+
+- `ai_usage_logs`: one row per AI request (model, tokens, estimated cost, endpoint, user, time)
+- `user_metrics`: precomputed per-user totals used by dashboard/export
+- `monthly_metrics`: monthly aggregate trend rows for reporting
+
+The existing `users` and `user_data` tables continue to provide profile and activity source data.
+
+### Phase-1 Instrumentation Scope
+
+AI usage logging is currently wired in these routes:
+
+- `/api/generate`
+- `/api/smart-insights`
+- `/api/build-marks-package`
+- `/api/evaluate-category-quality`
+
+Additional client-side event logging can be layered on top later without changing the schema.
+
+### Validation Checklist
+
+Use this checklist after deploy:
+
+1. Admin UI visibility
+2. Log in as admin and confirm the `Admin Analytics` tab is visible.
+3. Log in as non-admin and confirm the tab is not visible.
+
+4. API protection
+5. As admin, request `GET /api/admin/analytics/overview` and confirm `200`.
+6. As non-admin, request `GET /api/admin/analytics/overview` and confirm `403`.
+7. As unauthenticated user, request `GET /api/admin/analytics/overview` and confirm `401`.
+
+8. XLSX export
+9. As admin, click `Export XLSX` and confirm a valid workbook downloads.
+10. Confirm workbook tabs exist: `User Summary`, `Aggregate Metrics`, `Monthly Trends`.
+11. Confirm identifiers are masked and no raw bullet/log/document text is exported.
+
+12. Data quality
+13. Generate a few marks and trigger dashboard AI routes.
+14. Confirm `ai_usage_logs` rows are created with endpoint/model/token/cost fields.
+15. Refresh Admin Analytics and confirm totals increase as expected.

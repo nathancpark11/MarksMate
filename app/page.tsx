@@ -14,6 +14,7 @@ import MarksPackageBuilderPanel from "../components/MarksPackageBuilderPanel";
 import SettingsPanel from "../components/SettingsPanel";
 import LogPanel from "../components/LogPanel";
 import TutorialModal from "../components/TutorialModal";
+import AdminAnalyticsPanel from "../components/AdminAnalyticsPanel";
 import { isGuidanceAdminUsername } from "@/lib/admin";
 import {
   GENERATE_REQUEST_MAX_BYTES,
@@ -70,6 +71,21 @@ export default function Home() {
     sourceDate: string;
     sourceDates?: string[];
   };
+  const OFFICIAL_MARK_CATEGORIES = [
+    "Military Bearing",
+    "Customs, Courtesies and Traditions",
+    "Quality of Work",
+    "Technical Proficiency",
+    "Initiative",
+    "Decision Making and Problem Solving",
+    "Military Readiness",
+    "Self Awareness and Learning",
+    "Team Building",
+    "Respect for Others",
+    "Accountability and Responsibility",
+    "Influencing Others",
+    "Effective Communication",
+  ];
   const [bullet, setBullet] = useState<{text: string; category: string; title?: string; guidanceSections?: string[]} | null>(null);
   type HistoryItem = {
     text: string;
@@ -109,6 +125,8 @@ export default function Home() {
   const [splitBulletDraftRepromptingId, setSplitBulletDraftRepromptingId] = useState<string | null>(null);
   const [altCategorySuggestion, setAltCategorySuggestion] = useState<AltCategorySuggestion | null>(null);
   const [altCategoryDrafts, setAltCategoryDrafts] = useState<Record<string, { text: string; title?: string; generating: boolean; guidanceSections?: string[] }>>({});
+  const [manualAltCategory, setManualAltCategory] = useState("");
+  const manualAltCategorySelectRef = useRef<HTMLSelectElement | null>(null);
   const [suggestions, setSuggestions] = useState<Record<string, { category: string; reason: string }>>({});
 
   const createLogEntryId = () =>
@@ -206,10 +224,13 @@ export default function Home() {
   const [userUnit, setUserUnit] = useState("");
   const [bulletStyle, setBulletStyle] = useState("Short/Concise");
   const [aiGeneratorEnabled, setAiGeneratorEnabled] = useState(true);
+  const [aiGeneratorSplitRecommendationsEnabled, setAiGeneratorSplitRecommendationsEnabled] = useState(true);
+  const [aiGeneratorAlternateDraftsEnabled, setAiGeneratorAlternateDraftsEnabled] = useState(true);
   const [aiLogImportEnabled, setAiLogImportEnabled] = useState(true);
   const [aiDashboardInsightsEnabled, setAiDashboardInsightsEnabled] = useState(true);
   const [aiMarksPackageEnabled, setAiMarksPackageEnabled] = useState(true);
   const [darkModeEnabled, setDarkModeEnabled] = useState(false);
+  const [tacticalColorSchemeEnabled, setTacticalColorSchemeEnabled] = useState(false);
   const [highContrastEnabled, setHighContrastEnabled] = useState(false);
   const [settingsMessage, setSettingsMessage] = useState("");
   const [guidanceUploadBusy, setGuidanceUploadBusy] = useState(false);
@@ -268,6 +289,15 @@ export default function Home() {
   const [authUsername, setAuthUsername] = useState("");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
+  const [forgotPasswordBusy, setForgotPasswordBusy] = useState(false);
+  const [forgotPasswordCodeSent, setForgotPasswordCodeSent] = useState(false);
+  const [forgotPasswordIdentifier, setForgotPasswordIdentifier] = useState("");
+  const [forgotPasswordCode, setForgotPasswordCode] = useState("");
+  const [forgotPasswordNewPassword, setForgotPasswordNewPassword] = useState("");
+  const [forgotPasswordError, setForgotPasswordError] = useState("");
+  const [forgotPasswordMessage, setForgotPasswordMessage] = useState("");
   const [emailPromptDismissed, setEmailPromptDismissed] = useState(false);
   const [emailPromptInput, setEmailPromptInput] = useState("");
   const [emailPromptBusy, setEmailPromptBusy] = useState(false);
@@ -478,7 +508,19 @@ export default function Home() {
       };
 
       if (!res.ok || !data.user) {
-        setAuthError(data.error || "Authentication failed.");
+        const nextError = data.error || "Authentication failed.";
+        setAuthError(nextError);
+
+        const isInvalidCredentials =
+          authMode === "login" &&
+          res.status === 401 &&
+          nextError.toLowerCase().includes("invalid username or password");
+
+        if (isInvalidCredentials) {
+          setShowForgotPassword(true);
+          setForgotPasswordIdentifier(username);
+        }
+
         return;
       }
 
@@ -490,6 +532,13 @@ export default function Home() {
         setEmailPromptDismissed(false);
         setEmailPromptInput("");
         setEmailPromptError("");
+        setShowForgotPassword(false);
+        setForgotPasswordOpen(false);
+        setForgotPasswordCodeSent(false);
+        setForgotPasswordCode("");
+        setForgotPasswordNewPassword("");
+        setForgotPasswordError("");
+        setForgotPasswordMessage("");
         setShowNoticeModal(true);
       }
       setAuthPassword("");
@@ -497,6 +546,85 @@ export default function Home() {
       setAuthError("Authentication request failed.");
     } finally {
       setAuthBusy(false);
+    }
+  };
+
+  const handleRequestPasswordResetCode = async () => {
+    const identifier = forgotPasswordIdentifier.trim() || authUsername.trim();
+
+    if (!identifier) {
+      setForgotPasswordError("Enter your username or email first.");
+      return;
+    }
+
+    setForgotPasswordError("");
+    setForgotPasswordMessage("");
+    setForgotPasswordBusy(true);
+    try {
+      const res = await fetch("/api/auth/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ identifier }),
+      });
+
+      const data = (await res.json()) as { error?: string; message?: string };
+
+      if (!res.ok) {
+        setForgotPasswordError(data.error || "Unable to send verification code.");
+        return;
+      }
+
+      setForgotPasswordCodeSent(true);
+      setForgotPasswordIdentifier(identifier);
+      setForgotPasswordMessage(
+        data.message ||
+          "If an account with a saved email exists, a verification code has been sent."
+      );
+    } catch {
+      setForgotPasswordError("Unable to send verification code.");
+    } finally {
+      setForgotPasswordBusy(false);
+    }
+  };
+
+  const handleResetPassword = async () => {
+    const identifier = forgotPasswordIdentifier.trim() || authUsername.trim();
+
+    if (!identifier || !forgotPasswordCode.trim() || !forgotPasswordNewPassword.trim()) {
+      setForgotPasswordError("Username/email, verification code, and new password are required.");
+      return;
+    }
+
+    setForgotPasswordError("");
+    setForgotPasswordMessage("");
+    setForgotPasswordBusy(true);
+    try {
+      const res = await fetch("/api/auth/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          identifier,
+          code: forgotPasswordCode.trim(),
+          newPassword: forgotPasswordNewPassword,
+        }),
+      });
+
+      const data = (await res.json()) as { error?: string };
+
+      if (!res.ok) {
+        setForgotPasswordError(data.error || "Unable to reset password.");
+        return;
+      }
+
+      setForgotPasswordCode("");
+      setForgotPasswordNewPassword("");
+      setAuthPassword("");
+      setAuthError("");
+      setForgotPasswordMessage("Password updated. You can now log in with your new password.");
+    } catch {
+      setForgotPasswordError("Unable to reset password.");
+    } finally {
+      setForgotPasswordBusy(false);
     }
   };
 
@@ -540,6 +668,8 @@ export default function Home() {
             userUnit: signupUserUnit,
             bulletStyle: signupBulletStyle,
             aiGeneratorEnabled: true,
+            aiGeneratorSplitRecommendationsEnabled: true,
+            aiGeneratorAlternateDraftsEnabled: true,
             aiLogImportEnabled: true,
             aiDashboardInsightsEnabled: true,
             aiMarksPackageEnabled: true,
@@ -555,10 +685,13 @@ export default function Home() {
     setUserUnit(signupUserUnit);
     setBulletStyle(signupBulletStyle);
     setAiGeneratorEnabled(true);
+    setAiGeneratorSplitRecommendationsEnabled(true);
+    setAiGeneratorAlternateDraftsEnabled(true);
     setAiLogImportEnabled(true);
     setAiDashboardInsightsEnabled(true);
     setAiMarksPackageEnabled(true);
     setDarkModeEnabled(false);
+    setTacticalColorSchemeEnabled(false);
     setHighContrastEnabled(false);
     setAuthUser(pendingUser);
     setPendingUser(null);
@@ -605,10 +738,13 @@ export default function Home() {
       userUnit,
       bulletStyle,
       aiGeneratorEnabled,
+      aiGeneratorSplitRecommendationsEnabled,
+      aiGeneratorAlternateDraftsEnabled,
       aiLogImportEnabled,
       aiDashboardInsightsEnabled,
       aiMarksPackageEnabled,
       darkModeEnabled,
+      tacticalColorSchemeEnabled,
       highContrastEnabled,
     }).catch(() => setSyncFailed(true));
   };
@@ -646,6 +782,7 @@ export default function Home() {
     setInput("");
     setCategory("");
     setDarkModeEnabled(false);
+    setTacticalColorSchemeEnabled(false);
     setHighContrastEnabled(false);
     setActiveTab("log");
   };
@@ -782,10 +919,13 @@ export default function Home() {
     setMpPeriodStart("");
     setMpPeriodEnd("");
     setAiGeneratorEnabled(true);
+    setAiGeneratorSplitRecommendationsEnabled(true);
+    setAiGeneratorAlternateDraftsEnabled(true);
     setAiLogImportEnabled(true);
     setAiDashboardInsightsEnabled(true);
     setAiMarksPackageEnabled(true);
     setDarkModeEnabled(false);
+    setTacticalColorSchemeEnabled(false);
     setHighContrastEnabled(false);
     setSettingsMessage("");
 
@@ -797,10 +937,13 @@ export default function Home() {
         userUnit?: string;
         bulletStyle?: string;
         aiGeneratorEnabled?: boolean;
+        aiGeneratorSplitRecommendationsEnabled?: boolean;
+        aiGeneratorAlternateDraftsEnabled?: boolean;
         aiLogImportEnabled?: boolean;
         aiDashboardInsightsEnabled?: boolean;
         aiMarksPackageEnabled?: boolean;
         darkModeEnabled?: boolean;
+        tacticalColorSchemeEnabled?: boolean;
         highContrastEnabled?: boolean;
       };
       try {
@@ -842,6 +985,16 @@ export default function Home() {
           if (typeof loaded.aiGeneratorEnabled === "boolean") {
             setAiGeneratorEnabled(loaded.aiGeneratorEnabled);
           }
+          if (typeof loaded.aiGeneratorSplitRecommendationsEnabled === "boolean") {
+            setAiGeneratorSplitRecommendationsEnabled(loaded.aiGeneratorSplitRecommendationsEnabled);
+          } else if (typeof loaded.aiGeneratorEnabled === "boolean") {
+            setAiGeneratorSplitRecommendationsEnabled(loaded.aiGeneratorEnabled);
+          }
+          if (typeof loaded.aiGeneratorAlternateDraftsEnabled === "boolean") {
+            setAiGeneratorAlternateDraftsEnabled(loaded.aiGeneratorAlternateDraftsEnabled);
+          } else if (typeof loaded.aiGeneratorEnabled === "boolean") {
+            setAiGeneratorAlternateDraftsEnabled(loaded.aiGeneratorEnabled);
+          }
           if (typeof loaded.aiLogImportEnabled === "boolean") {
             setAiLogImportEnabled(loaded.aiLogImportEnabled);
           }
@@ -853,6 +1006,9 @@ export default function Home() {
           }
           if (typeof loaded.darkModeEnabled === "boolean") {
             setDarkModeEnabled(loaded.darkModeEnabled);
+          }
+          if (typeof loaded.tacticalColorSchemeEnabled === "boolean") {
+            setTacticalColorSchemeEnabled(loaded.tacticalColorSchemeEnabled);
           }
           if (typeof loaded.highContrastEnabled === "boolean") {
             setHighContrastEnabled(loaded.highContrastEnabled);
@@ -882,10 +1038,13 @@ export default function Home() {
       userUnit,
       bulletStyle,
       aiGeneratorEnabled,
+      aiGeneratorSplitRecommendationsEnabled,
+      aiGeneratorAlternateDraftsEnabled,
       aiLogImportEnabled,
       aiDashboardInsightsEnabled,
       aiMarksPackageEnabled,
       darkModeEnabled,
+      tacticalColorSchemeEnabled,
       highContrastEnabled,
     }).then(() => setSyncFailed(false)).catch(() => setSyncFailed(true));
   }, [
@@ -895,24 +1054,60 @@ export default function Home() {
     userUnit,
     bulletStyle,
     aiGeneratorEnabled,
+    aiGeneratorSplitRecommendationsEnabled,
+    aiGeneratorAlternateDraftsEnabled,
     aiLogImportEnabled,
     aiDashboardInsightsEnabled,
     aiMarksPackageEnabled,
     darkModeEnabled,
+    tacticalColorSchemeEnabled,
     highContrastEnabled,
     authUser,
+    loadFailed,
     saveUserData,
   ]);
 
   useEffect(() => {
+    if (darkModeEnabled && tacticalColorSchemeEnabled) {
+      setDarkModeEnabled(false);
+      return;
+    }
+
     document.documentElement.dataset.theme = darkModeEnabled ? "dark" : "light";
     document.body.classList.toggle("theme-dark", darkModeEnabled);
-  }, [darkModeEnabled]);
+  }, [darkModeEnabled, tacticalColorSchemeEnabled]);
+
+  useEffect(() => {
+    document.documentElement.dataset.colorScheme = tacticalColorSchemeEnabled ? "tactical" : "default";
+    document.body.classList.toggle("theme-tactical", tacticalColorSchemeEnabled);
+  }, [tacticalColorSchemeEnabled]);
 
   useEffect(() => {
     document.documentElement.dataset.contrast = highContrastEnabled ? "high" : "normal";
     document.body.classList.toggle("theme-high-contrast", highContrastEnabled);
   }, [highContrastEnabled]);
+
+  useEffect(() => {
+    if (aiGeneratorSplitRecommendationsEnabled) {
+      return;
+    }
+
+    setSplitBulletRecommendation(null);
+    setSplitBulletRecommendationLoading(false);
+    setSplitBulletDrafts([]);
+    setSplitBulletDraftsLoading(false);
+    setSplitBulletDraftRepromptingId(null);
+  }, [aiGeneratorSplitRecommendationsEnabled]);
+
+  useEffect(() => {
+    if (aiGeneratorAlternateDraftsEnabled) {
+      return;
+    }
+
+    setAltCategorySuggestion(null);
+    setAltCategoryDrafts({});
+    setManualAltCategory("");
+  }, [aiGeneratorAlternateDraftsEnabled]);
 
   useEffect(() => {
     document.documentElement.style.setProperty(
@@ -988,7 +1183,7 @@ export default function Home() {
 
   const showBottomScrollButton =
     activeTab === "log" || activeTab === "history" || activeTab === "dashboard";
-  const bottomScrollButtonClass = "bg-blue-700 text-white hover:bg-blue-800 focus:ring-blue-400";
+  const bottomScrollButtonClass = "btn-primary focus:ring-blue-400";
 
   const handleScrollToBottom = useCallback(() => {
     window.scrollTo({
@@ -1229,7 +1424,7 @@ export default function Home() {
 
       setSplitBulletRecommendationLoading(true);
       try {
-        if (!aiGeneratorEnabled) {
+        if (!aiGeneratorSplitRecommendationsEnabled) {
           setSplitBulletRecommendation(null);
         } else {
           const recommendationRes = await fetch("/api/recommend-bullet-split", {
@@ -1419,9 +1614,10 @@ export default function Home() {
     sourceTitle?: string,
     sourceDates?: string[]
   ) => {
-    if (!aiGeneratorEnabled) {
+    if (!aiGeneratorAlternateDraftsEnabled) {
       setAltCategorySuggestion(null);
       setAltCategoryDrafts({});
+      setManualAltCategory("");
       return;
     }
 
@@ -1430,6 +1626,7 @@ export default function Home() {
 
     setAltCategorySuggestion(null);
     setAltCategoryDrafts({});
+    setManualAltCategory("");
     void (async () => {
       try {
         const res = await fetch("/api/suggest-secondary-categories", {
@@ -1451,6 +1648,7 @@ export default function Home() {
             sourceDate,
             sourceDates: normalizedSourceDates.length > 0 ? normalizedSourceDates : undefined,
           });
+          setManualAltCategory("");
         }
       } catch {
         // Fail silently; commit already succeeded.
@@ -1459,7 +1657,7 @@ export default function Home() {
   };
 
   const handleGenerateAltCategoryDraft = async (categoryName: string) => {
-    if (!aiGeneratorEnabled) return;
+    if (!aiGeneratorEnabled || !aiGeneratorAlternateDraftsEnabled) return;
     if (!altCategorySuggestion) return;
     setAltCategoryDrafts((prev) => ({ ...prev, [categoryName]: { text: "", title: "", generating: true } }));
     try {
@@ -1510,7 +1708,22 @@ export default function Home() {
     });
     setAltCategorySuggestion(null);
     setAltCategoryDrafts({});
+    setManualAltCategory("");
   };
+
+  useEffect(() => {
+    if (!altCategorySuggestion) {
+      return;
+    }
+
+    const focusTimeout = window.setTimeout(() => {
+      manualAltCategorySelectRef.current?.focus();
+    }, 0);
+
+    return () => {
+      window.clearTimeout(focusTimeout);
+    };
+  }, [altCategorySuggestion]);
 
   const handleCommitSplitBulletDrafts = (draftIds: string[]) => {
     if (draftIds.length === 0) {
@@ -1974,10 +2187,13 @@ export default function Home() {
         userUnit,
         bulletStyle,
         aiGeneratorEnabled,
+        aiGeneratorSplitRecommendationsEnabled,
+        aiGeneratorAlternateDraftsEnabled,
         aiLogImportEnabled,
         aiDashboardInsightsEnabled,
         aiMarksPackageEnabled,
         darkModeEnabled,
+        tacticalColorSchemeEnabled,
         highContrastEnabled,
       },
     };
@@ -2008,10 +2224,13 @@ export default function Home() {
           userUnit?: string;
           bulletStyle?: string;
           aiGeneratorEnabled?: boolean;
+          aiGeneratorSplitRecommendationsEnabled?: boolean;
+          aiGeneratorAlternateDraftsEnabled?: boolean;
           aiLogImportEnabled?: boolean;
           aiDashboardInsightsEnabled?: boolean;
           aiMarksPackageEnabled?: boolean;
           darkModeEnabled?: boolean;
+          tacticalColorSchemeEnabled?: boolean;
           highContrastEnabled?: boolean;
         };
       };
@@ -2031,10 +2250,21 @@ export default function Home() {
         if (parsed.settings.userUnit !== undefined) setUserUnit(parsed.settings.userUnit);
         if (parsed.settings.bulletStyle) setBulletStyle(parsed.settings.bulletStyle);
         if (typeof parsed.settings.aiGeneratorEnabled === "boolean") setAiGeneratorEnabled(parsed.settings.aiGeneratorEnabled);
+        if (typeof parsed.settings.aiGeneratorSplitRecommendationsEnabled === "boolean") {
+          setAiGeneratorSplitRecommendationsEnabled(parsed.settings.aiGeneratorSplitRecommendationsEnabled);
+        } else if (typeof parsed.settings.aiGeneratorEnabled === "boolean") {
+          setAiGeneratorSplitRecommendationsEnabled(parsed.settings.aiGeneratorEnabled);
+        }
+        if (typeof parsed.settings.aiGeneratorAlternateDraftsEnabled === "boolean") {
+          setAiGeneratorAlternateDraftsEnabled(parsed.settings.aiGeneratorAlternateDraftsEnabled);
+        } else if (typeof parsed.settings.aiGeneratorEnabled === "boolean") {
+          setAiGeneratorAlternateDraftsEnabled(parsed.settings.aiGeneratorEnabled);
+        }
         if (typeof parsed.settings.aiLogImportEnabled === "boolean") setAiLogImportEnabled(parsed.settings.aiLogImportEnabled);
         if (typeof parsed.settings.aiDashboardInsightsEnabled === "boolean") setAiDashboardInsightsEnabled(parsed.settings.aiDashboardInsightsEnabled);
         if (typeof parsed.settings.aiMarksPackageEnabled === "boolean") setAiMarksPackageEnabled(parsed.settings.aiMarksPackageEnabled);
         if (typeof parsed.settings.darkModeEnabled === "boolean") setDarkModeEnabled(parsed.settings.darkModeEnabled);
+        if (typeof parsed.settings.tacticalColorSchemeEnabled === "boolean") setTacticalColorSchemeEnabled(parsed.settings.tacticalColorSchemeEnabled);
         if (typeof parsed.settings.highContrastEnabled === "boolean") setHighContrastEnabled(parsed.settings.highContrastEnabled);
       }
 
@@ -2214,6 +2444,11 @@ export default function Home() {
   };
 
   const handleTabChange = (tab: string) => {
+    if (tab === "admin-analytics" && !canManageOfficialGuidance) {
+      setActiveTab("log");
+      return;
+    }
+
     if (isGuestSession && tab === "export") {
       setActiveTab("export");
       setShowGuestExportModal(true);
@@ -2443,6 +2678,89 @@ export default function Home() {
 
             {authError && <p className="text-sm text-red-600">{authError}</p>}
 
+            {authMode === "login" && showForgotPassword && (
+              <>
+                <button
+                  onClick={() => {
+                    const next = !forgotPasswordOpen;
+                    setForgotPasswordOpen(next);
+                    setForgotPasswordError("");
+                    setForgotPasswordMessage("");
+                    if (next) {
+                      setForgotPasswordIdentifier(authUsername.trim());
+                    }
+                  }}
+                  type="button"
+                  className="w-full text-left text-sm font-semibold text-blue-700 hover:text-blue-800"
+                >
+                  Forgot Password?
+                </button>
+
+                {forgotPasswordOpen && (
+                  <div className="space-y-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700">Username or Email</label>
+                      <input
+                        type="text"
+                        value={forgotPasswordIdentifier}
+                        onChange={(e) => setForgotPasswordIdentifier(e.target.value)}
+                        className="mt-2 w-full rounded-md border border-slate-300 p-2"
+                        autoComplete="username"
+                      />
+                    </div>
+
+                    <button
+                      onClick={() => void handleRequestPasswordResetCode()}
+                      disabled={forgotPasswordBusy}
+                      type="button"
+                      className="w-full rounded-md border border-blue-200 bg-white px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {forgotPasswordBusy ? "Sending..." : "Send Verification Code"}
+                    </button>
+
+                    {forgotPasswordCodeSent && (
+                      <>
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700">Verification Code</label>
+                          <input
+                            type="text"
+                            value={forgotPasswordCode}
+                            onChange={(e) => setForgotPasswordCode(e.target.value)}
+                            className="mt-2 w-full rounded-md border border-slate-300 p-2"
+                            inputMode="numeric"
+                            autoComplete="one-time-code"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700">New Password</label>
+                          <input
+                            type="password"
+                            value={forgotPasswordNewPassword}
+                            onChange={(e) => setForgotPasswordNewPassword(e.target.value)}
+                            className="mt-2 w-full rounded-md border border-slate-300 p-2"
+                            autoComplete="new-password"
+                          />
+                        </div>
+
+                        <button
+                          onClick={() => void handleResetPassword()}
+                          disabled={forgotPasswordBusy}
+                          type="button"
+                          className="w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {forgotPasswordBusy ? "Updating..." : "Update Password"}
+                        </button>
+                      </>
+                    )}
+
+                    {forgotPasswordError ? <p className="text-sm text-red-600">{forgotPasswordError}</p> : null}
+                    {forgotPasswordMessage ? <p className="text-sm text-green-700">{forgotPasswordMessage}</p> : null}
+                  </div>
+                )}
+              </>
+            )}
+
             <button
               onClick={() => void handleAuthSubmit()}
               disabled={authBusy}
@@ -2457,6 +2775,14 @@ export default function Home() {
                 setSignupStep(1);
                 setPendingUser(null);
                 setAuthEmail("");
+                setShowForgotPassword(false);
+                setForgotPasswordOpen(false);
+                setForgotPasswordCodeSent(false);
+                setForgotPasswordIdentifier("");
+                setForgotPasswordCode("");
+                setForgotPasswordNewPassword("");
+                setForgotPasswordError("");
+                setForgotPasswordMessage("");
                 setAuthMode(authMode === "login" ? "signup" : "login");
               }}
               className="w-full text-sm font-medium text-blue-700 hover:text-blue-800"
@@ -2556,6 +2882,7 @@ export default function Home() {
           activeTab={activeTab}
           setActiveTab={handleTabChange}
           dashboardRecommendationCount={dashboardRecommendationCount}
+          canManageOfficialGuidance={canManageOfficialGuidance}
         />
 
         {loadFailed ? (
@@ -2966,6 +3293,21 @@ export default function Home() {
           />
         )}
 
+        {activeTab === "admin-analytics" && canManageOfficialGuidance && (
+          <AdminAnalyticsPanel
+            guidanceUploadBusy={guidanceUploadBusy}
+            guidanceUploadStatus={guidanceUploadStatus}
+            guidanceDeleteBusyRank={guidanceDeleteBusyRank}
+            guidanceUploadHistory={guidanceUploadHistory}
+            onUploadGuidancePdf={(file, ranks) => {
+              void handleUploadGuidancePdf(file, ranks);
+            }}
+            onDeleteGuidanceForRank={(rank) => {
+              void handleDeleteGuidanceForRank(rank);
+            }}
+          />
+        )}
+
         {activeTab === "settings" && (
           <SettingsPanel
             isGuestSession={isGuestSession}
@@ -2981,6 +3323,10 @@ export default function Home() {
             setBulletStyle={setBulletStyle}
             aiGeneratorEnabled={aiGeneratorEnabled}
             setAiGeneratorEnabled={setAiGeneratorEnabled}
+            aiGeneratorSplitRecommendationsEnabled={aiGeneratorSplitRecommendationsEnabled}
+            setAiGeneratorSplitRecommendationsEnabled={setAiGeneratorSplitRecommendationsEnabled}
+            aiGeneratorAlternateDraftsEnabled={aiGeneratorAlternateDraftsEnabled}
+            setAiGeneratorAlternateDraftsEnabled={setAiGeneratorAlternateDraftsEnabled}
             aiLogImportEnabled={aiLogImportEnabled}
             setAiLogImportEnabled={setAiLogImportEnabled}
             aiDashboardInsightsEnabled={aiDashboardInsightsEnabled}
@@ -2989,23 +3335,14 @@ export default function Home() {
             setAiMarksPackageEnabled={setAiMarksPackageEnabled}
             darkModeEnabled={darkModeEnabled}
             setDarkModeEnabled={setDarkModeEnabled}
+            tacticalColorSchemeEnabled={tacticalColorSchemeEnabled}
+            setTacticalColorSchemeEnabled={setTacticalColorSchemeEnabled}
             highContrastEnabled={highContrastEnabled}
             setHighContrastEnabled={setHighContrastEnabled}
             historyCount={history.length}
             settingsMessage={settingsMessage}
-            guidanceUploadBusy={guidanceUploadBusy}
-            guidanceUploadStatus={guidanceUploadStatus}
-            guidanceDeleteBusyRank={guidanceDeleteBusyRank}
-            guidanceUploadHistory={guidanceUploadHistory}
-            canManageOfficialGuidance={canManageOfficialGuidance}
             onExportBackup={handleExportBackup}
             onImportBackup={handleImportBackup}
-            onUploadGuidancePdf={(file, ranks) => {
-              void handleUploadGuidancePdf(file, ranks);
-            }}
-            onDeleteGuidanceForRank={(rank) => {
-              void handleDeleteGuidanceForRank(rank);
-            }}
             onClearAllBullets={handleClearAllBullets}
             onClearDailyLog={handleClearLogEntries}
             onReviewTutorial={() => {
@@ -3025,7 +3362,9 @@ export default function Home() {
             className={`w-full rounded-md border px-3 py-2 text-sm font-medium transition-colors sm:text-base ${
               activeTab === "settings"
                 ? "border-blue-700 bg-blue-700 text-white shadow-sm"
-                : "border-slate-300 bg-slate-50 text-slate-800 hover:border-blue-300 hover:bg-blue-50"
+                : darkModeEnabled
+                  ? "border-slate-300 bg-slate-50 text-(--text-strong) hover:border-blue-300 hover:bg-blue-50"
+                  : "border-slate-300 bg-slate-50 text-white hover:border-blue-300 hover:bg-blue-50"
             }`}
           >
             Settings
@@ -3062,6 +3401,7 @@ export default function Home() {
                 onClick={() => {
                   setAltCategorySuggestion(null);
                   setAltCategoryDrafts({});
+                  setManualAltCategory("");
                 }}
                 className="shrink-0 text-gray-400 hover:text-gray-700 text-lg leading-none"
                 aria-label="Dismiss"
@@ -3071,7 +3411,12 @@ export default function Home() {
             </div>
 
             <div className="mt-4 space-y-3">
-              {altCategorySuggestion.categories.map(({ name, reason }) => {
+              {[
+                ...altCategorySuggestion.categories,
+                ...Object.keys(altCategoryDrafts)
+                  .filter((name) => !altCategorySuggestion.categories.some((category) => category.name === name))
+                  .map((name) => ({ name, reason: "Manually selected category." })),
+              ].map(({ name, reason }) => {
                 const draftEntry = altCategoryDrafts[name];
                 const isGenerating = draftEntry?.generating ?? false;
                 const generatedText = draftEntry?.text && !draftEntry.generating ? draftEntry.text : null;
@@ -3123,6 +3468,43 @@ export default function Home() {
                   </div>
                 );
               })}
+
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <p className="text-sm font-semibold text-gray-900">Pick a Different Category</p>
+                <p className="mt-1 text-xs text-gray-600">
+                  If you do not like the suggested alternatives, choose any official category and generate a mark.
+                </p>
+                <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <select
+                    ref={manualAltCategorySelectRef}
+                    value={manualAltCategory}
+                    onChange={(event) => setManualAltCategory(event.target.value)}
+                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 sm:flex-1"
+                  >
+                    <option value="">Choose category...</option>
+                    {OFFICIAL_MARK_CATEGORIES
+                      .filter((categoryName) => categoryName !== altCategorySuggestion.primaryCategory)
+                      .map((categoryName) => (
+                        <option key={categoryName} value={categoryName}>
+                          {categoryName}
+                        </option>
+                      ))}
+                  </select>
+                  <button
+                    type="button"
+                    disabled={!manualAltCategory || (altCategoryDrafts[manualAltCategory]?.generating ?? false)}
+                    onClick={() => {
+                      if (!manualAltCategory) {
+                        return;
+                      }
+                      void handleGenerateAltCategoryDraft(manualAltCategory);
+                    }}
+                    className="rounded-md bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {manualAltCategory && altCategoryDrafts[manualAltCategory]?.generating ? "Generating..." : "Generate Selected Category"}
+                  </button>
+                </div>
+              </div>
             </div>
 
             <div className="mt-4 flex justify-end">
@@ -3131,6 +3513,7 @@ export default function Home() {
                 onClick={() => {
                   setAltCategorySuggestion(null);
                   setAltCategoryDrafts({});
+                  setManualAltCategory("");
                 }}
                 className="rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-100"
               >

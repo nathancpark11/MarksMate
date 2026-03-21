@@ -67,15 +67,15 @@ export default function CategoryReferencePanel({
   const pdfUrl = `/api/official-guidance/pdf?rank=${encodeURIComponent(rankLevel)}`;
 
   return (
-    <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-md sm:p-8" aria-label="Category reference">
-      <h2 className="text-xl font-bold text-center text-slate-900 sm:text-2xl">Category Reference</h2>
+    <section className="rounded-xl border border-(--border-muted) bg-(--surface-1) p-4 shadow-md sm:p-8" aria-label="Category reference">
+      <h2 className="text-xl text-center font-bold text-(--text-strong) sm:text-2xl">Category Reference</h2>
 
       <div className="mt-4 flex justify-center">
         <a
           href={pdfUrl}
           target="_blank"
           rel="noreferrer"
-          className="inline-flex rounded-md border border-blue-300 bg-white px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50"
+          className="btn-secondary inline-flex rounded-md px-3 py-2 text-sm font-semibold"
         >
           Open Marking Sheet PDF
         </a>
@@ -89,12 +89,12 @@ export default function CategoryReferencePanel({
             onClick={() => onSelectCategory(category.name)}
             className={`rounded-md border p-3 text-left transition-colors ${
               selectedCategory === category.name
-                ? "border-blue-400 bg-blue-50"
-                : "border-slate-200 bg-slate-50 hover:border-blue-300 hover:bg-blue-50"
+                ? "border-(--color-secondary) bg-(--color-secondary-soft)"
+                : "border-(--border-muted) bg-(--surface-2) hover:border-(--color-secondary) hover:bg-(--color-secondary-soft)"
             }`}
           >
-            <h3 className="text-sm font-semibold text-slate-900">{category.name}</h3>
-            <p className="mt-1 text-sm text-slate-700">{category.description}</p>
+            <h3 className="text-sm font-semibold text-(--text-strong)">{category.name}</h3>
+            <p className="mt-1 text-sm text-(--text-soft)">{category.description}</p>
           </button>
         ))}
       </div>

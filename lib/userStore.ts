@@ -177,3 +177,12 @@ export async function updateUserEmailById(id: string, email: string): Promise<Us
 
   return findUserById(id);
 }
+
+export async function updateUserPasswordHashById(id: string, passwordHash: string): Promise<void> {
+  await ensureSchema();
+  await sql`
+    UPDATE users
+    SET password_hash = ${passwordHash}, updated_at = NOW()
+    WHERE id = ${id}
+  `;
+}

@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { parseLimitedJsonBody } from "@/lib/aiRequestGuards";
 import { requireSessionUser } from "@/lib/auth";
+import { logAiUsageEvent } from "@/lib/analytics/logging";
 import { isGuidanceAdminUsername } from "@/lib/admin";
 import { validateCombinedAiInputs } from "@/lib/promptSpamGuard";
 import { enforceRateLimits } from "@/lib/rateLimit";
@@ -70,18 +71,20 @@ export async function POST(req: Request) {
   const routeName = "/api/evaluate-category-quality";
   const requestId = getRequestId(req);
   let inputLength = 0;
+  let userIdForLogging: string | null = null;
 
   try {
     const { user, response: authResponse } = await requireSessionUser();
     if (authResponse || !user) {
       return authResponse ?? Response.json({ error: "Unauthorized" }, { status: 401 });
     }
+    userIdForLogging = user.id;
 
     if (!isGuidanceAdminUsername(user.username)) {
       const rateLimitResponse = enforceRateLimits(req, [
         {
           key: "evaluate-category-quality-per-hour",
-          maxRequests: 3,
+          maxRequests: 12,
           windowMs: 60 * 60 * 1000,
           errorMessage: "Hourly rate limit reached for category evaluation.",
         },
@@ -225,6 +228,16 @@ ${JSON.stringify(populatedCategories.map(([category, bullets]) => ({ category, b
       temperature: 0.2,
     });
 
+    await logAiUsageEvent({
+      userId: user.id,
+      endpoint: routeName,
+      model: DASHBOARD_ANALYSIS_MODEL,
+      promptTokens: completion.usage?.prompt_tokens,
+      completionTokens: completion.usage?.completion_tokens,
+      totalTokens: completion.usage?.total_tokens,
+      success: true,
+    });
+
     const rawOutput = completion.choices[0]?.message?.content?.trim() || "{}";
     const parsed = JSON.parse(stripCodeFences(rawOutput)) as {
       evaluations?: CategoryEvaluations;
@@ -278,6 +291,20 @@ ${JSON.stringify(populatedCategories.map(([category, bullets]) => ({ category, b
     logApiRequestMetadata({ requestId, routeName, inputLength, success: true, status: 200 });
     return Response.json({ evaluations });
   } catch (error: unknown) {
+    if (userIdForLogging) {
+      try {
+        await logAiUsageEvent({
+          userId: userIdForLogging,
+          endpoint: routeName,
+          model: DASHBOARD_ANALYSIS_MODEL,
+          success: false,
+          errorMessage: error instanceof Error ? error.message : "Unknown error",
+        });
+      } catch {
+        // Avoid masking the original endpoint failure.
+      }
+    }
+
     logApiError("Evaluate category quality error", error, { requestId, routeName, inputLength, success: false });
     logApiRequestMetadata({ requestId, routeName, inputLength, success: false, status: 500 });
     return Response.json(

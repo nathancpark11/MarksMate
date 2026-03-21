@@ -270,6 +270,15 @@ export default function MarksPackageBuilderPanel({
       }
     };
 
+    let majorSectionStarted = false;
+    const startMajorSection = () => {
+      if (majorSectionStarted) {
+        doc.addPage();
+        y = 56;
+      }
+      majorSectionStarted = true;
+    };
+
     const addHeading = (text: string, size = 13, centered = false) => {
       ensureSpace(28);
       doc.setFont("helvetica", "bold");
@@ -428,6 +437,7 @@ export default function MarksPackageBuilderPanel({
     y += 8;
 
     if (selectedSections.categorySummaries && packageResult.categorySummaries.length > 0) {
+      startMajorSection();
       addHeading("Category Summaries", 13, true);
       packageResult.categorySummaries.forEach(({ category, summary }) => {
         const supporting = history.filter((item) => {
@@ -444,6 +454,7 @@ export default function MarksPackageBuilderPanel({
     }
 
     if (selectedSections.topAccomplishments && packageResult.topAccomplishments.length > 0) {
+      startMajorSection();
       addMainSectionBox(
         "Top Accomplishments",
         packageResult.topAccomplishments.map((bulletText) => ({ text: `- ${bulletText}` }))
@@ -451,6 +462,7 @@ export default function MarksPackageBuilderPanel({
     }
 
     if (selectedSections.achievementLog && chronologicalLog.length > 0) {
+      startMajorSection();
       const logEntries: Array<{ text: string; bold?: boolean; indent?: number }> = [];
       chronologicalLog.forEach(({ monthLabel, bullets }) => {
         logEntries.push({ text: monthLabel, bold: true });
@@ -460,6 +472,7 @@ export default function MarksPackageBuilderPanel({
     }
 
     if (selectedSections.supervisorNotes && packageResult.supervisorNotes) {
+      startMajorSection();
       addMainSectionBox("Supervisor Notes", [{ text: packageResult.supervisorNotes }]);
     }
 
@@ -647,8 +660,8 @@ export default function MarksPackageBuilderPanel({
   };
 
   return (
-        <div className="bg-white p-6 rounded-xl shadow-md space-y-6">
-          <h2 className="text-xl font-semibold">Marks Package Builder</h2>
+        <div className="rounded-xl bg-(--surface-1) p-6 shadow-md space-y-6">
+          <h2 className="text-xl font-semibold text-(--text-strong)">Marks Package Builder</h2>
 
           {/* ── Member Info ── */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -703,12 +716,12 @@ export default function MarksPackageBuilderPanel({
           </div>
 
           {/* ── CTA ── */}
-          <div className="flex flex-col items-center gap-3 rounded-xl border-2 border-dashed border-blue-200 bg-blue-50 p-6">
-            <p className="text-sm text-gray-600 text-center max-w-md">
+          <div className="flex flex-col items-center gap-3 rounded-xl border-2 border-(--color-primary) bg-(--color-secondary-soft) p-6 shadow-sm">
+            <p className="max-w-md text-center text-sm text-(--text-strong)">
               Generate a complete marks package in one click. Select what you would like to include below.
             </p>
             <div className="w-full max-w-2xl">
-              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2 text-center">
+              <p className="mb-2 text-center text-xs font-semibold uppercase tracking-wide text-(--color-primary)">
                 Include In Generation
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -732,8 +745,8 @@ export default function MarksPackageBuilderPanel({
                       }
                       className={`w-full rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
                         checked
-                          ? "border-blue-600 bg-blue-600 text-white"
-                          : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                          ? "border-(--color-primary) bg-(--color-primary) text-(--color-text-on-strong)"
+                          : "border-(--color-primary) bg-(--surface-1) text-(--color-primary) hover:bg-(--surface-2)"
                       }`}
                       aria-pressed={checked}
                     >
@@ -746,18 +759,18 @@ export default function MarksPackageBuilderPanel({
             <button
               onClick={handleBuildPackage}
               disabled={packageLoading || history.length === 0 || !aiEnabled}
-              className="px-6 py-3 rounded-lg bg-blue-600 text-white font-semibold text-base hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              className="btn-primary rounded-lg border border-(--color-primary) px-6 py-3 text-base font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
             >
               {packageLoading ? "Building Package…" : "Build Marks Package"}
             </button>
             {!aiEnabled && (
-              <p className="text-xs text-amber-700">Marks Package AI is disabled in Settings.</p>
+              <p className="text-xs text-(--color-warning)">Marks Package AI is disabled in Settings.</p>
             )}
             {history.length === 0 && (
-              <p className="text-xs text-gray-400">No bullets yet — generate and save bullets first.</p>
+              <p className="text-xs text-(--text-soft)">No bullets yet — generate and save bullets first.</p>
             )}
             {packageError && (
-              <p className="text-sm text-red-600 font-medium">{packageError}</p>
+              <p className="text-sm font-medium text-(--color-danger)">{packageError}</p>
             )}
           </div>
 

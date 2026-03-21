@@ -27,11 +27,11 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} flex min-h-screen flex-col antialiased`}
       >
-        <div className="flex h-(--unclassified-bar-height) w-full items-center justify-center bg-green-500 text-center text-xs font-semibold tracking-wide text-black">
+        <div className="app-classification-bar flex h-(--unclassified-bar-height) w-full items-center justify-center text-center text-xs font-semibold tracking-wide">
           UNCLASSIFIED
         </div>
         <main className="flex-1">{children}</main>
-        <footer className="w-full border-t border-slate-300/80 bg-slate-100/90 px-4 py-2 text-center text-xs font-medium text-slate-800">
+        <footer className="app-footer w-full border-t px-4 py-2 text-center text-xs font-medium">
           Unofficial Tool – Do not enter classified, CUI, or operationally sensitive information.
         </footer>
       </body>

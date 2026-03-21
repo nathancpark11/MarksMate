@@ -168,18 +168,18 @@ export default function TutorialModal({ activeStep, onSelectStep, onClose }: Tut
   const nextStep = stepIndex < TUTORIAL_STEP_ORDER.length - 1 ? TUTORIAL_STEP_ORDER[stepIndex + 1] : null;
 
   return (
-    <aside className="fixed inset-x-3 bottom-3 z-40 max-h-[70dvh] overflow-y-auto rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-2xl backdrop-blur sm:right-4 sm:top-24 sm:bottom-auto sm:left-auto sm:max-h-[calc(100dvh-7rem)] sm:w-[24rem] sm:p-5">
+    <aside className="fixed inset-x-3 bottom-3 z-40 max-h-[70dvh] overflow-y-auto rounded-2xl border border-(--border-muted) bg-(--surface-1)/95 p-4 shadow-2xl backdrop-blur sm:right-4 sm:top-24 sm:bottom-auto sm:left-auto sm:max-h-[calc(100dvh-7rem)] sm:w-[24rem] sm:p-5">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-700">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-(--color-primary)">
             App Tutorial {stepIndex + 1}/{TUTORIAL_STEP_ORDER.length}
           </p>
-          <h2 className="mt-2 text-lg font-bold text-slate-900">{content.title}</h2>
+          <h2 className="mt-2 text-lg font-bold text-(--text-strong)">{content.title}</h2>
         </div>
         <button
           type="button"
           onClick={() => void onClose()}
-          className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+          className="btn-secondary rounded-md px-3 py-2 text-sm font-medium"
         >
           Close
         </button>
@@ -197,8 +197,8 @@ export default function TutorialModal({ activeStep, onSelectStep, onClose }: Tut
               onClick={() => onSelectStep(step)}
               className={`rounded-full border px-3 py-1 text-xs font-semibold ${
                 selected
-                  ? "border-blue-600 bg-blue-600 text-white"
-                  : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                  ? "btn-primary"
+                  : "btn-secondary"
               }`}
             >
               {item.label}
@@ -207,12 +207,12 @@ export default function TutorialModal({ activeStep, onSelectStep, onClose }: Tut
         })}
       </div>
 
-      <div className="mt-4 space-y-3 text-sm leading-6 text-slate-700">
+      <div className="mt-4 space-y-3 text-sm leading-6 text-(--text-strong)">
         {content.blocks.map((block, index) =>
           block.type === "paragraph" ? (
             <p key={`${block.type}-${index}`}>{block.text}</p>
           ) : (
-            <ul key={`${block.type}-${index}`} className="list-disc space-y-1 pl-5 text-sm text-slate-700">
+            <ul key={`${block.type}-${index}`} className="list-disc space-y-1 pl-5 text-sm text-(--text-strong)">
               {block.items.map((item) => (
                 <li key={item}>{item}</li>
               ))}
@@ -221,7 +221,7 @@ export default function TutorialModal({ activeStep, onSelectStep, onClose }: Tut
         )}
 
         {content.callout && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          <div className="rounded-lg border border-(--color-warning) bg-(--color-warning-soft) px-3 py-2 text-sm text-(--color-warning)">
             {content.callout}
           </div>
         )}
@@ -232,7 +232,7 @@ export default function TutorialModal({ activeStep, onSelectStep, onClose }: Tut
           type="button"
           onClick={() => previousStep && onSelectStep(previousStep)}
           disabled={!previousStep}
-          className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+          className="btn-secondary rounded-md px-4 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
         >
           Previous
         </button>
@@ -241,7 +241,7 @@ export default function TutorialModal({ activeStep, onSelectStep, onClose }: Tut
           <button
             type="button"
             onClick={() => onSelectStep(nextStep)}
-            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+            className="btn-primary rounded-md px-4 py-2 text-sm font-semibold"
           >
             Next
           </button>
@@ -249,7 +249,7 @@ export default function TutorialModal({ activeStep, onSelectStep, onClose }: Tut
           <button
             type="button"
             onClick={() => void onClose()}
-            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+            className="btn-primary rounded-md px-4 py-2 text-sm font-semibold"
           >
             Finish Tutorial
           </button>

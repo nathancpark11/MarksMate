@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { parseLimitedJsonBody } from "@/lib/aiRequestGuards";
+import { logAiUsageEvent } from "@/lib/analytics/logging";
 import { requireSessionUser } from "@/lib/auth";
 import { isGuidanceAdminUsername } from "@/lib/admin";
 import { validateCombinedAiInputs } from "@/lib/promptSpamGuard";
@@ -24,12 +25,14 @@ export async function POST(req: Request) {
   const routeName = "/api/smart-insights";
   const requestId = getRequestId(req);
   let inputLength = 0;
+  let userIdForLogging: string | null = null;
 
   try {
     const { user, response: authResponse } = await requireSessionUser();
     if (authResponse || !user) {
       return authResponse ?? Response.json({ error: "Unauthorized" }, { status: 401 });
     }
+    userIdForLogging = user.id;
 
     if (!isGuidanceAdminUsername(user.username)) {
       const rateLimitResponse = enforceRateLimits(req, [
@@ -166,6 +169,16 @@ Measurable-results guidance for "suggestedImprovement" (important):
       max_tokens: 2000,
     });
 
+    await logAiUsageEvent({
+      userId: user.id,
+      endpoint: routeName,
+      model: DASHBOARD_ANALYSIS_MODEL,
+      promptTokens: completion.usage?.prompt_tokens,
+      completionTokens: completion.usage?.completion_tokens,
+      totalTokens: completion.usage?.total_tokens,
+      success: true,
+    });
+
     const rawOutput = completion.choices[0]?.message?.content?.trim() || "{}";
 
     let parsed: {
@@ -222,6 +235,20 @@ Measurable-results guidance for "suggestedImprovement" (important):
       ),
     });
   } catch (error: unknown) {
+    if (userIdForLogging) {
+      try {
+        await logAiUsageEvent({
+          userId: userIdForLogging,
+          endpoint: routeName,
+          model: DASHBOARD_ANALYSIS_MODEL,
+          success: false,
+          errorMessage: error instanceof Error ? error.message : "Unknown error",
+        });
+      } catch {
+        // Avoid masking the original endpoint failure.
+      }
+    }
+
     logApiError("Smart insights error", error, { requestId, routeName, inputLength, success: false });
     logApiRequestMetadata({ requestId, routeName, inputLength, success: false, status: 500 });
     return Response.json({ error: "AI insights are unavailable right now. Please try again." }, { status: 500 });

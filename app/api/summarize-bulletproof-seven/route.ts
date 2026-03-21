@@ -13,6 +13,10 @@ const client = new OpenAI({
 
 const BULLETPROOF_SUMMARY_MODEL =
   process.env.OPENAI_MODEL_DASHBOARD_ANALYSIS ?? process.env.OPENAI_MODEL_STRONG ?? "gpt-4.1";
+const BULLETPROOF_INPUT_GUARD_LIMITS = {
+  maxItems: 240,
+  maxCombinedChars: 40000,
+};
 
 const SUMMARY_CHAR_LIMIT = 250;
 
@@ -54,7 +58,7 @@ export async function POST(req: Request) {
       const rateLimitResponse = enforceRateLimits(req, [
         {
           key: "bulletproof-seven-summary-per-hour",
-          maxRequests: 6,
+          maxRequests: 30,
           windowMs: 60 * 60 * 1000,
           errorMessage: "Hourly rate limit reached for Bulletproof 7 summary generation.",
         },
@@ -115,7 +119,8 @@ export async function POST(req: Request) {
     }
 
     const promptSpamError = validateCombinedAiInputs(
-      normalizedCategoryEntries.flatMap(([category, bullets]) => [category, ...bullets])
+      normalizedCategoryEntries.flatMap(([category, bullets]) => [category, ...bullets]),
+      BULLETPROOF_INPUT_GUARD_LIMITS
     );
     if (promptSpamError) {
       return Response.json({ error: promptSpamError }, { status: 400 });
@@ -138,13 +143,18 @@ export async function POST(req: Request) {
     const prompt = `You are generating a compact U.S. Coast Guard evaluation summary called "Bulletproof 7".
 
 Task:
-- For each category, consolidate the provided official marks (bullets) into one summary representing mark-level 7 performance.
+- For each category, consolidate the provided official marks (bullets) into one strong justification representing mark-level 7 performance.
 
 Hard requirements:
 - Return valid JSON only using this shape: {"summaries":{"Category":"summary text"}}
-- Each summary must be one sentence and at most ${SUMMARY_CHAR_LIMIT} characters INCLUDING spaces.
+- Each summary must be 2-4 sentences and at most ${SUMMARY_CHAR_LIMIT} characters INCLUDING spaces.
 - Do not exceed ${SUMMARY_CHAR_LIMIT} chars for any category.
-- Keep language specific, impact-focused, and mission-oriented.
+- Be confident and assertive. Do not hedge (avoid wording like "may," "might," "appears," "suggests," "likely").
+- Synthesize bullets into one cohesive justification. Do NOT list bullets or write as bullet points.
+- Explicitly highlight leadership, scope of responsibility, and mission impact.
+- Use strong action verbs and quantifiable impact when the provided evidence supports it.
+- Keep language specific, concise, and mission-oriented.
+- Avoid generic praise (e.g., "did a great job," "performed well") unless backed by concrete evidence.
 - Do not invent metrics, facts, or outcomes.
 - Prefer approved Coast Guard abbreviations where they fit naturally.
 

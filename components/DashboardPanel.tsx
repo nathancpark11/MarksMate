@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type DashboardPanelProps = {
   sessionUserId?: string | null;
@@ -65,9 +65,24 @@ type PersistedDashboardAnalysisState = {
   lockedTotalEstimate: number | null;
 };
 
+type SavedBulletproofSummary = {
+  summary: string;
+  savedAt: string;
+};
+
+type PersistedBulletproofAnalysisState = {
+  version: 1;
+  hasAnalyzedBulletproof: boolean;
+  requestKey: string;
+  summaries: Record<string, string>;
+};
+
 const MIN_MARK = 4;
 const MAX_MARK = 7;
 const DASHBOARD_ANALYSIS_STORAGE_VERSION = 1;
+const BULLETPROOF_ANALYSIS_STORAGE_VERSION = 1;
+const BULLETPROOF_SAVED_STORAGE_KEY = "guest-session:savedBulletproofSevens";
+const BULLETPROOF_ANALYSIS_STORAGE_KEY = "guest-session:bulletproofSevenAnalysis";
 
 function getDashboardAnalysisStorageKey(userId: string, isGuestSession: boolean) {
   return `${isGuestSession ? "guest-session" : "dashboardAnalysis"}:${userId}`;
@@ -295,12 +310,15 @@ export default function DashboardPanel({
   const [evaluations, setEvaluations] = useState<Record<string, CategoryEvaluation>>({});
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [evaluationError, setEvaluationError] = useState("");
+  const [evaluationRequestKey, setEvaluationRequestKey] = useState("");
 
   const [insights, setInsights] = useState<SmartInsights | null>(null);
   const [isLoadingInsights, setIsLoadingInsights] = useState(false);
   const [insightsError, setInsightsError] = useState("");
   const [hasAnalyzedDashboard, setHasAnalyzedDashboard] = useState(false);
   const [isAnalyzingDashboard, setIsAnalyzingDashboard] = useState(false);
+  const [hasAnalyzedBulletproof, setHasAnalyzedBulletproof] = useState(false);
+  const [isAnalyzingBulletproof, setIsAnalyzingBulletproof] = useState(false);
   const [lockedTotalEstimate, setLockedTotalEstimate] = useState<number | null>(null);
   const [refreshingInsightSection, setRefreshingInsightSection] = useState<
     "missingResults" | "repetition" | null
@@ -336,6 +354,19 @@ export default function DashboardPanel({
   const [bulletproofSummaryError, setBulletproofSummaryError] = useState("");
   const [isLoadingBulletproofSummaries, setIsLoadingBulletproofSummaries] = useState(false);
   const [bulletproofSummaryRequestKey, setBulletproofSummaryRequestKey] = useState("");
+  const [savedBulletproofSummaries, setSavedBulletproofSummaries] = useState<
+    Record<string, SavedBulletproofSummary>
+  >({});
+  const [hasLoadedBulletproofAnalysis, setHasLoadedBulletproofAnalysis] = useState(false);
+  const [persistedBulletproofAnalysis, setPersistedBulletproofAnalysis] = useState<
+    PersistedBulletproofAnalysisState | null
+  >(null);
+  const [isBulletproofSectionOpen, setIsBulletproofSectionOpen] = useState(false);
+  const [bulletproofEditingCategory, setBulletproofEditingCategory] = useState<string | null>(null);
+  const [bulletproofEditDrafts, setBulletproofEditDrafts] = useState<Record<string, string>>({});
+  const [bulletproofRepromptingCategory, setBulletproofRepromptingCategory] = useState<string | null>(null);
+  const [bulletproofSavingCategory, setBulletproofSavingCategory] = useState<string | null>(null);
+  const shouldAutoSaveBulletproofGenerationRef = useRef(false);
 
   // Per-bullet Reword and Edit state for repetition group bullets
   const [repBulletRewordDrafts, setRepBulletRewordDrafts] = useState<Record<string, string>>({});
@@ -423,6 +454,125 @@ export default function DashboardPanel({
     lockedTotalEstimate,
     isGuestSession,
   ]);
+
+  useEffect(() => {
+    if (!sessionUserId) {
+      setSavedBulletproofSummaries({});
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        if (isGuestSession) {
+          const raw = localStorage.getItem(BULLETPROOF_SAVED_STORAGE_KEY) ?? sessionStorage.getItem(BULLETPROOF_SAVED_STORAGE_KEY);
+          const parsed = raw ? (JSON.parse(raw) as unknown) : null;
+          if (!cancelled) {
+            setSavedBulletproofSummaries(
+              parsed && typeof parsed === "object" && !Array.isArray(parsed)
+                ? (parsed as Record<string, SavedBulletproofSummary>)
+                : {}
+            );
+          }
+          return;
+        }
+
+        const response = await fetch("/api/user-data?key=savedBulletproofSevens");
+        const data = (await response.json()) as { value?: unknown };
+        const parsed = data.value;
+
+        if (!cancelled) {
+          setSavedBulletproofSummaries(
+            parsed && typeof parsed === "object" && !Array.isArray(parsed)
+              ? (parsed as Record<string, SavedBulletproofSummary>)
+              : {}
+          );
+        }
+      } catch {
+        if (!cancelled) {
+          setSavedBulletproofSummaries({});
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionUserId, isGuestSession]);
+
+  useEffect(() => {
+    if (!sessionUserId) {
+      setPersistedBulletproofAnalysis(null);
+      setHasLoadedBulletproofAnalysis(true);
+      return;
+    }
+
+    let cancelled = false;
+    setHasLoadedBulletproofAnalysis(false);
+
+    void (async () => {
+      try {
+        if (isGuestSession) {
+          const raw =
+            localStorage.getItem(BULLETPROOF_ANALYSIS_STORAGE_KEY) ??
+            sessionStorage.getItem(BULLETPROOF_ANALYSIS_STORAGE_KEY);
+          const parsed = raw ? (JSON.parse(raw) as Partial<PersistedBulletproofAnalysisState>) : null;
+
+          if (!cancelled) {
+            setPersistedBulletproofAnalysis(
+              parsed?.version === BULLETPROOF_ANALYSIS_STORAGE_VERSION &&
+                typeof parsed.requestKey === "string" &&
+                parsed.summaries &&
+                typeof parsed.summaries === "object" &&
+                !Array.isArray(parsed.summaries)
+                ? {
+                    version: BULLETPROOF_ANALYSIS_STORAGE_VERSION,
+                    hasAnalyzedBulletproof: Boolean(parsed.hasAnalyzedBulletproof),
+                    requestKey: parsed.requestKey,
+                    summaries: parsed.summaries as Record<string, string>,
+                  }
+                : null
+            );
+          }
+          return;
+        }
+
+        const response = await fetch("/api/user-data?key=bulletproofSevenAnalysis");
+        const data = (await response.json()) as { value?: unknown };
+        const parsed = data.value as Partial<PersistedBulletproofAnalysisState> | null;
+
+        if (!cancelled) {
+          setPersistedBulletproofAnalysis(
+            parsed?.version === BULLETPROOF_ANALYSIS_STORAGE_VERSION &&
+              typeof parsed.requestKey === "string" &&
+              parsed.summaries &&
+              typeof parsed.summaries === "object" &&
+              !Array.isArray(parsed.summaries)
+              ? {
+                  version: BULLETPROOF_ANALYSIS_STORAGE_VERSION,
+                  hasAnalyzedBulletproof: Boolean(parsed.hasAnalyzedBulletproof),
+                  requestKey: parsed.requestKey,
+                  summaries: parsed.summaries as Record<string, string>,
+                }
+              : null
+          );
+        }
+      } catch {
+        if (!cancelled) {
+          setPersistedBulletproofAnalysis(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setHasLoadedBulletproofAnalysis(true);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionUserId, isGuestSession]);
 
   const startEditingBullet = (originalText: string, suggested: string) =>
     setEditingBullets((prev) => ({ ...prev, [originalText]: suggested }));
@@ -863,6 +1013,81 @@ export default function DashboardPanel({
     categories: populatedBulletsByCategory,
   });
 
+  const persistSavedBulletproofSummaries = useCallback(
+    async (nextValue: Record<string, SavedBulletproofSummary>) => {
+      if (!sessionUserId) {
+        return;
+      }
+
+      if (isGuestSession) {
+        localStorage.setItem(BULLETPROOF_SAVED_STORAGE_KEY, JSON.stringify(nextValue));
+        return;
+      }
+
+      const response = await fetch("/api/user-data", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: "savedBulletproofSevens", value: nextValue }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Unable to save Bulletproof 7 summaries.");
+      }
+    },
+    [isGuestSession, sessionUserId]
+  );
+
+  const persistBulletproofAnalysis = useCallback(
+    async (nextValue: PersistedBulletproofAnalysisState) => {
+      if (!sessionUserId) {
+        return;
+      }
+
+      if (isGuestSession) {
+        localStorage.setItem(BULLETPROOF_ANALYSIS_STORAGE_KEY, JSON.stringify(nextValue));
+        return;
+      }
+
+      const response = await fetch("/api/user-data", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: "bulletproofSevenAnalysis", value: nextValue }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Unable to save Bulletproof 7 analysis.");
+      }
+    },
+    [isGuestSession, sessionUserId]
+  );
+
+  const fetchBulletproofSummarySet = useCallback(async (categoriesToSummarize: Record<string, string[]>) => {
+    const categoryNames = Object.keys(categoriesToSummarize);
+    const response = await fetch("/api/summarize-bulletproof-seven", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        rankLevel,
+        categories: categoriesToSummarize,
+      }),
+    });
+    const data = (await response.json()) as {
+      summaries?: Record<string, string>;
+      error?: string;
+    };
+
+    if (!response.ok) {
+      throw new Error(data.error || "Unable to build Bulletproof 7 summaries.");
+    }
+
+    return Object.fromEntries(
+      categoryNames.map((categoryName) => {
+        const raw = typeof data.summaries?.[categoryName] === "string" ? data.summaries[categoryName] : "";
+        return [categoryName, clampSummaryLength(raw)];
+      })
+    );
+  }, [rankLevel]);
+
   const fetchSmartInsights = async () => {
     if (!aiEnabled) {
       throw new Error("Dashboard AI is disabled in Settings.");
@@ -894,6 +1119,7 @@ export default function DashboardPanel({
       setEvaluations({});
       setEvaluationError("Dashboard AI is disabled in Settings.");
       setIsEvaluating(false);
+      setEvaluationRequestKey("");
       return;
     }
 
@@ -901,6 +1127,7 @@ export default function DashboardPanel({
       setEvaluations({});
       setEvaluationError("");
       setIsEvaluating(false);
+      setEvaluationRequestKey("");
       return;
     }
 
@@ -930,13 +1157,145 @@ export default function DashboardPanel({
       );
 
       setEvaluations(normalizedEvaluations);
+      setEvaluationRequestKey(evaluationRequestBody);
     } catch (error) {
       setEvaluations({});
+      setEvaluationRequestKey("");
       setEvaluationError(
         error instanceof Error ? error.message : "AI quality score unavailable."
       );
     } finally {
       setIsEvaluating(false);
+    }
+  };
+
+  const getLatestEstimate = () =>
+    categories.reduce((sum, categoryName) => {
+      const categoryCount = counts[categoryName];
+      if (categoryCount === 0 || categoryCount === 1) return sum + MIN_MARK;
+      if (categoryCount === 2) return sum + 5;
+      if (categoryCount === 3) return sum + 6;
+      return sum + MAX_MARK;
+    }, 0);
+
+  const analyzeBulletproofSeven = async () => {
+    if (!aiEnabled) {
+      setBulletproofSummaryError("Dashboard AI is disabled in Settings.");
+      return;
+    }
+
+    if (!hasCategoryBullets) {
+      return;
+    }
+
+    const latestEstimate = getLatestEstimate();
+
+    setLockedTotalEstimate(latestEstimate);
+    void persistLockedTotalEstimate(latestEstimate);
+
+    shouldAutoSaveBulletproofGenerationRef.current = true;
+    setHasAnalyzedBulletproof(true);
+    setIsAnalyzingBulletproof(true);
+    setBulletproofSummaries({});
+    setBulletproofSummaryError("");
+    setIsLoadingBulletproofSummaries(false);
+    setBulletproofSummaryRequestKey("");
+
+    try {
+      if (evaluationRequestKey !== evaluationRequestBody || Object.keys(evaluations).length === 0) {
+        await fetchCategoryEvaluations();
+      }
+    } finally {
+      setIsAnalyzingBulletproof(false);
+    }
+  };
+
+  const repromptBulletproofSummary = async (categoryName: string) => {
+    const categoryBullets = bulletsByCategory[categoryName] ?? [];
+    if (!aiEnabled) {
+      setBulletproofSummaryError("Dashboard AI is disabled in Settings.");
+      return;
+    }
+
+    if (categoryBullets.length === 0) {
+      return;
+    }
+
+    setBulletproofRepromptingCategory(categoryName);
+    setBulletproofSummaryError("");
+
+    try {
+      const summaries = await fetchBulletproofSummarySet({
+        [categoryName]: categoryBullets,
+      });
+
+      setBulletproofSummaries((prev) => ({
+        ...prev,
+        [categoryName]: summaries[categoryName] || prev[categoryName] || "Summary unavailable.",
+      }));
+    } catch (error) {
+      setBulletproofSummaryError(
+        error instanceof Error ? error.message : "Unable to build Bulletproof 7 summaries."
+      );
+    } finally {
+      setBulletproofRepromptingCategory(null);
+    }
+  };
+
+  const startEditingBulletproofSummary = (categoryName: string) => {
+    setBulletproofEditingCategory(categoryName);
+    setBulletproofEditDrafts((prev) => ({
+      ...prev,
+      [categoryName]: bulletproofSummaries[categoryName] || "",
+    }));
+  };
+
+  const cancelEditingBulletproofSummary = (categoryName: string) => {
+    setBulletproofEditingCategory((prev) => (prev === categoryName ? null : prev));
+    setBulletproofEditDrafts((prev) => {
+      const next = { ...prev };
+      delete next[categoryName];
+      return next;
+    });
+  };
+
+  const applyEditedBulletproofSummary = (categoryName: string) => {
+    const nextSummary = (bulletproofEditDrafts[categoryName] || "").trim();
+    if (!nextSummary) {
+      return;
+    }
+
+    setBulletproofSummaries((prev) => ({
+      ...prev,
+      [categoryName]: clampSummaryLength(nextSummary),
+    }));
+    cancelEditingBulletproofSummary(categoryName);
+  };
+
+  const saveBulletproofSummary = async (categoryName: string) => {
+    const summary = (bulletproofSummaries[categoryName] || "").trim();
+    if (!summary) {
+      return;
+    }
+
+    const nextValue: Record<string, SavedBulletproofSummary> = {
+      ...savedBulletproofSummaries,
+      [categoryName]: {
+        summary,
+        savedAt: new Date().toISOString(),
+      },
+    };
+
+    setBulletproofSavingCategory(categoryName);
+    setSavedBulletproofSummaries(nextValue);
+
+    try {
+      await persistSavedBulletproofSummaries(nextValue);
+    } catch {
+      setSavedBulletproofSummaries(savedBulletproofSummaries);
+      setBulletproofSummaryError("Unable to save this 7 right now.");
+    } finally {
+      setBulletproofSavingCategory(null);
     }
   };
 
@@ -950,18 +1309,13 @@ export default function DashboardPanel({
       return;
     }
 
-    const latestEstimate = categories.reduce((sum, categoryName) => {
-      const categoryCount = counts[categoryName];
-      if (categoryCount === 0 || categoryCount === 1) return sum + MIN_MARK;
-      if (categoryCount === 2) return sum + 5;
-      if (categoryCount === 3) return sum + 6;
-      return sum + MAX_MARK;
-    }, 0);
+    const latestEstimate = getLatestEstimate();
 
     setLockedTotalEstimate(latestEstimate);
     void persistLockedTotalEstimate(latestEstimate);
 
     setHasAnalyzedDashboard(true);
+    setHasAnalyzedBulletproof(true);
     setIsAnalyzingDashboard(true);
     setInsightsError("");
     setDismissedUnderrepresentedCategories(false);
@@ -1056,14 +1410,18 @@ export default function DashboardPanel({
 
   useEffect(() => {
     if (!hasCategoryBullets) {
+      shouldAutoSaveBulletproofGenerationRef.current = false;
       setEvaluations({});
       setEvaluationError("");
+      setEvaluationRequestKey("");
       setInsights(null);
       setInsightsError("");
       setHasAnalyzedDashboard(false);
+      setHasAnalyzedBulletproof(false);
       setIsEvaluating(false);
       setIsLoadingInsights(false);
       setIsAnalyzingDashboard(false);
+      setIsAnalyzingBulletproof(false);
       setDismissedUnderrepresentedCategories(false);
       setDismissedBullets(new Set());
       setDismissedRepetitionGroups(new Set());
@@ -1115,6 +1473,53 @@ export default function DashboardPanel({
     rankLevel,
     categories: bulletproofSummaryCategories,
   });
+  const hasAnalyzedBulletproofSection = hasAnalyzedDashboard || hasAnalyzedBulletproof;
+
+  useEffect(() => {
+    if (!hasLoadedBulletproofAnalysis || !persistedBulletproofAnalysis) {
+      return;
+    }
+
+    if (!persistedBulletproofAnalysis.hasAnalyzedBulletproof) {
+      return;
+    }
+
+    if (persistedBulletproofAnalysis.requestKey !== bulletproofRequestKey) {
+      return;
+    }
+
+    setHasAnalyzedBulletproof(true);
+    setBulletproofSummaries(persistedBulletproofAnalysis.summaries);
+    setBulletproofSummaryError("");
+    setIsLoadingBulletproofSummaries(false);
+    setBulletproofSummaryRequestKey(persistedBulletproofAnalysis.requestKey);
+  }, [bulletproofRequestKey, hasLoadedBulletproofAnalysis, persistedBulletproofAnalysis]);
+
+  useEffect(() => {
+    if (!hasLoadedBulletproofAnalysis || !sessionUserId) {
+      return;
+    }
+
+    const nextValue: PersistedBulletproofAnalysisState = {
+      version: BULLETPROOF_ANALYSIS_STORAGE_VERSION,
+      hasAnalyzedBulletproof: hasAnalyzedBulletproofSection,
+      requestKey: bulletproofSummaryRequestKey,
+      summaries: bulletproofSummaries,
+    };
+
+    setPersistedBulletproofAnalysis(nextValue);
+
+    void persistBulletproofAnalysis(nextValue).catch(() => {
+      setBulletproofSummaryError((prev) => prev || "Unable to save Bulletproof 7 analysis for the next session.");
+    });
+  }, [
+    bulletproofSummaries,
+    bulletproofSummaryRequestKey,
+    hasAnalyzedBulletproofSection,
+    hasLoadedBulletproofAnalysis,
+    persistBulletproofAnalysis,
+    sessionUserId,
+  ]);
 
   useEffect(() => {
     const requestPayload = JSON.parse(bulletproofRequestKey) as {
@@ -1123,7 +1528,12 @@ export default function DashboardPanel({
     };
     const categoryNames = Object.keys(requestPayload.categories);
 
-    if (!hasAnalyzedDashboard || !aiEnabled) {
+    if (!hasLoadedBulletproofAnalysis) {
+      return;
+    }
+
+    if (!hasAnalyzedBulletproofSection || !aiEnabled) {
+      shouldAutoSaveBulletproofGenerationRef.current = false;
       setBulletproofSummaries({});
       setBulletproofSummaryError("");
       setIsLoadingBulletproofSummaries(false);
@@ -1132,6 +1542,7 @@ export default function DashboardPanel({
     }
 
     if (categoryNames.length === 0) {
+      shouldAutoSaveBulletproofGenerationRef.current = false;
       setBulletproofSummaries({});
       setBulletproofSummaryError("");
       setIsLoadingBulletproofSummaries(false);
@@ -1143,46 +1554,49 @@ export default function DashboardPanel({
       return;
     }
 
-    if (isLoadingBulletproofSummaries) {
-      return;
-    }
-
     let cancelled = false;
     setIsLoadingBulletproofSummaries(true);
     setBulletproofSummaryError("");
 
     void (async () => {
       try {
-        const response = await fetch("/api/summarize-bulletproof-seven", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            rankLevel: requestPayload.rankLevel,
-            categories: requestPayload.categories,
-          }),
-        });
-        const data = (await response.json()) as {
-          summaries?: Record<string, string>;
-          error?: string;
-        };
-
-        if (!response.ok) {
-          throw new Error(data.error || "Unable to build Bulletproof 7 summaries.");
-        }
-
-        const summaries = Object.fromEntries(
-          categoryNames.map((categoryName) => {
-            const raw = typeof data.summaries?.[categoryName] === "string" ? data.summaries[categoryName] : "";
-            return [categoryName, clampSummaryLength(raw)];
-          })
-        );
+        const summaries = await fetchBulletproofSummarySet(requestPayload.categories);
 
         if (!cancelled) {
+          const shouldAutoSave = shouldAutoSaveBulletproofGenerationRef.current;
           setBulletproofSummaries(summaries);
           setBulletproofSummaryRequestKey(bulletproofRequestKey);
+
+          if (shouldAutoSave) {
+            const savedAt = new Date().toISOString();
+            const nextSavedSummaries = {
+              ...savedBulletproofSummaries,
+              ...Object.fromEntries(
+                Object.entries(summaries).map(([categoryName, summary]) => [
+                  categoryName,
+                  {
+                    summary,
+                    savedAt,
+                  },
+                ])
+              ),
+            };
+
+            setSavedBulletproofSummaries(nextSavedSummaries);
+
+            try {
+              await persistSavedBulletproofSummaries(nextSavedSummaries);
+            } catch {
+              setSavedBulletproofSummaries(savedBulletproofSummaries);
+              setBulletproofSummaryError("Built 7's, but couldn't save them for the next session.");
+            }
+
+            shouldAutoSaveBulletproofGenerationRef.current = false;
+          }
         }
       } catch (error) {
         if (!cancelled) {
+          shouldAutoSaveBulletproofGenerationRef.current = false;
           setBulletproofSummaries({});
           setBulletproofSummaryError(
             error instanceof Error ? error.message : "Unable to build Bulletproof 7 summaries."
@@ -1201,12 +1615,13 @@ export default function DashboardPanel({
     };
   }, [
     aiEnabled,
+    hasLoadedBulletproofAnalysis,
     bulletproofRequestKey,
-    bulletproofSevenCategories.length,
     bulletproofSummaryRequestKey,
-    hasAnalyzedDashboard,
-    isLoadingBulletproofSummaries,
-    rankLevel,
+    fetchBulletproofSummarySet,
+    hasAnalyzedBulletproofSection,
+    persistSavedBulletproofSummaries,
+    savedBulletproofSummaries,
   ]);
 
   const totalEstimate = categories.reduce((sum, cat) => {
@@ -1305,9 +1720,9 @@ export default function DashboardPanel({
 
   return (
     <div className="space-y-4">
-      <div className="bg-white p-4 rounded-xl shadow-md">
+      <div className="rounded-xl bg-(--surface-1) p-4 shadow-md">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="text-xl font-semibold text-left">Dashboard</h2>
+          <h2 className="text-left text-xl font-semibold text-(--text-strong)">Dashboard</h2>
           <div className="text-center sm:text-right">
             <p className="text-xl">
               <span className="font-bold">Total Marking Estimate:</span>{" "}
@@ -1319,23 +1734,23 @@ export default function DashboardPanel({
               </span>
             </p>
             {evaluationError && (
-              <p className="mt-2 text-sm text-red-600">{evaluationError}</p>
+              <p className="mt-2 text-sm text-(--color-danger)">{evaluationError}</p>
             )}
           </div>
         </div>
       </div>
 
       {/* ── AI Smart Insights Section ── */}
-      <div className="dashboard-smart-insights mt-6 border-t border-gray-200 pt-6">
+      <div className="dashboard-smart-insights mt-6 border-t border-(--border-muted) pt-6">
         <div className="space-y-5">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h3 className="text-base font-semibold text-gray-800">AI Smart Insights</h3>
+          <h3 className="text-base font-semibold text-(--text-strong)">AI Smart Insights</h3>
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => void analyzeDashboard()}
               disabled={!hasCategoryBullets || isAnalyzingDashboard || !aiEnabled}
-              className="analyze-dashboard-button rounded-md border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-800 transition-colors hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+              className="analyze-dashboard-button btn-secondary rounded-md px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isAnalyzingDashboard ? "Analyzing..." : "Analyze Dashboard"}
             </button>
@@ -1346,35 +1761,35 @@ export default function DashboardPanel({
         )}
 
         {!hasCategoryBullets ? (
-          <p className="text-sm text-gray-400 text-center py-4">
+          <p className="py-4 text-center text-sm text-(--text-soft)">
             Add bullets to generate AI smart insights.
           </p>
         ) : !hasAnalyzedDashboard ? (
-          <p className="py-4 text-center text-sm text-gray-500">
+          <p className="py-4 text-center text-sm text-(--text-soft)">
             Press Analyze Dashboard to run AI Smart Insights.
           </p>
         ) : isLoadingInsights || isEvaluating ? (
-          <p className="text-sm text-gray-500 text-center py-4">Analyzing your bullets&#8230;</p>
+          <p className="py-4 text-center text-sm text-(--text-soft)">Analyzing your bullets&#8230;</p>
         ) : insightsError ? (
-          <p className="text-sm text-red-600 text-center py-4">{insightsError}</p>
+          <p className="text-sm text-(--color-danger) text-center py-4">{insightsError}</p>
         ) : insights ? (
           <div className="space-y-5">
 
             {visibleUnderrepresentedCount > 0 && (
-            <div className="insight-panel insight-panel-orange rounded-xl border border-orange-200 bg-orange-50 overflow-hidden">
+            <div className="insight-panel overflow-hidden rounded-xl border border-(--color-warning) bg-(--color-warning-soft)">
               <div className="flex items-center gap-2 px-4 py-3">
                 <button
                   type="button"
                   onClick={() => toggleInsightSection("underrepresented")}
                   className="flex min-w-0 flex-1 items-center gap-2 text-left"
                 >
-                  <svg className="h-4 w-4 text-orange-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <svg className="h-4 w-4 text-(--color-warning) shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
                   </svg>
-                  <h4 className="text-sm font-semibold text-orange-700">
+                  <h4 className="text-sm font-semibold text-(--color-warning)">
                     Underrepresented Categories
                     {visibleUnderrepresentedCount > 0 && (
-                      <span className="ml-2 inline-flex items-center rounded-full bg-orange-200 px-2 py-0.5 text-xs font-medium text-orange-800">
+                      <span className="ml-2 inline-flex items-center rounded-full bg-(--color-warning-soft) px-2 py-0.5 text-xs font-medium text-(--color-warning)">
                         {visibleUnderrepresentedCount}
                       </span>
                     )}
@@ -1384,7 +1799,7 @@ export default function DashboardPanel({
                   type="button"
                   onClick={() => setDismissedUnderrepresentedCategories(true)}
                   disabled={visibleUnderrepresentedCount === 0}
-                  className="shrink-0 rounded-md border border-orange-300 bg-white px-2.5 py-1 text-xs font-semibold text-orange-800 hover:bg-orange-100 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                  className="btn-secondary shrink-0 rounded-md px-2.5 py-1 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   Dismiss All
                 </button>
@@ -1396,7 +1811,7 @@ export default function DashboardPanel({
                   title="Toggle"
                 >
                   <svg
-                    className={`h-4 w-4 text-orange-400 transition-transform duration-200 ${openInsightSections.underrepresented ? "rotate-180" : ""}`}
+                    className={`h-4 w-4 text-(--color-warning) transition-transform duration-200 ${openInsightSections.underrepresented ? "rotate-180" : ""}`}
                     fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
                   >
                     <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
@@ -1406,20 +1821,20 @@ export default function DashboardPanel({
               {openInsightSections.underrepresented && (
                 <div className="px-4 pb-4">
                   {dismissedUnderrepresentedCategories ? (
-                    <p className="text-xs text-orange-600">All underrepresented category suggestions dismissed.</p>
+                    <p className="text-xs text-(--color-warning)">All underrepresented category suggestions dismissed.</p>
                   ) : localUnderrepresentedCategories.length === 0 ? (
-                    <p className="text-xs text-orange-600">All categories are well-represented.</p>
+                    <p className="text-xs text-(--color-warning)">All categories are well-represented.</p>
                   ) : (
                     <ul className="space-y-3">
                       {localUnderrepresentedCategories.map((item, i) => (
-                        <li key={i} className="insight-card rounded-lg bg-white border border-orange-100 p-3">
+                        <li key={i} className="insight-card rounded-lg bg-(--surface-1) border border-(--border-muted) p-3">
                           <div className="flex items-center justify-between mb-1">
-                            <p className="text-xs font-semibold text-gray-700">{item.category}</p>
-                            <span className="text-xs text-orange-600 font-medium">
+                            <p className="text-xs font-semibold text-(--text-strong)">{item.category}</p>
+                            <span className="text-xs text-(--color-warning) font-medium">
                               {item.bulletCount} {item.bulletCount === 1 ? "bullet" : "bullets"}
                             </span>
                           </div>
-                          <p className="text-xs text-gray-600">{item.suggestedAction}</p>
+                          <p className="text-xs text-(--text-soft)">{item.suggestedAction}</p>
                         </li>
                       ))}
                     </ul>
@@ -1435,7 +1850,7 @@ export default function DashboardPanel({
                 (item) => !dismissedBullets.has(item.bullet)
               );
               return (
-                <div className="insight-panel insight-panel-yellow rounded-xl border border-yellow-200 bg-yellow-50 overflow-hidden">
+                <div className="insight-panel overflow-hidden rounded-xl border border-(--color-warning) bg-(--color-warning-soft)">
                   <div className="flex items-center gap-2 px-4 py-3">
                     <button
                       type="button"
@@ -1443,13 +1858,13 @@ export default function DashboardPanel({
                       className="flex min-w-0 flex-1 items-center text-left"
                     >
                       <div className="flex items-center gap-2">
-                        <svg className="h-4 w-4 text-yellow-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <svg className="h-4 w-4 text-(--color-warning) shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m1.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
                         </svg>
-                        <h4 className="text-sm font-semibold text-yellow-700">
+                        <h4 className="text-sm font-semibold text-(--color-warning)">
                           Bullets Missing Measurable Results
                           {visible.length > 0 && (
-                            <span className="ml-2 inline-flex items-center rounded-full bg-yellow-200 px-2 py-0.5 text-xs font-medium text-yellow-800">
+                            <span className="ml-2 inline-flex items-center rounded-full bg-(--color-warning-soft) px-2 py-0.5 text-xs font-medium text-(--color-warning)">
                               {visible.length}
                             </span>
                           )}
@@ -1460,7 +1875,7 @@ export default function DashboardPanel({
                       type="button"
                       onClick={() => void refreshInsightSection("missingResults")}
                       disabled={refreshingInsightSection === "missingResults"}
-                      className="shrink-0 rounded-md border border-yellow-300 bg-white px-2.5 py-1 text-xs font-semibold text-yellow-800 hover:bg-yellow-100 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                      className="shrink-0 rounded-md border border-(--color-warning) bg-(--surface-1) px-2.5 py-1 text-xs font-semibold text-(--color-warning) hover:bg-(--color-warning-soft) transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {refreshingInsightSection === "missingResults" ? "Refreshing..." : "Refresh"}
                     </button>
@@ -1472,7 +1887,7 @@ export default function DashboardPanel({
                         )
                       }
                       disabled={visibleMissingResultsCount === 0}
-                      className="shrink-0 rounded-md border border-yellow-300 bg-white px-2.5 py-1 text-xs font-semibold text-yellow-800 hover:bg-yellow-100 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                      className="shrink-0 rounded-md border border-(--color-warning) bg-(--surface-1) px-2.5 py-1 text-xs font-semibold text-(--color-warning) hover:bg-(--color-warning-soft) transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       Dismiss All
                     </button>
@@ -1484,7 +1899,7 @@ export default function DashboardPanel({
                       title="Toggle"
                     >
                       <svg
-                        className={`h-4 w-4 text-yellow-400 transition-transform duration-200 ${openInsightSections.missingResults ? "rotate-180" : ""}`}
+                        className={`h-4 w-4 text-(--color-warning) transition-transform duration-200 ${openInsightSections.missingResults ? "rotate-180" : ""}`}
                         fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
                       >
                         <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
@@ -1494,20 +1909,20 @@ export default function DashboardPanel({
                   {openInsightSections.missingResults && (
                     <div className="px-4 pb-4">
                       {visible.length === 0 ? (
-                        <p className="text-xs text-yellow-600">All missing-results suggestions dismissed.</p>
+                        <p className="text-xs text-(--color-warning)">All missing-results suggestions dismissed.</p>
                       ) : (
                         <ul className="space-y-3">
                           {visible.map((item, i) => {
                             const isEditing = Object.prototype.hasOwnProperty.call(editingBullets, item.bullet);
                             return (
-                              <li key={i} className="insight-card rounded-lg bg-white border border-yellow-100 p-3">
-                                <p className="text-xs text-gray-400 uppercase tracking-wide font-semibold mb-1">{item.category}</p>
-                                <p className="text-xs text-gray-600 italic mb-2">&ldquo;{item.bullet}&rdquo;</p>
+                              <li key={i} className="insight-card rounded-lg bg-(--surface-1) border border-(--border-muted) p-3">
+                                <p className="text-xs text-(--text-soft) uppercase tracking-wide font-semibold mb-1">{item.category}</p>
+                                <p className="text-xs text-(--text-soft) italic mb-2">&ldquo;{item.bullet}&rdquo;</p>
                                 <div className="flex items-start gap-1.5 mb-3">
-                                  <svg className="h-3.5 w-3.5 text-yellow-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <svg className="h-3.5 w-3.5 text-(--color-warning) mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                     <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
                                   </svg>
-                                  <p className="text-xs text-gray-700">
+                                  <p className="text-xs text-(--text-strong)">
                                     {item.suggestedImprovement.split("[X%]").map((part, partIndex, parts) => (
                                       <span key={partIndex}>
                                         {part}
@@ -1519,28 +1934,28 @@ export default function DashboardPanel({
                                 {isEditing ? (
                                   <div className="space-y-2">
                                     <textarea
-                                      className="w-full rounded-md border border-yellow-300 bg-yellow-50 px-2.5 py-1.5 text-xs text-gray-800 focus:outline-none focus:ring-1 focus:ring-yellow-400 resize-none"
+                                      className="w-full rounded-md border border-(--color-warning) bg-(--color-warning-soft) px-2.5 py-1.5 text-xs text-(--text-strong) focus:outline-none focus:ring-1 focus:ring-(--color-warning) resize-none"
                                       rows={3}
                                       value={editingBullets[item.bullet]}
                                       onChange={(e) =>
                                         setEditingBullets((prev) => ({ ...prev, [item.bullet]: e.target.value }))
                                       }
                                     />
-                                    <p className="text-xs text-yellow-700">
+                                    <p className="text-xs text-(--color-warning)">
                                       Replace <strong>[X%]</strong> with your real measurable result before saving.
                                     </p>
                                     <div className="flex gap-2">
                                       <button
                                         type="button"
                                         onClick={() => commitEditingBullet(item.bullet, item.category)}
-                                        className="rounded-md bg-yellow-500 px-3 py-1 text-xs font-semibold text-white hover:bg-yellow-600 transition-colors"
+                                        className="rounded-md bg-(--color-warning) px-3 py-1 text-xs font-semibold text-(--color-text-on-strong) hover:opacity-80 transition-colors"
                                       >
                                         Save
                                       </button>
                                       <button
                                         type="button"
                                         onClick={() => cancelEditingBullet(item.bullet)}
-                                        className="rounded-md border border-gray-200 bg-white px-3 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
+                                        className="rounded-md border border-(--border-muted) bg-(--surface-1) px-3 py-1 text-xs font-semibold text-(--text-soft) hover:bg-(--surface-2) transition-colors"
                                       >
                                         Cancel
                                       </button>
@@ -1550,7 +1965,7 @@ export default function DashboardPanel({
                                   <button
                                     type="button"
                                     onClick={() => startEditingBullet(item.bullet, item.suggestedImprovement)}
-                                    className="flex items-center gap-1.5 rounded-md border border-yellow-300 bg-yellow-100 px-3 py-1 text-xs font-semibold text-yellow-800 hover:bg-yellow-200 transition-colors"
+                                    className="flex items-center gap-1.5 rounded-md border border-(--color-warning) bg-(--color-warning-soft) px-3 py-1 text-xs font-semibold text-(--color-warning) hover:opacity-80 transition-colors"
                                   >
                                     <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                       <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
@@ -1571,7 +1986,7 @@ export default function DashboardPanel({
 
             {/* Repetition Detected */}
             {visibleRepetitionInsightCount > 0 && (
-            <div className="insight-panel insight-panel-purple rounded-xl border border-purple-200 bg-purple-50 overflow-hidden">
+            <div className="insight-panel overflow-hidden rounded-xl border border-(--color-secondary) bg-(--color-secondary-soft)">
               <div className="flex items-center gap-2 px-4 py-3">
                 <button
                   type="button"
@@ -1579,13 +1994,13 @@ export default function DashboardPanel({
                   className="flex min-w-0 flex-1 items-center text-left"
                 >
                   <div className="flex items-center gap-2">
-                    <svg className="h-4 w-4 text-purple-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <svg className="h-4 w-4 text-(--color-secondary) shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                     </svg>
-                    <h4 className="text-sm font-semibold text-purple-700">
+                    <h4 className="text-sm font-semibold text-(--color-secondary)">
                       Repetition Detected
                       {visibleRepetitionInsightCount > 0 && (
-                        <span className="ml-2 inline-flex items-center rounded-full bg-purple-200 px-2 py-0.5 text-xs font-medium text-purple-800">
+                        <span className="ml-2 inline-flex items-center rounded-full bg-(--color-secondary-soft) px-2 py-0.5 text-xs font-medium text-(--color-secondary)">
                           {visibleRepetitionInsightCount} {visibleRepetitionInsightCount === 1 ? "item" : "items"}
                         </span>
                       )}
@@ -1596,7 +2011,7 @@ export default function DashboardPanel({
                   type="button"
                   onClick={() => void refreshInsightSection("repetition")}
                   disabled={refreshingInsightSection === "repetition"}
-                  className="shrink-0 rounded-md border border-purple-300 bg-white px-2.5 py-1 text-xs font-semibold text-purple-800 hover:bg-purple-100 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                  className="shrink-0 rounded-md border border-(--color-secondary) bg-(--surface-1) px-2.5 py-1 text-xs font-semibold text-(--color-secondary) hover:bg-(--color-secondary-soft) transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {refreshingInsightSection === "repetition" ? "Refreshing..." : "Refresh"}
                 </button>
@@ -1611,7 +2026,7 @@ export default function DashboardPanel({
                     );
                   }}
                   disabled={visibleRepetitionInsightCount === 0}
-                  className="shrink-0 rounded-md border border-purple-300 bg-white px-2.5 py-1 text-xs font-semibold text-purple-800 hover:bg-purple-100 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                  className="shrink-0 rounded-md border border-(--color-secondary) bg-(--surface-1) px-2.5 py-1 text-xs font-semibold text-(--color-secondary) hover:bg-(--color-secondary-soft) transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   Dismiss All
                 </button>
@@ -1623,7 +2038,7 @@ export default function DashboardPanel({
                   title="Toggle"
                 >
                   <svg
-                    className={`h-4 w-4 text-purple-400 transition-transform duration-200 ${openInsightSections.repetition ? "rotate-180" : ""}`}
+                    className={`h-4 w-4 text-(--color-secondary) transition-transform duration-200 ${openInsightSections.repetition ? "rotate-180" : ""}`}
                     fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
                   >
                     <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
@@ -1633,16 +2048,16 @@ export default function DashboardPanel({
               {openInsightSections.repetition && (
                 <div className="px-4 pb-4">
                   {visibleCrossCategorySimilarityCount > 0 && (
-                    <div className="insight-card mb-4 rounded-lg border border-purple-200 bg-white p-3">
+                    <div className="insight-card mb-4 rounded-lg border border-(--color-secondary) bg-(--surface-1) p-3">
                       <div className="mb-2 flex items-center justify-between gap-2">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-purple-700">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-(--color-secondary)">
                           Cross-Category Similarity Dialogue
                         </p>
-                        <span className="rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700">
+                        <span className="rounded-full bg-(--color-secondary-soft) px-2 py-0.5 text-xs font-medium text-(--color-secondary)">
                           {visibleCrossCategorySimilarityCount}
                         </span>
                       </div>
-                      <p className="mb-3 text-xs text-gray-600">
+                      <p className="mb-3 text-xs text-(--text-soft)">
                         These bullets look too close across different categories. Generate a category-specific rewrite for either mark only when you need clearer differentiation. If they already read as distinct category evidence, dismiss the item.
                       </p>
                       <ul className="space-y-3">
@@ -1655,15 +2070,15 @@ export default function DashboardPanel({
                             const rightDraft = crossCategoryRewordDrafts[rightKey] || "";
 
                             return (
-                              <li key={pair.key} className="insight-subpanel rounded-md border border-purple-100 bg-purple-50 p-3">
+                              <li key={pair.key} className="insight-subpanel rounded-md border border-(--color-secondary) bg-(--color-secondary-soft) p-3">
                                 <div className="mb-2 flex items-center justify-between gap-2">
-                                  <p className="text-xs font-semibold text-purple-700">
+                                  <p className="text-xs font-semibold text-(--color-secondary)">
                                     Pair {index + 1}: {pair.matchType === "identical" ? "Identical" : "Very Similar"}
                                   </p>
                                   <button
                                     type="button"
                                     onClick={() => setDismissedCrossCategoryPairs((prev) => new Set(prev).add(pair.key))}
-                                    className="rounded border border-purple-200 bg-white px-1.5 py-0.5 text-xs font-semibold text-purple-600 hover:bg-purple-100 transition-colors"
+                                    className="rounded border border-(--color-secondary) bg-(--surface-1) px-1.5 py-0.5 text-xs font-semibold text-(--color-secondary) hover:bg-(--color-secondary-soft) transition-colors"
                                     title="Dismiss similarity dialogue"
                                     aria-label="Dismiss similarity dialogue"
                                   >
@@ -1672,15 +2087,15 @@ export default function DashboardPanel({
                                 </div>
 
                                 <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-                                  <div className="insight-card rounded-md border border-purple-100 bg-white p-2">
-                                    <p className="mb-1 text-xs font-semibold text-gray-700">{pair.left.category}</p>
-                                    <p className="text-xs text-gray-600">&ldquo;{pair.left.text}&rdquo;</p>
+                                  <div className="insight-card rounded-md border border-(--border-muted) bg-(--surface-1) p-2">
+                                    <p className="mb-1 text-xs font-semibold text-(--text-strong)">{pair.left.category}</p>
+                                    <p className="text-xs text-(--text-soft)">&ldquo;{pair.left.text}&rdquo;</p>
 
                                     {(leftDraft || crossCategoryRewordErrorByKey[leftKey]) && (
-                                      <div className="insight-card mt-3 rounded-md border border-purple-200 bg-white p-2">
-                                        <p className="mb-1 text-xs font-semibold text-purple-700">Draft for {pair.left.category}</p>
+                                      <div className="insight-card mt-3 rounded-md border border-(--color-secondary) bg-(--surface-1) p-2">
+                                        <p className="mb-1 text-xs font-semibold text-(--color-secondary)">Draft for {pair.left.category}</p>
                                         <textarea
-                                          className="w-full resize-none rounded-md border border-purple-200 bg-white px-2.5 py-2 text-xs italic text-gray-800 focus:outline-none focus:ring-1 focus:ring-purple-300"
+                                          className="w-full resize-none rounded-md border border-(--color-secondary) bg-(--surface-1) px-2.5 py-2 text-xs italic text-(--text-strong) focus:outline-none focus:ring-1 focus:ring-(--color-secondary)"
                                           rows={3}
                                           value={leftDraft}
                                           onChange={(e) =>
@@ -1688,13 +2103,13 @@ export default function DashboardPanel({
                                           }
                                         />
                                         {crossCategoryRewordErrorByKey[leftKey] && (
-                                          <p className="mt-1 text-xs text-red-600">{crossCategoryRewordErrorByKey[leftKey]}</p>
+                                          <p className="mt-1 text-xs text-(--color-danger)">{crossCategoryRewordErrorByKey[leftKey]}</p>
                                         )}
                                         <div className="mt-2 flex gap-2">
                                           <button
                                             type="button"
                                             onClick={() => commitCrossCategoryReword(pair, "left")}
-                                            className="rounded-md bg-purple-600 px-3 py-1 text-xs font-semibold text-white hover:bg-purple-700 transition-colors"
+                                            className="rounded-md bg-(--color-primary) px-3 py-1 text-xs font-semibold text-(--color-text-on-strong) hover:bg-(--color-primary-hover) transition-colors"
                                           >
                                             Save {pair.left.category}
                                           </button>
@@ -1708,7 +2123,7 @@ export default function DashboardPanel({
                                               });
                                               setCrossCategoryRewordErrorByKey((prev) => ({ ...prev, [leftKey]: "" }));
                                             }}
-                                            className="ml-auto rounded-md border border-gray-200 bg-white px-3 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
+                                            className="ml-auto rounded-md border border-(--border-muted) bg-(--surface-1) px-3 py-1 text-xs font-semibold text-(--text-soft) hover:bg-(--surface-2) transition-colors"
                                           >
                                             Exit
                                           </button>
@@ -1720,20 +2135,20 @@ export default function DashboardPanel({
                                       type="button"
                                       onClick={() => void generateCrossCategoryReword(pair, "left")}
                                       disabled={crossCategoryRewordLoadingKey === leftKey}
-                                      className="mt-3 w-full rounded-md border border-purple-300 bg-white px-3 py-1 text-xs font-semibold text-purple-700 hover:bg-purple-100 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                                      className="mt-3 w-full rounded-md border border-(--color-secondary) bg-(--surface-1) px-3 py-1 text-xs font-semibold text-(--color-secondary) hover:bg-(--color-secondary-soft) transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                                     >
                                       {crossCategoryRewordLoadingKey === leftKey ? "Rewording..." : `Reword for ${pair.left.category}`}
                                     </button>
                                   </div>
-                                  <div className="insight-card rounded-md border border-purple-100 bg-white p-2">
-                                    <p className="mb-1 text-xs font-semibold text-gray-700">{pair.right.category}</p>
-                                    <p className="text-xs text-gray-600">&ldquo;{pair.right.text}&rdquo;</p>
+                                  <div className="insight-card rounded-md border border-(--border-muted) bg-(--surface-1) p-2">
+                                    <p className="mb-1 text-xs font-semibold text-(--text-strong)">{pair.right.category}</p>
+                                    <p className="text-xs text-(--text-soft)">&ldquo;{pair.right.text}&rdquo;</p>
 
                                     {(rightDraft || crossCategoryRewordErrorByKey[rightKey]) && (
-                                      <div className="insight-card mt-3 rounded-md border border-purple-200 bg-white p-2">
-                                        <p className="mb-1 text-xs font-semibold text-purple-700">Draft for {pair.right.category}</p>
+                                      <div className="insight-card mt-3 rounded-md border border-(--color-secondary) bg-(--surface-1) p-2">
+                                        <p className="mb-1 text-xs font-semibold text-(--color-secondary)">Draft for {pair.right.category}</p>
                                         <textarea
-                                          className="w-full resize-none rounded-md border border-purple-200 bg-white px-2.5 py-2 text-xs italic text-gray-800 focus:outline-none focus:ring-1 focus:ring-purple-300"
+                                          className="w-full resize-none rounded-md border border-(--color-secondary) bg-(--surface-1) px-2.5 py-2 text-xs italic text-(--text-strong) focus:outline-none focus:ring-1 focus:ring-(--color-secondary)"
                                           rows={3}
                                           value={rightDraft}
                                           onChange={(e) =>
@@ -1741,13 +2156,13 @@ export default function DashboardPanel({
                                           }
                                         />
                                         {crossCategoryRewordErrorByKey[rightKey] && (
-                                          <p className="mt-1 text-xs text-red-600">{crossCategoryRewordErrorByKey[rightKey]}</p>
+                                          <p className="mt-1 text-xs text-(--color-danger)">{crossCategoryRewordErrorByKey[rightKey]}</p>
                                         )}
                                         <div className="mt-2 flex gap-2">
                                           <button
                                             type="button"
                                             onClick={() => commitCrossCategoryReword(pair, "right")}
-                                            className="rounded-md bg-purple-600 px-3 py-1 text-xs font-semibold text-white hover:bg-purple-700 transition-colors"
+                                            className="rounded-md bg-(--color-primary) px-3 py-1 text-xs font-semibold text-(--color-text-on-strong) hover:bg-(--color-primary-hover) transition-colors"
                                           >
                                             Save {pair.right.category}
                                           </button>
@@ -1761,7 +2176,7 @@ export default function DashboardPanel({
                                               });
                                               setCrossCategoryRewordErrorByKey((prev) => ({ ...prev, [rightKey]: "" }));
                                             }}
-                                            className="ml-auto rounded-md border border-gray-200 bg-white px-3 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
+                                            className="ml-auto rounded-md border border-(--border-muted) bg-(--surface-1) px-3 py-1 text-xs font-semibold text-(--text-soft) hover:bg-(--surface-2) transition-colors"
                                           >
                                             Exit
                                           </button>
@@ -1773,7 +2188,7 @@ export default function DashboardPanel({
                                       type="button"
                                       onClick={() => void generateCrossCategoryReword(pair, "right")}
                                       disabled={crossCategoryRewordLoadingKey === rightKey}
-                                      className="mt-3 w-full rounded-md border border-purple-300 bg-white px-3 py-1 text-xs font-semibold text-purple-700 hover:bg-purple-100 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                                      className="mt-3 w-full rounded-md border border-(--color-secondary) bg-(--surface-1) px-3 py-1 text-xs font-semibold text-(--color-secondary) hover:bg-(--color-secondary-soft) transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                                     >
                                       {crossCategoryRewordLoadingKey === rightKey ? "Rewording..." : `Reword for ${pair.right.category}`}
                                     </button>
@@ -1788,7 +2203,7 @@ export default function DashboardPanel({
 
                   {eligibleRepetitionGroups.filter((group) => !dismissedRepetitionGroups.has(getRepetitionGroupKey(group))).length === 0 ? (
                     visibleCrossCategorySimilarityCount === 0 ? (
-                      <p className="text-xs text-purple-600">All repetition suggestions dismissed.</p>
+                      <p className="text-xs text-(--color-secondary)">All repetition suggestions dismissed.</p>
                     ) : null
                   ) : (
                     <ul className="space-y-3">
@@ -1802,11 +2217,11 @@ export default function DashboardPanel({
                           const isOpen = openConsolidationGroupKey === groupKey;
                           const isReprompting = consolidationLoadingKey === groupKey;
                           return (
-                        <li key={i} className="insight-card rounded-lg bg-white border border-purple-100 p-3">
+                        <li key={i} className="insight-card rounded-lg bg-(--surface-1) border border-(--border-muted) p-3">
                           <div className="flex items-center justify-between mb-2">
-                            <p className="text-xs font-semibold text-purple-700">{group.theme}</p>
+                            <p className="text-xs font-semibold text-(--color-secondary)">{group.theme}</p>
                             <div className="flex items-center gap-2">
-                              <span className="text-xs text-purple-500 font-medium">
+                              <span className="text-xs text-(--color-secondary) font-medium">
                                 {(repetitionGroupResolvedBullets.get(groupIdentityKey) || []).filter(b => !(repGroupResolvedBullets[groupKey] ?? []).includes(b.text)).length} bullets
                               </span>
                               <button
@@ -1815,7 +2230,7 @@ export default function DashboardPanel({
                                   suppressGroupCategoryComparisons(group);
                                   setDismissedRepetitionGroups((prev) => new Set(prev).add(groupKey));
                                 }}
-                                className="rounded border border-purple-200 bg-white px-1.5 py-0.5 text-xs font-semibold text-purple-600 hover:bg-purple-100 transition-colors"
+                                className="rounded border border-(--color-secondary) bg-(--surface-1) px-1.5 py-0.5 text-xs font-semibold text-(--color-secondary) hover:bg-(--color-secondary-soft) transition-colors"
                                 title="Dismiss suggestion"
                                 aria-label="Dismiss suggestion"
                               >
@@ -1823,7 +2238,7 @@ export default function DashboardPanel({
                               </button>
                             </div>
                           </div>
-                          <p className="text-xs text-gray-400 uppercase tracking-wide font-semibold mb-1">
+                          <p className="text-xs text-(--text-soft) uppercase tracking-wide font-semibold mb-1">
                             {resolvedCategoryLabel}
                           </p>
                           <ul className="mb-2 space-y-1">
@@ -1835,10 +2250,10 @@ export default function DashboardPanel({
                               const rewordDraft = repBulletRewordDrafts[bullet.text];
                               const rewordError = repBulletRewordErrorByKey[bullet.text];
                               return (
-                              <li key={j} className="rounded-md border border-gray-300 bg-gray-50 px-2 py-2 text-xs text-gray-700">
+                              <li key={j} className="rounded-md border border-(--border-muted) bg-(--surface-2) px-2 py-2 text-xs text-(--text-strong)">
                                 <div className="flex items-start justify-between gap-2 italic mb-1.5">
                                   <div className="flex min-w-0 items-start gap-1.5">
-                                    <span className="mr-1 inline-flex shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold not-italic text-gray-700">
+                                    <span className="mr-1 inline-flex shrink-0 rounded-full bg-(--surface-3) px-2 py-0.5 text-[10px] font-semibold not-italic text-(--text-strong)">
                                       {bullet.category}
                                     </span>
                                     <span className="min-w-0">&bull; {bullet.text}</span>
@@ -1849,7 +2264,7 @@ export default function DashboardPanel({
                                       onClick={() => {
                                         resolveRepetitionBullet(bullet.text, group);
                                       }}
-                                      className="shrink-0 rounded border border-gray-300 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-gray-600 hover:bg-gray-100 transition-colors"
+                                      className="shrink-0 rounded border border-(--border-muted) bg-(--surface-1) px-1.5 py-0.5 text-[10px] font-semibold text-(--text-soft) hover:bg-(--surface-2) transition-colors"
                                       title={`Dismiss ${bullet.category} from this comparison`}
                                       aria-label={`Dismiss ${bullet.category} from this comparison`}
                                     >
@@ -1863,7 +2278,7 @@ export default function DashboardPanel({
                                     type="button"
                                     disabled={isRewording}
                                     onClick={() => void generateRepetitionBulletReword(bullet.text, bullet.category)}
-                                    className="rounded border border-blue-300 bg-blue-600 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="rounded border border-(--color-primary) bg-(--color-primary) px-2 py-0.5 text-[10px] font-semibold text-(--color-text-on-strong) hover:bg-(--color-primary-hover) transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                   >
                                     {isRewording ? "Rewording..." : "Reword"}
                                   </button>
@@ -1873,21 +2288,21 @@ export default function DashboardPanel({
                                       setRepBulletEditingKey(bullet.text);
                                       setRepBulletEditValues((prev) => ({ ...prev, [bullet.text]: bullet.text }));
                                     }}
-                                    className="rounded border border-gray-300 bg-white px-2 py-0.5 text-[10px] font-semibold text-gray-700 hover:bg-gray-100 transition-colors"
+                                    className="rounded border border-(--border-muted) bg-(--surface-1) px-2 py-0.5 text-[10px] font-semibold text-(--text-strong) hover:bg-(--surface-2) transition-colors"
                                   >
                                     Edit
                                   </button>
                                 </div>
-                                {rewordError && <p className="mt-1 text-[10px] text-red-600 not-italic">{rewordError}</p>}
+                                {rewordError && <p className="mt-1 text-[10px] text-(--color-danger) not-italic">{rewordError}</p>}
                                 {rewordDraft && !isRewording && (
-                                  <div className="mt-2 rounded-md border border-gray-300 bg-white p-2.5 space-y-2 not-italic">
-                                    <p className="text-[10px] font-bold text-gray-600 uppercase tracking-wide">Reword Draft</p>
-                                    <p className="text-xs text-gray-800 leading-relaxed">{rewordDraft}</p>
+                                  <div className="mt-2 rounded-md border border-(--border-muted) bg-(--surface-1) p-2.5 space-y-2 not-italic">
+                                    <p className="text-[10px] font-bold text-(--text-soft) uppercase tracking-wide">Reword Draft</p>
+                                    <p className="text-xs text-(--text-strong) leading-relaxed">{rewordDraft}</p>
                                     <div className="flex gap-2">
                                       <button
                                         type="button"
                                         onClick={() => commitRepetitionBulletReword(bullet.text, rewordDraft, group)}
-                                        className="rounded bg-blue-600 px-2.5 py-1 text-[10px] font-semibold text-white hover:bg-blue-500 transition-colors"
+                                        className="rounded bg-(--color-primary) px-2.5 py-1 text-[10px] font-semibold text-(--color-text-on-strong) hover:bg-(--color-primary-hover) transition-colors"
                                       >
                                         Save
                                       </button>
@@ -1895,14 +2310,14 @@ export default function DashboardPanel({
                                         type="button"
                                         onClick={() => void generateRepetitionBulletReword(bullet.text, bullet.category)}
                                         disabled={isRewording}
-                                        className="rounded border border-blue-300 bg-white px-2.5 py-1 text-[10px] font-semibold text-blue-700 hover:bg-blue-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                        className="rounded border border-(--color-secondary) bg-(--surface-1) px-2.5 py-1 text-[10px] font-semibold text-(--color-secondary) hover:bg-(--color-secondary-soft) transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                       >
                                         Retry
                                       </button>
                                       <button
                                         type="button"
                                         onClick={() => setRepBulletRewordDrafts((prev) => { const n = { ...prev }; delete n[bullet.text]; return n; })}
-                                        className="ml-auto rounded border border-gray-300 bg-transparent px-2.5 py-1 text-[10px] font-semibold text-gray-600 hover:bg-gray-100 transition-colors"
+                                        className="ml-auto rounded border border-(--border-muted) bg-transparent px-2.5 py-1 text-[10px] font-semibold text-(--text-soft) hover:bg-(--surface-2) transition-colors"
                                       >
                                         Dismiss
                                       </button>
@@ -1912,7 +2327,7 @@ export default function DashboardPanel({
                                 {isEditing && (
                                   <div className="mt-2 space-y-1.5 not-italic">
                                     <textarea
-                                      className="w-full rounded-md border border-purple-200 bg-white px-2 py-1.5 text-xs text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-purple-300 resize-none"
+                                      className="w-full rounded-md border border-(--border-muted) bg-(--surface-1) px-2 py-1.5 text-xs text-(--text-strong) placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-(--color-secondary) resize-none"
                                       rows={3}
                                       value={repBulletEditValues[bullet.text] ?? bullet.text}
                                       onChange={(e) => setRepBulletEditValues((prev) => ({ ...prev, [bullet.text]: e.target.value }))}
@@ -1922,14 +2337,14 @@ export default function DashboardPanel({
                                       <button
                                         type="button"
                                         onClick={() => commitRepetitionBulletEdit(bullet.text, group)}
-                                        className="rounded bg-purple-500 px-2.5 py-1 text-[10px] font-semibold text-white hover:bg-purple-400 transition-colors"
+                                        className="rounded bg-(--color-primary) px-2.5 py-1 text-[10px] font-semibold text-(--color-text-on-strong) hover:bg-(--color-primary-hover) transition-colors"
                                       >
                                         Save
                                       </button>
                                       <button
                                         type="button"
                                         onClick={() => { setRepBulletEditingKey(null); setRepBulletEditValues((prev) => { const n = { ...prev }; delete n[bullet.text]; return n; }); }}
-                                        className="rounded border border-purple-600 bg-transparent px-2.5 py-1 text-[10px] font-semibold text-purple-300 hover:bg-purple-800 transition-colors"
+                                        className="rounded border border-(--border-muted) bg-transparent px-2.5 py-1 text-[10px] font-semibold text-(--text-soft) hover:bg-(--surface-2) transition-colors"
                                       >
                                         Cancel
                                       </button>
@@ -1943,10 +2358,10 @@ export default function DashboardPanel({
                           </ul>
                           {!isMultiCategory && (
                           <div className="flex items-start gap-1.5">
-                            <svg className="h-3.5 w-3.5 text-purple-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <svg className="h-3.5 w-3.5 text-(--color-secondary) mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                               <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
                             </svg>
-                            <p className="text-xs text-gray-700">{group.suggestion}</p>
+                            <p className="text-xs text-(--text-strong)">{group.suggestion}</p>
                           </div>
                           )}
 
@@ -1955,7 +2370,7 @@ export default function DashboardPanel({
                             <button
                               type="button"
                               onClick={() => void handleOpenConsolidation(group)}
-                              className="rounded-md border border-purple-300 bg-purple-100 px-3 py-1 text-xs font-semibold text-purple-800 hover:bg-purple-200 transition-colors"
+                              className="rounded-md border border-(--color-secondary) bg-(--color-secondary-soft) px-3 py-1 text-xs font-semibold text-(--color-secondary) hover:opacity-80 transition-colors"
                             >
                               Consolidate and Reprompt
                             </button>
@@ -1963,10 +2378,10 @@ export default function DashboardPanel({
                           )}
 
                           {!isMultiCategory && isOpen && (
-                            <div className="insight-subpanel mt-3 rounded-md border border-purple-200 bg-purple-50 p-3 space-y-2">
-                              <p className="text-xs font-semibold text-purple-700">Consolidated Mark Draft</p>
+                            <div className="insight-subpanel mt-3 rounded-md border border-(--color-secondary) bg-(--color-secondary-soft) p-3 space-y-2">
+                              <p className="text-xs font-semibold text-(--color-secondary)">Consolidated Mark Draft</p>
                               <textarea
-                                className="w-full rounded-md border border-purple-200 bg-white px-2.5 py-2 text-xs text-gray-800 focus:outline-none focus:ring-1 focus:ring-purple-300 resize-none"
+                                className="w-full rounded-md border border-(--color-secondary) bg-(--surface-1) px-2.5 py-2 text-xs text-(--text-strong) focus:outline-none focus:ring-1 focus:ring-(--color-secondary) resize-none"
                                 rows={4}
                                 value={consolidatedDrafts[groupKey] || ""}
                                 onChange={(e) =>
@@ -1974,13 +2389,13 @@ export default function DashboardPanel({
                                 }
                               />
                               {consolidationErrorByKey[groupKey] && (
-                                <p className="text-xs text-red-600">{consolidationErrorByKey[groupKey]}</p>
+                                <p className="text-xs text-(--color-danger)">{consolidationErrorByKey[groupKey]}</p>
                               )}
                               <div className="flex flex-wrap gap-2">
                                 <button
                                   type="button"
                                   onClick={() => handleCommitConsolidation(group)}
-                                  className="rounded-md bg-purple-600 px-3 py-1 text-xs font-semibold text-white hover:bg-purple-700 transition-colors"
+                                  className="rounded-md bg-(--color-primary) px-3 py-1 text-xs font-semibold text-(--color-text-on-strong) hover:bg-(--color-primary-hover) transition-colors"
                                 >
                                   Save
                                 </button>
@@ -1988,14 +2403,14 @@ export default function DashboardPanel({
                                   type="button"
                                   onClick={() => void handleRepromptConsolidation(group)}
                                   disabled={isReprompting}
-                                  className="rounded-md border border-purple-300 bg-white px-3 py-1 text-xs font-semibold text-purple-700 hover:bg-purple-100 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                                  className="rounded-md border border-(--color-secondary) bg-(--surface-1) px-3 py-1 text-xs font-semibold text-(--color-secondary) hover:bg-(--color-secondary-soft) transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                                 >
                                   {isReprompting ? "Reprompting..." : "Reprompt"}
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => setOpenConsolidationGroupKey(null)}
-                                  className="rounded-md border border-gray-200 bg-white px-3 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
+                                  className="rounded-md border border-(--border-muted) bg-(--surface-1) px-3 py-1 text-xs font-semibold text-(--text-soft) hover:bg-(--surface-2) transition-colors"
                                 >
                                   Cancel
                                 </button>
@@ -2014,23 +2429,23 @@ export default function DashboardPanel({
 
             {/* Before Marks Close */}
             {visiblePreCloseCount > 0 && (
-            <div className="insight-panel insight-panel-green rounded-xl border border-green-200 bg-green-50 overflow-hidden">
+            <div className="insight-panel overflow-hidden rounded-xl border border-(--color-success) bg-(--color-success-soft)">
               <div className="flex items-center gap-2 px-4 py-3">
                 <button
                   type="button"
                   onClick={() => toggleInsightSection("preClose")}
                   className="flex min-w-0 flex-1 items-center gap-2 text-left"
                 >
-                  <svg className="h-4 w-4 text-green-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <svg className="h-4 w-4 text-(--color-success) shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
-                  <h4 className="text-sm font-semibold text-green-700">Before Marks Close</h4>
+                  <h4 className="text-sm font-semibold text-(--color-success)">Before Marks Close</h4>
                 </button>
                 <button
                   type="button"
                   onClick={() => setDismissedPreCloseActions(true)}
                   disabled={visiblePreCloseCount === 0}
-                  className="shrink-0 rounded-md border border-green-300 bg-white px-2.5 py-1 text-xs font-semibold text-green-800 hover:bg-green-100 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                  className="shrink-0 rounded-md border border-(--color-success) bg-(--surface-1) px-2.5 py-1 text-xs font-semibold text-(--color-success) hover:bg-(--color-success-soft) transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   Dismiss All
                 </button>
@@ -2042,7 +2457,7 @@ export default function DashboardPanel({
                   title="Toggle"
                 >
                   <svg
-                    className={`h-4 w-4 text-green-400 transition-transform duration-200 ${openInsightSections.preClose ? "rotate-180" : ""}`}
+                    className={`h-4 w-4 text-(--color-success) transition-transform duration-200 ${openInsightSections.preClose ? "rotate-180" : ""}`}
                     fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
                   >
                     <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
@@ -2052,25 +2467,25 @@ export default function DashboardPanel({
               {openInsightSections.preClose && (
                 <div className="px-4 pb-4">
                   {dismissedPreCloseActions || insights.preCloseActions.length === 0 ? (
-                    <p className="text-xs text-green-600">No additional pre-close actions identified.</p>
+                    <p className="text-xs text-(--color-success)">No additional pre-close actions identified.</p>
                   ) : (
                     <ul className="space-y-3">
                       {insights.preCloseActions.map((item, i) => (
-                        <li key={i} className="insight-card rounded-lg bg-white border border-green-100 p-3">
+                        <li key={i} className="insight-card rounded-lg bg-(--surface-1) border border-(--border-muted) p-3">
                           <div className="flex items-start justify-between gap-3 mb-2">
-                            <p className="text-xs text-gray-700 flex-1">{item.action}</p>
+                            <p className="text-xs text-(--text-strong) flex-1">{item.action}</p>
                             <span className={`shrink-0 text-xs font-bold ${
-                              item.feasibility >= 70 ? "text-green-700" :
-                              item.feasibility >= 40 ? "text-yellow-700" : "text-red-600"
+                              item.feasibility >= 70 ? "text-(--color-success)" :
+                              item.feasibility >= 40 ? "text-(--color-warning)" : "text-(--color-danger)"
                             }`}>
                               {item.feasibility}%
                             </span>
                           </div>
-                          <div className="h-1.5 w-full rounded-full bg-green-100">
+                          <div className="h-1.5 w-full rounded-full bg-(--color-success-soft)">
                             <div
                               className={`h-1.5 rounded-full ${
-                                item.feasibility >= 70 ? "bg-green-500" :
-                                item.feasibility >= 40 ? "bg-yellow-400" : "bg-red-400"
+                                item.feasibility >= 70 ? "bg-(--color-success)" :
+                                item.feasibility >= 40 ? "bg-(--color-warning)" : "bg-(--color-danger)"
                               }`}
                               style={{ width: `${item.feasibility}%` }}
                             />
@@ -2089,7 +2504,7 @@ export default function DashboardPanel({
         </div>
       </div>
 
-      <div className="bg-white p-6 rounded-xl shadow-md">
+      <div className="rounded-xl bg-(--surface-1) p-6 shadow-md">
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         {([
@@ -2105,18 +2520,18 @@ export default function DashboardPanel({
               }, 0);
 
               return (
-                <div key={primaryCategory} className="rounded-xl border border-gray-200 bg-gray-50">
+                <div key={primaryCategory} className="rounded-xl border border-(--border-muted) bg-(--surface-2)">
                   <button
                     onClick={() => toggleGroup(primaryCategory)}
                     className="flex w-full items-center justify-between px-4 py-3 text-left"
                   >
-                    <h3 className="text-base font-semibold text-gray-700">{primaryCategory}</h3>
+                    <h3 className="text-base font-semibold text-(--text-strong)">{primaryCategory}</h3>
                     <div className="flex items-center gap-2">
-                      <p className="text-sm font-medium text-gray-500">
+                      <p className="text-sm font-medium text-(--text-soft)">
                         {groupRecommendedScore}/{groupMaxScore}
                       </p>
                       <svg
-                        className={`h-4 w-4 text-gray-500 transition-transform duration-200 ${
+                        className={`h-4 w-4 text-(--text-soft) transition-transform duration-200 ${
                           openGroups[primaryCategory] ? "rotate-180" : ""
                         }`}
                         fill="none"
@@ -2138,17 +2553,17 @@ export default function DashboardPanel({
                       const recommendedScore = getRecommendedScore(cat);
 
                       const scoreColors = {
-                        bar:    recommendedScore === 4 ? "bg-red-500"        : recommendedScore === 5 ? "bg-yellow-400"    : recommendedScore === 6 ? "bg-green-400"     : "bg-green-700",
-                        barBg:  recommendedScore === 4 ? "bg-red-100"        : recommendedScore === 5 ? "bg-yellow-100"   : recommendedScore === 6 ? "bg-green-100"    : "bg-green-200",
-                        box:    recommendedScore === 4 ? "border-red-300 bg-red-50"    : recommendedScore === 5 ? "border-yellow-300 bg-yellow-50" : recommendedScore === 6 ? "border-green-300 bg-green-50"  : "border-green-600 bg-green-100",
-                        label:  recommendedScore === 4 ? "text-red-500"      : recommendedScore === 5 ? "text-yellow-600"  : recommendedScore === 6 ? "text-green-600"   : "text-green-800",
-                        value:  recommendedScore === 4 ? "text-red-700"      : recommendedScore === 5 ? "text-yellow-700"  : recommendedScore === 6 ? "text-green-700"   : "text-green-900",
+                        bar:    recommendedScore === 4 ? "bg-(--color-danger)"                         : recommendedScore === 5 ? "bg-(--color-warning)"                    : recommendedScore === 6 ? "bg-(--color-success)"                    : "bg-(--color-success-hover)",
+                        barBg:  recommendedScore === 4 ? "bg-(--color-danger-soft)"                    : recommendedScore === 5 ? "bg-(--color-warning-soft)"               : recommendedScore === 6 ? "bg-(--color-success-soft)"               : "bg-(--color-success-soft)",
+                        box:    recommendedScore === 4 ? "border-(--color-danger) bg-(--color-danger-soft)"   : recommendedScore === 5 ? "border-(--color-warning) bg-(--color-warning-soft)" : recommendedScore === 6 ? "border-(--color-success) bg-(--color-success-soft)"  : "border-(--color-success-hover) bg-(--color-success-soft)",
+                        label:  recommendedScore === 4 ? "text-(--color-danger)"                       : recommendedScore === 5 ? "text-(--color-warning)"                  : recommendedScore === 6 ? "text-(--color-success)"                  : "text-(--color-success-hover)",
+                        value:  recommendedScore === 4 ? "text-(--color-danger)"                       : recommendedScore === 5 ? "text-(--color-warning)"                  : recommendedScore === 6 ? "text-(--color-success)"                  : "text-(--color-success-hover)",
                       };
 
                       return (
-                        <div key={cat} className="w-full rounded-lg border border-white bg-white p-4 shadow-sm">
+                        <div key={cat} className="w-full rounded-lg border border-(--border-muted) bg-(--surface-1) p-4 shadow-sm">
                           <div className="mb-1 text-center">
-                            <p className="text-sm font-semibold text-gray-700">{cat}</p>
+                            <p className="text-sm font-semibold text-(--text-strong)">{cat}</p>
                           </div>
                           <div className={`h-4 w-full rounded ${scoreColors.barBg}`}>
                             <div
@@ -2171,9 +2586,9 @@ export default function DashboardPanel({
                             </div>
 
                             {/* AI Quality Score */}
-                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-center sm:p-2.5">
-                              <p className="text-xs font-semibold leading-tight text-slate-500">AI Quality</p>
-                              <p className="mt-1 text-lg font-bold text-blue-600">
+                            <div className="rounded-lg border border-(--border-muted) bg-(--surface-2) p-2 text-center sm:p-2.5">
+                              <p className="text-xs font-semibold leading-tight text-(--text-soft)">AI Quality</p>
+                              <p className="mt-1 text-lg font-bold text-(--color-secondary)">
                                 {count === 0
                                   ? "N/A"
                                   : isEvaluating && !evaluation
@@ -2185,26 +2600,26 @@ export default function DashboardPanel({
                             </div>
 
                             {/* Bullet-based marking score */}
-                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-center sm:p-2.5">
-                              <p className="text-xs font-semibold leading-tight text-slate-500">Bullet Score</p>
-                              <p className="mt-1 text-lg font-bold text-slate-700">{mark}/7</p>
+                            <div className="rounded-lg border border-(--border-muted) bg-(--surface-2) p-2 text-center sm:p-2.5">
+                              <p className="text-xs font-semibold leading-tight text-(--text-soft)">Bullet Score</p>
+                              <p className="mt-1 text-lg font-bold text-(--text-strong)">{mark}/7</p>
                             </div>
                           </div>
 
                           {/* AI explanation */}
                           {count === 0 ? (
-                            <p className="mt-2 text-sm text-slate-500">
+                            <p className="mt-2 text-sm text-(--text-soft)">
                               Add bullets to this category to generate an AI quality score.
                             </p>
                           ) : evaluation ? (
-                            <p className="mt-2 text-sm text-slate-600 break-normal">
+                            <p className="mt-2 text-sm text-(--text-strong) break-normal">
                               {evaluation.aiExplanation.replace(
                                 /^Recommended\s+\d+:/i,
                                 `Recommended ${recommendedScore}:`
                               )}
                             </p>
                           ) : !isEvaluating ? (
-                            <p className="mt-2 text-sm text-slate-500">
+                            <p className="mt-2 text-sm text-(--text-soft)">
                               AI quality score unavailable for this category right now.
                             </p>
                           ) : null}
@@ -2220,7 +2635,7 @@ export default function DashboardPanel({
         ))}
       </div>
 
-        <p className="mt-4 text-base text-gray-600">
+        <p className="mt-4 text-base text-(--text-soft)">
           AI Quality Score - category analysis based on bullet strength and impact.
           <br />
           Bullet Score - the total number of bullets per category.
@@ -2229,43 +2644,191 @@ export default function DashboardPanel({
         </p>
       </div>
 
-      <div className="bg-white p-6 rounded-xl shadow-md">
-        <div className="bulletproof-seven-panel rounded-xl border border-indigo-200 bg-indigo-50 p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-base font-semibold text-indigo-900">Your Bulletproof "7"</h3>
-            <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-700">
-              {bulletproofSevenCategories.length} {bulletproofSevenCategories.length === 1 ? "Category" : "Categories"}
-            </span>
+      <div className="rounded-xl bg-(--surface-1) p-6 shadow-md">
+        <div className="bulletproof-seven-panel rounded-xl border border-(--color-secondary) bg-(--color-secondary-soft) p-4">
+          <div className="flex items-center justify-between gap-3">
+            <button
+              type="button"
+              onClick={() => setIsBulletproofSectionOpen((prev) => !prev)}
+              className="flex min-w-0 flex-1 items-center gap-2 text-left"
+              aria-expanded={isBulletproofSectionOpen}
+              aria-controls="bulletproof-seven-content"
+            >
+              <svg
+                className={`h-4 w-4 shrink-0 text-(--color-secondary) transition-transform duration-200 ${
+                  isBulletproofSectionOpen ? "rotate-180" : ""
+                }`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+              <h3 className="text-base font-semibold text-(--text-strong)">Your Bulletproof &quot;7&quot;</h3>
+            </button>
+            <div className="flex items-center gap-2">
+              <span className="rounded-full bg-(--color-secondary-soft) px-2 py-0.5 text-xs font-semibold text-(--color-secondary)">
+                {bulletproofSevenCategories.length} {bulletproofSevenCategories.length === 1 ? "Category" : "Categories"}
+              </span>
+              <button
+                type="button"
+                onClick={() => void analyzeBulletproofSeven()}
+                disabled={!hasCategoryBullets || isAnalyzingBulletproof || isAnalyzingDashboard || !aiEnabled}
+                className="btn-secondary rounded-md px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isAnalyzingBulletproof ? "Analyzing..." : "Generate 7's"}
+              </button>
+            </div>
           </div>
 
-          {!hasAnalyzedDashboard ? (
-            <p className="text-sm text-indigo-700">Run Analyze Dashboard to generate Bulletproof 7 recommendations.</p>
+          {isBulletproofSectionOpen && (
+          <div id="bulletproof-seven-content" className="mt-3">
+          {!hasCategoryBullets ? (
+            <p className="text-sm text-(--text-soft)">Add bullets to analyze Bulletproof 7 recommendations.</p>
+          ) : !hasAnalyzedBulletproofSection ? (
+            <p className="text-sm text-(--text-soft)">Run Analyze Bulletproof 7 to generate consolidated 7-level recommendations.</p>
           ) : !aiEnabled ? (
-            <p className="text-sm text-indigo-700">Dashboard AI is disabled in Settings.</p>
-          ) : isLoadingBulletproofSummaries ? (
-            <p className="text-sm text-indigo-700">Building consolidated 7-level summaries...</p>
+            <p className="text-sm text-(--text-soft)">Dashboard AI is disabled in Settings.</p>
+          ) : isAnalyzingBulletproof || isLoadingBulletproofSummaries ? (
+            <p className="text-sm text-(--text-soft)">Building consolidated 7-level summaries...</p>
           ) : bulletproofSummaryError ? (
-            <p className="text-sm text-red-600">{bulletproofSummaryError}</p>
+            <p className="text-sm text-(--color-danger)">{bulletproofSummaryError}</p>
           ) : bulletproofSevenCategories.length === 0 ? (
-            <p className="text-sm text-indigo-700">
+            <p className="text-sm text-(--text-soft)">
               No categories currently project a 7/7 recommendation based on bullet strength and AI quality.
             </p>
           ) : (
-            <ul className="space-y-3">
-              {bulletproofSevenCategories.map((categoryName) => {
-                const summary = bulletproofSummaries[categoryName] || "Summary unavailable.";
-                return (
-                  <li key={categoryName} className="rounded-lg border border-indigo-100 bg-white p-3">
-                    <div className="mb-1 flex items-center justify-between gap-3">
-                      <p className="text-sm font-semibold text-gray-800">{categoryName}</p>
-                      <span className="rounded-md bg-green-100 px-2 py-0.5 text-xs font-bold text-green-800">7/7</span>
-                    </div>
-                    <p className="text-sm text-gray-700">{summary}</p>
-                    <p className="mt-1 text-xs text-gray-500">{summary.length}/250 chars</p>
-                  </li>
-                );
-              })}
-            </ul>
+            <div className="space-y-5">
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-(--text-soft)">Generated 7&apos;s</p>
+                <ul className="space-y-3">
+                  {bulletproofSevenCategories.map((categoryName) => {
+                    const summary = bulletproofSummaries[categoryName] || "Summary unavailable.";
+                    const savedSummary = savedBulletproofSummaries[categoryName];
+                    const isEditing = bulletproofEditingCategory === categoryName;
+                    const editDraft = bulletproofEditDrafts[categoryName] ?? summary;
+                    const isReprompting = bulletproofRepromptingCategory === categoryName;
+                    const isSaving = bulletproofSavingCategory === categoryName;
+
+                    return (
+                      <li
+                        key={categoryName}
+                        className={`rounded-lg border p-3 ${
+                          savedSummary
+                            ? "border-2 border-(--color-success) bg-(--surface-2)"
+                            : "border-(--color-secondary) bg-(--surface-1)"
+                        }`}
+                      >
+                        <div className="mb-1 flex items-center justify-between gap-3">
+                          <p className="text-sm font-semibold text-(--text-strong)">{categoryName}</p>
+                          <div className="flex items-center gap-2">
+                            {savedSummary ? (
+                              <span className="rounded-md bg-(--color-success) px-2 py-0.5 text-xs font-bold text-(--color-text-on-strong)">
+                                Saved
+                              </span>
+                            ) : null}
+                            <span className="rounded-md bg-(--color-success-soft) px-2 py-0.5 text-xs font-bold text-(--color-success)">7/7</span>
+                          </div>
+                        </div>
+                        {isEditing ? (
+                          <>
+                            <textarea
+                              value={editDraft}
+                              onChange={(event) =>
+                                setBulletproofEditDrafts((prev) => ({
+                                  ...prev,
+                                  [categoryName]: event.target.value,
+                                }))
+                              }
+                              className="w-full rounded-md border border-(--color-secondary) bg-(--surface-2) px-3 py-2 text-sm text-(--text-strong) focus:outline-none focus:ring-1 focus:ring-(--color-secondary)"
+                              rows={4}
+                            />
+                            <p className="mt-1 text-xs text-(--text-soft)">{editDraft.trim().length}/250 chars</p>
+                          </>
+                        ) : (
+                          <>
+                            <p className="text-sm text-(--text-strong)">{summary}</p>
+                            <p className="mt-1 text-xs text-(--text-soft)">{summary.length}/250 chars</p>
+                          </>
+                        )}
+                        <div className="mt-3 flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void repromptBulletproofSummary(categoryName)}
+                            disabled={isReprompting || isSaving || isEditing}
+                            className="btn-secondary rounded-md px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {isReprompting ? "Reprompting..." : "Reprompt"}
+                          </button>
+                          {isEditing ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => applyEditedBulletproofSummary(categoryName)}
+                                disabled={isSaving || isReprompting || !editDraft.trim()}
+                                className="btn-secondary rounded-md px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                Apply Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => cancelEditingBulletproofSummary(categoryName)}
+                                disabled={isSaving || isReprompting}
+                                className="btn-secondary rounded-md px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => startEditingBulletproofSummary(categoryName)}
+                              disabled={isReprompting || isSaving}
+                              className="btn-secondary rounded-md px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              Edit
+                            </button>
+                          )}
+                          <div className="ml-auto">
+                          <button
+                            type="button"
+                            onClick={() => void saveBulletproofSummary(categoryName)}
+                            disabled={isReprompting || isSaving || isEditing}
+                            className="btn-success rounded-md px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {isSaving ? "Saving..." : savedSummary ? "Update Saved 7" : "Save 7"}
+                          </button>
+                          </div>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+
+              {Object.keys(savedBulletproofSummaries).length > 0 && (
+                <div>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-(--text-soft)">Saved 7&apos;s</p>
+                  <ul className="space-y-3">
+                    {Object.entries(savedBulletproofSummaries)
+                      .sort((left, right) => left[0].localeCompare(right[0]))
+                      .map(([categoryName, saved]) => (
+                        <li key={categoryName} className="rounded-lg border-2 border-(--color-success) bg-(--surface-2) p-3">
+                          <div className="mb-1 flex items-center justify-between gap-3">
+                            <p className="text-sm font-semibold text-(--text-strong)">{categoryName}</p>
+                            <span className="rounded-md bg-(--color-success) px-2 py-0.5 text-xs font-bold text-(--color-text-on-strong)">Saved</span>
+                          </div>
+                          <p className="text-sm text-(--text-strong)">{saved.summary}</p>
+                          <p className="mt-1 text-xs text-(--text-soft)">{saved.summary.length}/250 chars</p>
+                        </li>
+                      ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+          </div>
           )}
         </div>
       </div>

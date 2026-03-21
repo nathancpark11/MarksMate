@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { logAiUsageEvent } from "@/lib/analytics/logging";
 import { requireSessionUser } from "@/lib/auth";
 import { validateCombinedAiInputs } from "@/lib/promptSpamGuard";
 import { enforceRateLimits } from "@/lib/rateLimit";
@@ -131,16 +132,28 @@ function normalizeComparableBullet(value: string) {
     .replace(/\s+/g, " ");
 }
 
+function estimateTokenCountFromText(value: string) {
+  const normalized = value.trim();
+  if (!normalized) {
+    return 0;
+  }
+
+  return Math.max(1, Math.round(normalized.length / 4));
+}
+
 export async function POST(req: Request) {
   const routeName = "/api/generate";
   const requestId = getRequestId(req);
   let inputLength = 0;
+  let userIdForLogging: string | null = null;
+  let selectedModelForLogging: string | null = null;
 
   try {
     const { user, response: authResponse } = await requireSessionUser();
     if (authResponse) {
       return authResponse;
     }
+    userIdForLogging = user.id;
 
     const rateLimitResponse = enforceRateLimits(req, [
       {
@@ -277,6 +290,7 @@ export async function POST(req: Request) {
           : isVagueEntry
             ? VAGUE_ENTRY_MODEL
             : SIMPLE_MODEL;
+        selectedModelForLogging = selectedModel;
     const impactInclusionRule = normalizedMissionImpact
       ? "- If mission impact is provided, explicitly include that impact in the bullet."
       : "- If mission impact is not provided, infer impact only from other provided data.";
@@ -430,6 +444,19 @@ Your previous answer matched the existing bullet too closely. Try again and prod
       parsedResult = parseGeneratedResult(content);
     }
 
+    await logAiUsageEvent({
+      userId: user.id,
+      endpoint: routeName,
+      model: selectedModel,
+      promptTokens: completion.usage?.prompt_tokens,
+      completionTokens: completion.usage?.completion_tokens,
+      totalTokens: completion.usage?.total_tokens,
+      success: true,
+      documentReferenceCount: officialGuidanceSections.length,
+      retrievalCallCount: officialGuidanceSections.length > 0 ? 1 : 0,
+      docContextPromptTokens: estimateTokenCountFromText(officialGuidanceContext),
+    });
+
     logApiRequestMetadata({ requestId, routeName, inputLength, success: true, status: 200 });
     return Response.json({
       bullet: parsedResult.bullet,
@@ -437,6 +464,20 @@ Your previous answer matched the existing bullet too closely. Try again and prod
       guidanceSections: officialGuidanceSections,
     });
   } catch (error: unknown) {
+    if (userIdForLogging) {
+      try {
+        await logAiUsageEvent({
+          userId: userIdForLogging,
+          endpoint: routeName,
+          model: selectedModelForLogging,
+          success: false,
+          errorMessage: error instanceof Error ? error.message : "Unknown error",
+        });
+      } catch {
+        // Avoid masking the original endpoint failure.
+      }
+    }
+
     logApiError("OpenAI route error", error, { requestId, routeName, inputLength, success: false });
     logApiRequestMetadata({ requestId, routeName, inputLength, success: false, status: 500 });
 

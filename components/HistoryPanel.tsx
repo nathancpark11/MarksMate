@@ -292,32 +292,30 @@ export default function HistoryPanel({
   };
 
   return (
-    <div className="bg-white p-4 sm:p-6 rounded-xl shadow-md">
+    <div className="bg-(--surface-1) p-4 sm:p-6 rounded-xl shadow-md">
       <div className="mb-4">
         <h2 className="text-xl font-semibold">Official Marks</h2>
-        <p className="mt-1 text-sm text-gray-600">
+        <p className="mt-1 text-sm text-(--text-soft)">
           This is where your official marks are stored. These are the bullets that will be displayed when exported.
         </p>
       </div>
 
-      <div className="mb-5 p-4 rounded-lg bg-blue-50 border border-blue-200 grid grid-cols-1 sm:grid-cols-3 gap-4 text-center">
+      <div className="mb-5 grid grid-cols-1 gap-4 rounded-lg border border-(--color-secondary) bg-(--color-secondary-soft) p-4 text-center sm:grid-cols-3">
         <div>
-          <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">Current Marking Period</p>
-          <p className="mt-1 font-semibold text-gray-800">{currentPeriod}</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-(--text-soft)">Current Marking Period</p>
+          <p className="mt-1 font-semibold text-(--text-strong)">{currentPeriod}</p>
         </div>
         <div>
-          <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">End of Period</p>
-          <p className="mt-1 font-semibold text-gray-800">{endDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-(--text-soft)">End of Period</p>
+          <p className="mt-1 font-semibold text-(--text-strong)">{endDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</p>
         </div>
         <div>
-          <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">Days Remaining</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-(--text-soft)">Days Remaining</p>
           <p className={`mt-1 font-bold text-lg ${urgencyColor}`}>{daysRemaining > 0 ? daysRemaining : 0}</p>
         </div>
       </div>
 
-      {history.length === 0 && (
-        <p className="text-gray-400">No bullets committed yet.</p>
-      )}
+      {history.length === 0 && <p className="text-(--text-soft)">No bullets committed yet.</p>}
 
       <div className="space-y-4">
         {sortedPeriods.map((period) => {
@@ -353,18 +351,18 @@ export default function HistoryPanel({
           }).length;
 
           return (
-            <div key={period} className="border border-gray-200 rounded-lg overflow-hidden">
-              <div className="bg-gray-100 px-4 py-3">
+            <div key={period} className="overflow-hidden rounded-lg border border-(--border-muted)">
+              <div className="bg-(--surface-2) px-4 py-3">
                 <button
-                  className="flex w-full items-center justify-between text-left hover:text-gray-900"
+                  className="flex w-full items-center justify-between text-left hover:text-(--text-strong)"
                   onClick={() => setExpandedPeriods((prev) => ({ ...prev, [period]: !isPeriodOpen }))}
                 >
-                  <span className="font-semibold text-gray-700">Marking Period: {period}</span>
-                  <span className="text-gray-500 text-sm">{isPeriodOpen ? '▼' : '▶'}</span>
+                  <span className="font-semibold text-(--text-strong)">Marking Period: {period}</span>
+                  <span className="text-sm text-(--text-soft)">{isPeriodOpen ? '▼' : '▶'}</span>
                 </button>
 
                 <div className="mt-3">
-                  <p className="block text-xs font-semibold uppercase tracking-wide text-gray-600">
+                  <p className="block text-xs font-semibold uppercase tracking-wide text-(--text-soft)">
                     Filter this period by category
                   </p>
                   <div className="mt-2 flex flex-wrap gap-2">
@@ -373,8 +371,8 @@ export default function HistoryPanel({
                       onClick={() => setPeriodCategoryFilters((prev) => ({ ...prev, [period]: [] }))}
                       className={`rounded-full border px-3 py-1 text-xs font-medium ${
                         selectedPeriodCategoryFilters.length === 0
-                          ? "border-blue-600 bg-blue-600 text-white"
-                          : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                          ? "btn-primary"
+                          : "btn-secondary"
                       }`}
                     >
                       {selectedPeriodCategoryFilters.length === 0 ? "✓ " : ""}
@@ -408,8 +406,8 @@ export default function HistoryPanel({
                           }}
                           className={`rounded-full border px-3 py-1 text-xs font-medium ${
                             selected
-                              ? "border-blue-600 bg-blue-600 text-white"
-                              : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                              ? "btn-primary"
+                              : "btn-secondary"
                           }`}
                         >
                           {selected ? "✓ " : ""}
@@ -422,7 +420,7 @@ export default function HistoryPanel({
               </div>
 
               {isPeriodOpen && (
-                <div className="divide-y divide-gray-100">
+                <div className="divide-y divide-(--border-muted)">
                   {sortedMonths.map((month) => {
                     const monthKey = `${period}__${month}`;
                     const isMonthOpen = expandedMonths[monthKey] !== false;
@@ -440,26 +438,26 @@ export default function HistoryPanel({
                     return (
                       <div key={month}>
                         <button
-                          className="w-full flex items-center justify-between px-4 py-2 bg-gray-50 hover:bg-gray-100 text-left"
+                          className="flex w-full items-center justify-between bg-(--surface-2) px-4 py-2 text-left hover:bg-(--surface-3)"
                           onClick={() => setExpandedMonths((prev) => ({ ...prev, [monthKey]: !isMonthOpen }))}
                         >
-                          <span className="text-sm font-medium text-gray-600">{month}</span>
-                          <span className="text-gray-400 text-xs">{isMonthOpen ? '▼' : '▶'}</span>
+                          <span className="text-sm font-medium text-(--text-soft)">{month}</span>
+                          <span className="text-xs text-(--text-soft)">{isMonthOpen ? '▼' : '▶'}</span>
                         </button>
 
                         {isMonthOpen && (
                           <div className="space-y-2 px-4 py-2">
                             {monthItems.map(({ item, index }) => (
-                              <div key={index} className="rounded-md border border-gray-200 bg-gray-50 p-3">
+                              <div key={index} className="rounded-md border border-(--border-muted) bg-(--surface-2) p-3">
                                 <div
-                                  className="cursor-pointer flex items-center justify-between rounded-md bg-gray-50 px-3 py-2"
+                                  className="cursor-pointer flex items-center justify-between rounded-md bg-(--surface-2) px-3 py-2"
                                   onClick={() => setExpanded((prev) => ({ ...prev, [item.text]: !prev[item.text] }))}
                                 >
                                   <div className="flex min-w-0 items-center gap-2">
                                     {item.title && (
-                                      <h3 className="text-sm font-semibold text-gray-900">{toTitleCase(item.title)}</h3>
+                                      <h3 className="text-sm font-semibold text-(--text-strong)">{toTitleCase(item.title)}</h3>
                                     )}
-                                    <p className="text-xs text-gray-400">
+                                    <p className="text-xs text-(--text-soft)">
                                       {formatDateOrBlank(item.date)}
                                     </p>
                                   </div>
@@ -473,7 +471,7 @@ export default function HistoryPanel({
                                         setEditableCategories((prev) => ({ ...prev, [index]: nextCategory }));
                                         handleUpdateMark(index, item.text, nextCategory || undefined);
                                       }}
-                                      className="official-mark-category-select official-mark-category-select-inline w-44 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700"
+                                      className="official-mark-category-select official-mark-category-select-inline w-44 rounded-md border border-(--color-secondary) bg-(--color-secondary-soft) px-2 py-1 text-xs font-medium text-(--color-primary)"
                                       aria-label="Change official mark category"
                                       title="Change category"
                                     >
@@ -493,7 +491,7 @@ export default function HistoryPanel({
                                     {editingMarks[index] ? (
                                       <>
                                         <div className="mt-2 grid gap-3 sm:grid-cols-2">
-                                          <label className="flex flex-col gap-1 text-xs font-medium uppercase tracking-wide text-gray-500">
+                                          <label className="flex flex-col gap-1 text-xs font-medium uppercase tracking-wide text-(--text-soft)">
                                             Mark date
                                             <input
                                               type="date"
@@ -504,16 +502,16 @@ export default function HistoryPanel({
                                                   [index]: e.target.value,
                                                 }))
                                               }
-                                              className="rounded-md border p-2 text-sm font-normal text-gray-900"
+                                              className="rounded-md border p-2 text-sm font-normal text-(--text-strong)"
                                               aria-label="Edit official mark date"
                                             />
                                           </label>
                                           {Array.isArray(item.dates) && item.dates.length > 1 && (
-                                            <div className="rounded-md border border-gray-200 bg-white px-3 py-2">
-                                              <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                                            <div className="rounded-md border border-(--border-muted) bg-(--surface-1) px-3 py-2">
+                                              <p className="text-xs font-medium uppercase tracking-wide text-(--text-soft)">
                                                 Source dates
                                               </p>
-                                              <p className="mt-1 text-sm text-gray-600">
+                                              <p className="mt-1 text-sm text-(--text-soft)">
                                                 {item.dates.map((dateValue) => formatDateOrBlank(dateValue)).join(", ")}
                                               </p>
                                             </div>
@@ -537,7 +535,7 @@ export default function HistoryPanel({
                                             onClick={() => {
                                               cancelEditingMark(index, item);
                                             }}
-                                            className="text-gray-600 text-sm"
+                                            className="text-(--text-soft) text-sm"
                                           >
                                             Cancel
                                           </button>
@@ -560,7 +558,7 @@ export default function HistoryPanel({
                                                 });
                                               }
                                             }}
-                                            className="text-emerald-700 text-sm font-medium"
+                                            className="text-(--color-success) text-sm font-medium"
                                           >
                                             Save
                                           </button>
@@ -570,25 +568,25 @@ export default function HistoryPanel({
                                       <>
                                         <p className="text-sm">{item.text}</p>
                                         {Array.isArray(item.dates) && item.dates.length > 1 && (
-                                          <p className="mt-2 text-xs text-gray-500">
+                                          <p className="mt-2 text-xs text-(--text-soft)">
                                             Source dates: {item.dates.map((dateValue) => formatDateOrBlank(dateValue)).join(", ")}
                                           </p>
                                         )}
                                         <div className="flex items-center justify-between mt-2">
                                           <div className="flex gap-3">
-                                            <button onClick={() => handleCopy(item.text)} className="text-blue-600 text-sm">
+                                            <button onClick={() => handleCopy(item.text)} className="text-(--color-primary) text-sm">
                                               Copy
                                             </button>
-                                            <button onClick={() => handleDelete(index)} className="text-red-600 text-sm">
+                                            <button onClick={() => handleDelete(index)} className="text-(--color-danger) text-sm">
                                               Delete
                                             </button>
-                                            <button onClick={() => handleReprompt(index)} className="text-gray-700 text-sm">
+                                            <button onClick={() => handleReprompt(index)} className="text-(--text-strong) text-sm">
                                               Reprompt
                                             </button>
                                           </div>
                                           <button
                                             onClick={() => startEditingMark(index, item)}
-                                            className="text-blue-600 text-sm"
+                                            className="text-(--color-primary) text-sm"
                                           >
                                             Edit
                                           </button>
@@ -606,7 +604,7 @@ export default function HistoryPanel({
                   })}
 
                   {visibleMonthCount === 0 && (
-                    <div className="px-4 py-3 text-sm text-gray-500">
+                    <div className="px-4 py-3 text-sm text-(--text-soft)">
                       No marks match this category for this marking period.
                     </div>
                   )}

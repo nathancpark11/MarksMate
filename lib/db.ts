@@ -58,6 +58,22 @@ export async function ensureSchema(): Promise<void> {
   `;
 
   await sql`
+    CREATE TABLE IF NOT EXISTS password_reset_codes (
+      id         SERIAL PRIMARY KEY,
+      user_id    TEXT NOT NULL,
+      code_hash  TEXT NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      consumed_at TIMESTAMPTZ,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS password_reset_codes_user_id_idx
+    ON password_reset_codes (user_id)
+  `;
+
+  await sql`
     CREATE TABLE IF NOT EXISTS guidance_datasets (
       id           SERIAL PRIMARY KEY,
       ranks_key    TEXT UNIQUE NOT NULL,
@@ -104,6 +120,84 @@ export async function ensureSchema(): Promise<void> {
       PRIMARY KEY (user_id, data_key),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS ai_usage_logs (
+      id                      SERIAL PRIMARY KEY,
+      user_id                 TEXT NOT NULL,
+      endpoint                TEXT NOT NULL,
+      model                   TEXT,
+      prompt_tokens           INTEGER NOT NULL DEFAULT 0,
+      completion_tokens       INTEGER NOT NULL DEFAULT 0,
+      total_tokens            INTEGER NOT NULL DEFAULT 0,
+      estimated_cost_usd      NUMERIC(14, 6) NOT NULL DEFAULT 0,
+      success                 BOOLEAN NOT NULL DEFAULT TRUE,
+      error_message           TEXT,
+      document_upload_count   INTEGER NOT NULL DEFAULT 0,
+      document_reference_count INTEGER NOT NULL DEFAULT 0,
+      retrieval_call_count    INTEGER NOT NULL DEFAULT 0,
+      doc_context_prompt_tokens INTEGER NOT NULL DEFAULT 0,
+      created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS ai_usage_logs_user_created_idx
+    ON ai_usage_logs (user_id, created_at DESC)
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS ai_usage_logs_endpoint_created_idx
+    ON ai_usage_logs (endpoint, created_at DESC)
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS user_metrics (
+      user_id                 TEXT PRIMARY KEY,
+      rank                    TEXT NOT NULL DEFAULT 'Unknown',
+      rate                    TEXT NOT NULL DEFAULT 'Unknown',
+      date_joined             TEXT NOT NULL DEFAULT '',
+      is_active               BOOLEAN NOT NULL DEFAULT FALSE,
+      last_active_at          TEXT,
+      total_daily_logs        INTEGER NOT NULL DEFAULT 0,
+      total_generated_bullets INTEGER NOT NULL DEFAULT 0,
+      total_committed_marks   INTEGER NOT NULL DEFAULT 0,
+      total_ai_calls          INTEGER NOT NULL DEFAULT 0,
+      total_prompt_tokens     INTEGER NOT NULL DEFAULT 0,
+      total_completion_tokens INTEGER NOT NULL DEFAULT 0,
+      total_tokens            INTEGER NOT NULL DEFAULT 0,
+      estimated_ai_cost_usd   NUMERIC(14, 6) NOT NULL DEFAULT 0,
+      document_upload_count   INTEGER NOT NULL DEFAULT 0,
+      document_reference_count INTEGER NOT NULL DEFAULT 0,
+      retrieval_call_count    INTEGER NOT NULL DEFAULT 0,
+      doc_context_prompt_tokens INTEGER NOT NULL DEFAULT 0,
+      updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS user_metrics_rank_rate_idx
+    ON user_metrics (rank, rate)
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS monthly_metrics (
+      id                  SERIAL PRIMARY KEY,
+      user_id             TEXT NOT NULL DEFAULT '__all__',
+      month               TEXT NOT NULL,
+      new_users           INTEGER NOT NULL DEFAULT 0,
+      active_users        INTEGER NOT NULL DEFAULT 0,
+      bullets_generated   INTEGER NOT NULL DEFAULT 0,
+      committed_marks     INTEGER NOT NULL DEFAULT 0,
+      ai_calls            INTEGER NOT NULL DEFAULT 0,
+      total_tokens        INTEGER NOT NULL DEFAULT 0,
+      estimated_cost_usd  NUMERIC(14, 6) NOT NULL DEFAULT 0,
+      updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS monthly_metrics_user_month_unique
+    ON monthly_metrics (user_id, month)
   `;
 
   schemaInitialized = true;

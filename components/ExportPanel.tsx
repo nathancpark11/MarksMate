@@ -1,9 +1,20 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import jsPDF from 'jspdf';
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } from 'docx';
 import { sanitizeText } from '@/lib/textSanitization';
 
 type HistoryItem = { text: string; date: string; category?: string };
+type SavedBulletproofSummary = { summary: string; savedAt: string };
+type GroupedExportCategory = {
+  items: HistoryItem[];
+  savedSummary?: SavedBulletproofSummary;
+};
+
+const formatItemDate = (dateStr: string): string => {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  return isNaN(d.getTime()) ? '' : d.toLocaleDateString();
+};
 
 type ExportPanelProps = {
   history: HistoryItem[];
@@ -24,6 +35,56 @@ type ExportHistoryItem = {
 const MAIN_CATEGORIES = ['Military', 'Performance', 'Professional Qualities', 'Leadership'] as const;
 type MainCategory = typeof MAIN_CATEGORIES[number];
 
+const BULLETPROOF_SAVED_STORAGE_KEY = 'guest-session:savedBulletproofSevens';
+const DASHBOARD_SUB_CATEGORIES = [
+  'Military Bearing',
+  'Customs, Courtesies and Traditions',
+  'Quality of Work',
+  'Technical Proficiency',
+  'Initiative',
+  'Decision Making and Problem Solving',
+  'Military Readiness',
+  'Self Awareness and Learning',
+  'Team Building',
+  'Respect for Others',
+  'Accountability and Responsibility',
+  'Influencing Others',
+  'Effective Communication',
+] as const;
+
+const CATEGORY_MAPPING: Record<string, string> = {
+  'Military Bearing': 'Military',
+  'Customs, Courtesies and Traditions': 'Military',
+  'Quality of Work': 'Performance',
+  'Technical Proficiency': 'Performance',
+  'Initiative': 'Performance',
+  'Decision Making and Problem Solving': 'Professional Qualities',
+  'Military Readiness': 'Professional Qualities',
+  'Self Awareness and Learning': 'Professional Qualities',
+  'Team Building': 'Professional Qualities',
+  'Respect for Others': 'Leadership',
+  'Accountability and Responsibility': 'Leadership',
+  'Influencing Others': 'Leadership',
+  'Effective Communication': 'Leadership',
+};
+
+const MAIN_CATEGORY_ORDER: Record<string, string[]> = {
+  Military: ['Military Bearing', 'Customs, Courtesies and Traditions'],
+  Performance: ['Quality of Work', 'Technical Proficiency', 'Initiative'],
+  'Professional Qualities': [
+    'Decision Making and Problem Solving',
+    'Military Readiness',
+    'Self Awareness and Learning',
+    'Team Building',
+  ],
+  Leadership: [
+    'Respect for Others',
+    'Accountability and Responsibility',
+    'Influencing Others',
+    'Effective Communication',
+  ],
+};
+
 export default function ExportPanel({
   history,
   suggestions,
@@ -37,6 +98,50 @@ export default function ExportPanel({
     ref: string;
   } | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [savedBulletproofSummaries, setSavedBulletproofSummaries] = useState<
+    Record<string, SavedBulletproofSummary>
+  >({});
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        if (isGuestSession) {
+          const raw = sessionStorage.getItem(BULLETPROOF_SAVED_STORAGE_KEY);
+          const parsed = raw ? (JSON.parse(raw) as unknown) : null;
+          if (!cancelled) {
+            setSavedBulletproofSummaries(
+              parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+                ? (parsed as Record<string, SavedBulletproofSummary>)
+                : {}
+            );
+          }
+          return;
+        }
+
+        const response = await fetch('/api/user-data?key=savedBulletproofSevens');
+        const data = (await response.json()) as { value?: unknown };
+        const parsed = data.value;
+
+        if (!cancelled) {
+          setSavedBulletproofSummaries(
+            parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+              ? (parsed as Record<string, SavedBulletproofSummary>)
+              : {}
+          );
+        }
+      } catch {
+        if (!cancelled) {
+          setSavedBulletproofSummaries({});
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isGuestSession]);
 
   const appendExportHistory = async (item: ExportHistoryItem) => {
     if (isGuestSession) {
@@ -149,22 +254,6 @@ export default function ExportPanel({
     }))
     .filter((item) => item.text.length > 0);
 
-  const dashboardSubCategories = [
-    'Military Bearing',
-    'Customs, Courtesies and Traditions',
-    'Quality of Work',
-    'Technical Proficiency',
-    'Initiative',
-    'Decision Making and Problem Solving',
-    'Military Readiness',
-    'Self Awareness and Learning',
-    'Team Building',
-    'Respect for Others',
-    'Accountability and Responsibility',
-    'Influencing Others',
-    'Effective Communication',
-  ];
-
   const normalizeCategory = (category: string): string => {
     const trimmed = category.trim();
     if (trimmed.toLowerCase() === 'customs, courtesies, and traditions') {
@@ -197,15 +286,14 @@ export default function ExportPanel({
 
   const getRecommendedMarks = async (): Promise<Record<string, number>> => {
     const bulletsByCategory: Record<string, string[]> = Object.fromEntries(
-      dashboardSubCategories.map((cat) => [cat, [] as string[]])
+      DASHBOARD_SUB_CATEGORIES.map((cat) => [cat, [] as string[]])
     );
 
     exportReadyHistory.forEach((item) => {
       const rawCategory = item.category || suggestions[item.text]?.category;
       if (!rawCategory) return;
-
       const normalized = normalizeCategory(rawCategory);
-      const matched = dashboardSubCategories.find(
+      const matched = DASHBOARD_SUB_CATEGORIES.find(
         (cat) => cat.toLowerCase() === normalized.toLowerCase()
       );
 
@@ -248,7 +336,7 @@ export default function ExportPanel({
     }
 
     return Object.fromEntries(
-      dashboardSubCategories.map((subCategory) => {
+      DASHBOARD_SUB_CATEGORIES.map((subCategory) => {
         const bulletMark = getMarkingValue(subCategory);
         const aiScore = aiCompiledScores[subCategory];
         const recommendedMark =
@@ -261,52 +349,90 @@ export default function ExportPanel({
     );
   };
 
-  const handleExportWord = async () => {
-    const recommendedMarks = await getRecommendedMarks();
-
-    const categoryMapping: Record<string, string> = {
-      'Military Bearing': 'Military',
-      'Customs, Courtesies and Traditions': 'Military',
-      'Quality of Work': 'Performance',
-      'Technical Proficiency': 'Performance',
-      'Initiative': 'Performance',
-      'Decision Making and Problem Solving': 'Professional Qualities',
-      'Military Readiness': 'Professional Qualities',
-      'Self Awareness and Learning': 'Professional Qualities',
-      'Team Building': 'Professional Qualities',
-      'Respect for Others': 'Leadership',
-      'Accountability and Responsibility': 'Leadership',
-      'Influencing Others': 'Leadership',
-      'Effective Communication': 'Leadership'
-    };
-
-    const groupedByCategory: Record<string, HistoryItem[]> = {};
+  const buildGroupedExportCategories = (includeSuggestedFallback: boolean) => {
+    const groupedByCategory: Record<string, GroupedExportCategory> = {};
     const uncategorized: HistoryItem[] = [];
+
+    const ensureCategory = (categoryName: string) => {
+      if (!groupedByCategory[categoryName]) {
+        groupedByCategory[categoryName] = {
+          items: [],
+          savedSummary: savedBulletproofSummaries[categoryName],
+        };
+      } else if (!groupedByCategory[categoryName].savedSummary && savedBulletproofSummaries[categoryName]) {
+        groupedByCategory[categoryName].savedSummary = savedBulletproofSummaries[categoryName];
+      }
+
+      return groupedByCategory[categoryName];
+    };
 
     exportReadyHistory.forEach((item) => {
       if (item.category) {
-        const normalizedCategory = item.category.trim();
-        let found = false;
-        for (const [subCategory] of Object.entries(categoryMapping)) {
+        const normalizedCategory = normalizeCategory(item.category);
+        let matchedCategoryName: string | null = null;
+
+        for (const subCategory of Object.keys(CATEGORY_MAPPING)) {
           if (subCategory.toLowerCase() === normalizedCategory.toLowerCase()) {
-            if (!groupedByCategory[subCategory]) groupedByCategory[subCategory] = [];
-            groupedByCategory[subCategory].push(item);
-            found = true;
+            matchedCategoryName = subCategory;
             break;
           }
         }
-        if (!found) uncategorized.push(item);
-      } else {
-        uncategorized.push(item);
+
+        if (!matchedCategoryName) {
+          const matchedMainCategory = MAIN_CATEGORIES.find(
+            (mainCategory) => mainCategory.toLowerCase() === normalizedCategory.toLowerCase()
+          );
+
+          if (matchedMainCategory) {
+            matchedCategoryName = `${matchedMainCategory} - General`;
+          }
+        }
+
+        if (matchedCategoryName) {
+          ensureCategory(matchedCategoryName).items.push(item);
+          return;
+        }
+      }
+
+      uncategorized.push(item);
+    });
+
+    if (includeSuggestedFallback) {
+      const suggestCategory = (text: string): string => {
+        const t = text.toLowerCase();
+        if (t.includes('bearing') || t.includes('courtesy') || t.includes('tradition')) return 'Military Bearing';
+        if (t.includes('customs') || t.includes('courtesies')) return 'Customs, Courtesies and Traditions';
+        if (t.includes('quality') || t.includes('work ethic')) return 'Quality of Work';
+        if (t.includes('technical') || t.includes('proficiency') || t.includes('skill')) return 'Technical Proficiency';
+        if (t.includes('initiative') || t.includes('proactive') || t.includes('self-motivated')) return 'Initiative';
+        if (t.includes('decision') || t.includes('problem solving')) return 'Decision Making and Problem Solving';
+        if (t.includes('readiness') || t.includes('prepared')) return 'Military Readiness';
+        if (t.includes('self awareness') || t.includes('learning') || t.includes('growth')) return 'Self Awareness and Learning';
+        if (t.includes('team') || t.includes('collaboration')) return 'Team Building';
+        if (t.includes('respect') || t.includes('others')) return 'Respect for Others';
+        if (t.includes('accountability') || t.includes('responsibility') || t.includes('duty')) return 'Accountability and Responsibility';
+        if (t.includes('influence') || t.includes('interpersonal')) return 'Influencing Others';
+        if (t.includes('communication') || t.includes('speaking') || t.includes('writing')) return 'Effective Communication';
+        return 'Military Bearing';
+      };
+
+      uncategorized.forEach((item) => {
+        ensureCategory(suggestCategory(item.text)).items.push(item);
+      });
+    }
+
+    Object.entries(savedBulletproofSummaries).forEach(([categoryName, savedSummary]) => {
+      if (CATEGORY_MAPPING[categoryName]) {
+        ensureCategory(categoryName).savedSummary = savedSummary;
       }
     });
 
-    const mainCategoryOrder: Record<string, string[]> = {
-      'Military': ['Military Bearing', 'Customs, Courtesies and Traditions'],
-      'Performance': ['Quality of Work', 'Technical Proficiency', 'Initiative'],
-      'Professional Qualities': ['Decision Making and Problem Solving', 'Military Readiness', 'Self Awareness and Learning', 'Team Building'],
-      'Leadership': ['Respect for Others', 'Accountability and Responsibility', 'Influencing Others', 'Effective Communication'],
-    };
+    return groupedByCategory;
+  };
+
+  const handleExportWord = async () => {
+    const recommendedMarks = await getRecommendedMarks();
+    const groupedByCategory = buildGroupedExportCategories(false);
 
     const children: Paragraph[] = [
       new Paragraph({
@@ -322,7 +448,7 @@ export default function ExportPanel({
       }),
     ];
 
-    for (const [mainCategory, subCategories] of Object.entries(mainCategoryOrder)) {
+    for (const [mainCategory, subCategories] of Object.entries(MAIN_CATEGORY_ORDER)) {
       if (!selectedCategories[mainCategory as MainCategory]) continue;
       children.push(
         new Paragraph({
@@ -336,7 +462,9 @@ export default function ExportPanel({
 
       for (const subCategory of subCategories) {
         const markingVal = recommendedMarks[subCategory] ?? getMarkingValue(subCategory);
-        const items = groupedByCategory[subCategory] || [];
+        const categoryData = groupedByCategory[subCategory] ?? { items: [] };
+        const items = categoryData.items;
+        const savedSummary = categoryData.savedSummary;
 
         children.push(
           new Paragraph({
@@ -363,13 +491,23 @@ export default function ExportPanel({
               new Paragraph({
                 children: [
                   new TextRun({ text: item.text, size: 20 }),
-                  new TextRun({ text: ` (${new Date(item.date).toLocaleDateString()})`, size: 20, color: '888888' }),
+                  ...(formatItemDate(item.date) ? [new TextRun({ text: ` (${formatItemDate(item.date)})`, size: 20, color: '888888' })] : []),
                 ],
                 indent: { left: 360 },
                 spacing: { after: 80 },
               })
             );
           }
+        }
+
+        if (savedSummary?.summary) {
+          children.push(
+            new Paragraph({
+              children: [new TextRun({ text: `7 - ${savedSummary.summary}`, size: 20, color: 'C62828' })],
+              indent: { left: 360 },
+              spacing: { before: 60, after: 80 },
+            })
+          );
         }
 
         children.push(new Paragraph({ text: '', spacing: { after: 120 } }));
@@ -388,81 +526,14 @@ export default function ExportPanel({
 
   const handleExportTxt = async () => {
     const recommendedMarks = await getRecommendedMarks();
-
-    const categoryMapping: Record<string, string> = {
-      'Military Bearing': 'Military',
-      'Customs, Courtesies and Traditions': 'Military',
-      'Quality of Work': 'Performance',
-      'Technical Proficiency': 'Performance',
-      'Initiative': 'Performance',
-      'Decision Making and Problem Solving': 'Professional Qualities',
-      'Military Readiness': 'Professional Qualities',
-      'Self Awareness and Learning': 'Professional Qualities',
-      'Team Building': 'Professional Qualities',
-      'Respect for Others': 'Leadership',
-      'Accountability and Responsibility': 'Leadership',
-      'Influencing Others': 'Leadership',
-      'Effective Communication': 'Leadership',
-    };
-
-    const mainCategoryOrder: Record<string, string[]> = {
-      'Military': ['Military Bearing', 'Customs, Courtesies and Traditions'],
-      'Performance': ['Quality of Work', 'Technical Proficiency', 'Initiative'],
-      'Professional Qualities': ['Decision Making and Problem Solving', 'Military Readiness', 'Self Awareness and Learning', 'Team Building'],
-      'Leadership': ['Respect for Others', 'Accountability and Responsibility', 'Influencing Others', 'Effective Communication'],
-    };
-
-    const groupedByCategory: Record<string, HistoryItem[]> = {};
-    const uncategorized: HistoryItem[] = [];
-
-    exportReadyHistory.forEach((item) => {
-      if (item.category) {
-        const normalizedCategory = item.category.trim();
-        let found = false;
-        for (const [subCategory] of Object.entries(categoryMapping)) {
-          if (subCategory.toLowerCase() === normalizedCategory.toLowerCase()) {
-            if (!groupedByCategory[subCategory]) groupedByCategory[subCategory] = [];
-            groupedByCategory[subCategory].push(item);
-            found = true;
-            break;
-          }
-        }
-        if (!found) uncategorized.push(item);
-      } else {
-        uncategorized.push(item);
-      }
-    });
-
-    const suggestCategory = (text: string): string => {
-      const t = text.toLowerCase();
-      if (t.includes('bearing') || t.includes('courtesy') || t.includes('tradition')) return 'Military Bearing';
-      if (t.includes('customs') || t.includes('courtesies')) return 'Customs, Courtesies and Traditions';
-      if (t.includes('quality') || t.includes('work ethic')) return 'Quality of Work';
-      if (t.includes('technical') || t.includes('proficiency') || t.includes('skill')) return 'Technical Proficiency';
-      if (t.includes('initiative') || t.includes('proactive') || t.includes('self-motivated')) return 'Initiative';
-      if (t.includes('decision') || t.includes('problem solving')) return 'Decision Making and Problem Solving';
-      if (t.includes('readiness') || t.includes('prepared')) return 'Military Readiness';
-      if (t.includes('self awareness') || t.includes('learning') || t.includes('growth')) return 'Self Awareness and Learning';
-      if (t.includes('team') || t.includes('collaboration')) return 'Team Building';
-      if (t.includes('respect') || t.includes('others')) return 'Respect for Others';
-      if (t.includes('accountability') || t.includes('responsibility') || t.includes('duty')) return 'Accountability and Responsibility';
-      if (t.includes('influence') || t.includes('interpersonal')) return 'Influencing Others';
-      if (t.includes('communication') || t.includes('speaking') || t.includes('writing')) return 'Effective Communication';
-      return 'Military Bearing';
-    };
-
-    uncategorized.forEach((item) => {
-      const suggested = suggestCategory(item.text);
-      if (!groupedByCategory[suggested]) groupedByCategory[suggested] = [];
-      groupedByCategory[suggested].push({ ...item, category: suggested });
-    });
+    const groupedByCategory = buildGroupedExportCategories(true);
 
     const lines: string[] = [];
     lines.push('BULLET HISTORY EXPORT');
     lines.push(`Exported on: ${new Date().toLocaleDateString()}`);
     lines.push('');
 
-    for (const [mainCategory, subCategories] of Object.entries(mainCategoryOrder)) {
+    for (const [mainCategory, subCategories] of Object.entries(MAIN_CATEGORY_ORDER)) {
       if (!selectedCategories[mainCategory as MainCategory]) continue;
       lines.push('='.repeat(50));
       lines.push(mainCategory.toUpperCase());
@@ -471,7 +542,9 @@ export default function ExportPanel({
 
       for (const subCategory of subCategories) {
         const markingVal = recommendedMarks[subCategory] ?? getMarkingValue(subCategory);
-        const items = groupedByCategory[subCategory] || [];
+        const categoryData = groupedByCategory[subCategory] ?? { items: [] };
+        const items = categoryData.items;
+        const savedSummary = categoryData.savedSummary;
         lines.push(`${subCategory}  |  Recommended Mark: ${markingVal}`);
         lines.push('-'.repeat(40));
 
@@ -480,8 +553,13 @@ export default function ExportPanel({
         } else {
           const sorted = [...items].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
           for (const item of sorted) {
-            lines.push(`  ${item.text} (${new Date(item.date).toLocaleDateString()})`);
+            const d = formatItemDate(item.date);
+            lines.push(`  ${item.text}${d ? ` (${d})` : ''}`);
           }
+        }
+
+        if (savedSummary?.summary) {
+          lines.push(`  7 - ${savedSummary.summary}`);
         }
         lines.push('');
       }
@@ -500,209 +578,199 @@ export default function ExportPanel({
     const recommendedMarks = await getRecommendedMarks();
 
     const doc = new jsPDF();
+    doc.setFont('times', 'normal');
+    doc.setFontSize(10);
 
     // Title
+    doc.setFont('times', 'bold');
     doc.setFontSize(20);
     doc.text('Bullet History Export', 20, 30);
 
     // Date
-    doc.setFontSize(12);
+    doc.setFont('times', 'normal');
+    doc.setFontSize(10);
     doc.text(`Exported on: ${new Date().toLocaleDateString()}`, 20, 45);
 
     let yPosition = 65;
 
     // Define the hierarchical category mapping (subcategory -> main category)
-    const categoryMapping: Record<string, string> = {
-      'Military Bearing': 'Military',
-      'Customs, Courtesies and Traditions': 'Military',
-      'Quality of Work': 'Performance',
-      'Technical Proficiency': 'Performance',
-      'Initiative': 'Performance',
-      'Decision Making and Problem Solving': 'Professional Qualities',
-      'Military Readiness': 'Professional Qualities',
-      'Self Awareness and Learning': 'Professional Qualities',
-      'Team Building': 'Professional Qualities',
-      'Respect for Others': 'Leadership',
-      'Accountability and Responsibility': 'Leadership',
-      'Influencing Others': 'Leadership',
-      'Effective Communication': 'Leadership'
-    };
+    const groupedByCategory = buildGroupedExportCategories(true);
 
-    // Group history items by their actual assigned categories
-    const groupedByCategory: Record<string, HistoryItem[]> = {};
-    const uncategorized: HistoryItem[] = [];
-
-    exportReadyHistory.forEach((item) => {
-      if (item.category) {
-        // Normalize category name (trim whitespace)
-        const normalizedCategory = item.category.trim();
-        let found = false;
-        
-        // Check if this category matches any subcategory in our mapping (case-insensitive)
-        for (const [subCategory] of Object.entries(categoryMapping)) {
-          if (subCategory.toLowerCase() === normalizedCategory.toLowerCase()) {
-            if (!groupedByCategory[subCategory]) {
-              groupedByCategory[subCategory] = [];
-            }
-            groupedByCategory[subCategory].push(item);
-            found = true;
-            break;
-          }
-        }
-        
-        // If not found in subcategories, check if it matches a main category name
-        if (!found) {
-          const mainCategories = ['Military', 'Performance', 'Professional Qualities', 'Leadership'];
-          const matchedMainCategory = mainCategories.find(mainCat => 
-            mainCat.toLowerCase() === normalizedCategory.toLowerCase()
-          );
-          
-          if (matchedMainCategory) {
-            // Create a pseudo-subcategory for this main category
-            const pseudoSubCategory = `${matchedMainCategory} - General`;
-            if (!groupedByCategory[pseudoSubCategory]) {
-              groupedByCategory[pseudoSubCategory] = [];
-            }
-            groupedByCategory[pseudoSubCategory].push(item);
-            found = true;
-          }
-        }
-        
-        if (!found) {
-          uncategorized.push(item);
-        }
-      } else {
-        uncategorized.push(item);
-      }
-    });
-
-    // Function to suggest a category for uncategorized bullets
-    const suggestCategory = (text: string): string => {
-      const lowerText = text.toLowerCase();
-      
-      // Check for keywords that suggest categories
-      if (lowerText.includes('military bearing') || lowerText.includes('bearing') || lowerText.includes('courtesy') || lowerText.includes('tradition')) {
-        return 'Military Bearing';
-      }
-      if (lowerText.includes('quality') || lowerText.includes('work ethic') || lowerText.includes('performance')) {
-        return 'Quality of Work';
-      }
-      if (lowerText.includes('technical') || lowerText.includes('proficiency') || lowerText.includes('skill')) {
-        return 'Technical Proficiency';
-      }
-      if (lowerText.includes('initiative') || lowerText.includes('self-motivated') || lowerText.includes('proactive')) {
-        return 'Initiative';
-      }
-      if (lowerText.includes('decision') || lowerText.includes('problem solving') || lowerText.includes('leadership')) {
-        return 'Decision Making and Problem Solving';
-      }
-      if (lowerText.includes('readiness') || lowerText.includes('prepared') || lowerText.includes('military readiness')) {
-        return 'Military Readiness';
-      }
-      if (lowerText.includes('self awareness') || lowerText.includes('learning') || lowerText.includes('growth')) {
-        return 'Self Awareness and Learning';
-      }
-      if (lowerText.includes('team') || lowerText.includes('building') || lowerText.includes('collaboration')) {
-        return 'Team Building';
-      }
-      if (lowerText.includes('respect') || lowerText.includes('others') || lowerText.includes('courtesy')) {
-        return 'Respect for Others';
-      }
-      if (lowerText.includes('accountability') || lowerText.includes('responsibility') || lowerText.includes('duty')) {
-        return 'Accountability and Responsibility';
-      }
-      if (lowerText.includes('influence') || lowerText.includes('communication') || lowerText.includes('interpersonal')) {
-        return 'Influencing Others';
-      }
-      if (lowerText.includes('communication') || lowerText.includes('speaking') || lowerText.includes('writing')) {
-        return 'Effective Communication';
-      }
-      
-      // Default fallback
-      return 'Military Bearing';
-    };
-
-    // Process uncategorized items - try to categorize them
-    uncategorized.forEach((item) => {
-      const suggestedCategory = suggestCategory(item.text);
-      // Add to the appropriate category
-      if (!groupedByCategory[suggestedCategory]) {
-        groupedByCategory[suggestedCategory] = [];
-      }
-      groupedByCategory[suggestedCategory].push({
-        ...item,
-        category: suggestedCategory
+    const getCategorySectionHeight = (items: HistoryItem[], savedSummary?: SavedBulletproofSummary) => {
+      const sortedItems = [...items].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      let sectionHeight = 16; // header
+      doc.setFont('times', 'normal');
+      doc.setFontSize(10);
+      sortedItems.forEach((item) => {
+        const fd = formatItemDate(item.date);
+        const dateStr = fd ? ` (${fd})` : '';
+        const lines = doc.splitTextToSize(item.text + dateStr, 155);
+        sectionHeight += lines.length * 4.5 + 2;
       });
-    });
+      if (savedSummary?.summary) {
+        const summaryLines = doc.splitTextToSize(`7 - ${savedSummary.summary}`, 148);
+        sectionHeight += summaryLines.length * 4.5 + 4;
+      }
+      sectionHeight += 4; // bottom padding
+      return sectionHeight;
+    };
 
     // Function to add a category section
-    const addCategorySection = (categoryName: string, items: HistoryItem[]) => {
+    const addCategorySection = (
+      categoryName: string,
+      items: HistoryItem[],
+      savedSummary?: SavedBulletproofSummary
+    ) => {
       // Pre-sort items
       const sortedItems = [...items].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-      // Pre-calculate section height
-      let sectionHeight = 16; // header
-      sortedItems.forEach((item) => {
-        const dateStr = ` (${new Date(item.date).toLocaleDateString()})`;
-        const lines = doc.splitTextToSize(item.text + dateStr, 155);
-        sectionHeight += lines.length * 4.5 + 12;
-      });
-      sectionHeight += 4; // bottom padding
-
-      // Start new page if section won't fit
-      if (yPosition + sectionHeight > 270) {
-        doc.addPage();
-        yPosition = 30;
-      }
-
-      // Draw light grey background box
-      doc.setFillColor(245, 245, 245);
-      doc.roundedRect(17, yPosition - 4, 176, sectionHeight, 2, 2, 'F');
-
-      // Category header with marking value on the right
-      doc.setFontSize(13);
-      doc.setTextColor(60, 60, 60);
-      doc.text(categoryName, 22, yPosition + 4);
-      const markingVal = recommendedMarks[categoryName] ?? getMarkingValue(categoryName);
-      doc.setFontSize(11);
-      doc.setTextColor(30, 80, 180);
-      doc.text(`Recommended Mark: ${markingVal}`, 185, yPosition + 4, { align: 'right' });
-      doc.setTextColor(0, 0, 0);
-      yPosition += 16;
-
-      sortedItems.forEach((item) => {
-        doc.setFontSize(11);
-        doc.setTextColor(0, 0, 0);
-        const dateStr = ` (${new Date(item.date).toLocaleDateString()})`;
+      const preparedItems = sortedItems.map((item) => {
+        const fd = formatItemDate(item.date);
+        const dateStr = fd ? ` (${fd})` : '';
         const fullText = item.text + dateStr;
-        const lines = doc.splitTextToSize(fullText, 155);
-        doc.text(lines, 25, yPosition);
-        yPosition += lines.length * 4.5 + 12;
+        doc.setFont('times', 'normal');
+        doc.setFontSize(10);
+        const lines = doc.splitTextToSize(fullText, 155) as string[];
+        return { lines, cursor: 0 };
       });
 
-      // Space after section
-      yPosition += 8;
+      const markingVal = recommendedMarks[categoryName] ?? getMarkingValue(categoryName);
+      const savedSummaryLines = savedSummary?.summary
+        ? (doc.splitTextToSize(`7 - ${savedSummary.summary}`, 148) as string[])
+        : [];
+      let savedSummaryRendered = false;
+      let isContinuation = false;
+
+      while (preparedItems.length > 0 || (!savedSummaryRendered && savedSummaryLines.length > 0)) {
+        if (yPosition + 24 > 270) {
+          doc.addPage();
+          yPosition = 30;
+        }
+
+        let sectionHeight = 20; // header + bottom padding
+        const chunk: string[][] = [];
+        let renderSummaryThisChunk = false;
+
+        while (preparedItems.length > 0) {
+          const currentItem = preparedItems[0];
+          const remainingLines = currentItem.lines.slice(currentItem.cursor);
+          const fullRemainingHeight = remainingLines.length * 4.5 + 2;
+          const availableHeight = 270 - yPosition - sectionHeight;
+
+          if (fullRemainingHeight <= availableHeight) {
+            chunk.push(remainingLines);
+            sectionHeight += fullRemainingHeight;
+            preparedItems.shift();
+            continue;
+          }
+
+          // Split oversized items so the heading always has content below it.
+          const maxLines = Math.floor((availableHeight - 2) / 4.5);
+          if (maxLines > 0) {
+            const partialLines = remainingLines.slice(0, maxLines);
+            chunk.push(partialLines);
+            sectionHeight += partialLines.length * 4.5 + 2;
+            currentItem.cursor += partialLines.length;
+          }
+          break;
+        }
+
+        const remainingSummaryLines = savedSummaryRendered ? [] : savedSummaryLines;
+        if (remainingSummaryLines.length > 0) {
+          const summaryHeight = remainingSummaryLines.length * 4.5 + 2;
+          const availableHeight = 270 - yPosition - sectionHeight;
+          if (summaryHeight <= availableHeight) {
+            sectionHeight += summaryHeight;
+            renderSummaryThisChunk = true;
+            savedSummaryRendered = true;
+          }
+        }
+
+        if (chunk.length === 0 && !(savedSummaryRendered && savedSummaryLines.length > 0)) {
+          doc.addPage();
+          yPosition = 30;
+          continue;
+        }
+
+        // Draw light grey background box for this page chunk.
+        doc.setFillColor(245, 245, 245);
+        doc.roundedRect(17, yPosition - 4, 176, sectionHeight, 2, 2, 'F');
+
+        // Category header with marking value on the right.
+        doc.setFont('times', 'bold');
+        doc.setFontSize(13);
+        doc.setTextColor(60, 60, 60);
+        doc.text(isContinuation ? `${categoryName} (cont.)` : categoryName, 22, yPosition + 4);
+        doc.setFont('times', 'normal');
+        doc.setFontSize(10);
+        doc.setTextColor(30, 80, 180);
+        doc.text(`Recommended Mark: ${markingVal}`, 185, yPosition + 4, { align: 'right' });
+        doc.setTextColor(0, 0, 0);
+        yPosition += 16;
+
+        chunk.forEach((lines) => {
+          doc.setFont('times', 'normal');
+          doc.setFontSize(10);
+          doc.setTextColor(0, 0, 0);
+          doc.text(lines, 25, yPosition);
+          yPosition += lines.length * 4.5 + 2;
+        });
+
+        if (renderSummaryThisChunk && savedSummaryLines.length > 0) {
+          doc.setFont('times', 'normal');
+          doc.setFontSize(10);
+          doc.setTextColor(198, 40, 40);
+          doc.text(savedSummaryLines, 25, yPosition);
+          yPosition += savedSummaryLines.length * 4.5 + 2;
+        }
+
+        // Space after each chunk.
+        yPosition += 8;
+        isContinuation = true;
+      }
     };
 
     // Function to add a main category section with its subcategories
-    const addMainCategorySection = (mainCategoryName: string, subCategories: string[]) => {
-      // Check if we need a new page for the main category header
-      if (yPosition > 200) {
+    const addMainCategorySection = (
+      mainCategoryName: string,
+      subCategories: string[],
+      isFirstMainCategory: boolean
+    ) => {
+      // Keep the first major heading on the current page and force page starts for the rest.
+      if (!isFirstMainCategory) {
         doc.addPage();
-        yPosition = 30;
+        yPosition = 20;
+      }
+
+      // Reserve room for heading + first subcategory so headings do not get orphaned.
+      const firstSubCategory = subCategories[0];
+      if (firstSubCategory) {
+        const firstCategoryData = groupedByCategory[firstSubCategory] ?? { items: [] };
+        const firstSectionHeight =
+          firstCategoryData.items.length > 0 || firstCategoryData.savedSummary
+            ? getCategorySectionHeight(firstCategoryData.items, firstCategoryData.savedSummary) + 8
+            : 36;
+        const requiredStartHeight = 12 + firstSectionHeight;
+        const maxFirstSectionHeightOnFreshPage = 270 - 20 - 12;
+        const canFitWholeFirstSection = firstSectionHeight <= maxFirstSectionHeightOnFreshPage;
+        if (canFitWholeFirstSection && yPosition + requiredStartHeight > 270) {
+          doc.addPage();
+          yPosition = 20;
+        }
       }
 
       // Main category header (centered)
+      doc.setFont('times', 'bold');
       doc.setFontSize(18);
       doc.setTextColor(0, 0, 0);
       doc.text(mainCategoryName, 105, yPosition, { align: 'center' });
-      yPosition += 15;
+      yPosition += 12;
 
       // Show all subcategories, with "None" for those without bullets
       subCategories.forEach((subCategory) => {
-        const items = groupedByCategory[subCategory];
-        if (items && items.length > 0) {
-          addCategorySection(subCategory, items);
+        const categoryData = groupedByCategory[subCategory] ?? { items: [] };
+        if (categoryData.items.length > 0 || categoryData.savedSummary) {
+          addCategorySection(subCategory, categoryData.items, categoryData.savedSummary);
         } else {
           // Empty subcategory box
           if (yPosition + 28 > 270) {
@@ -711,14 +779,17 @@ export default function ExportPanel({
           }
           doc.setFillColor(245, 245, 245);
           doc.roundedRect(17, yPosition - 4, 176, 28, 2, 2, 'F');
+          doc.setFont('times', 'bold');
           doc.setFontSize(13);
           doc.setTextColor(60, 60, 60);
           doc.text(subCategory, 22, yPosition + 4);
           const emptyMarkingVal = recommendedMarks[subCategory] ?? getMarkingValue(subCategory);
+          doc.setFont('times', 'normal');
           doc.setTextColor(30, 80, 180);
-          doc.setFontSize(11);
+          doc.setFontSize(10);
           doc.text(`Recommended Mark: ${emptyMarkingVal}`, 185, yPosition + 4, { align: 'right' });
-          doc.setFontSize(11);
+          doc.setFont('times', 'italic');
+          doc.setFontSize(10);
           doc.setTextColor(150, 150, 150);
           doc.text("None", 25, yPosition + 16);
           yPosition += 36;
@@ -731,7 +802,7 @@ export default function ExportPanel({
 
     // Get all main categories and their subcategories
     const mainCategories: Record<string, string[]> = {};
-    Object.entries(categoryMapping).forEach(([subCategory, mainCategory]) => {
+    Object.entries(CATEGORY_MAPPING).forEach(([subCategory, mainCategory]) => {
       if (!mainCategories[mainCategory]) {
         mainCategories[mainCategory] = [];
       }
@@ -752,14 +823,16 @@ export default function ExportPanel({
     });
 
     // Add each main category section (show all categories)
+    let renderedMainCategoryCount = 0;
     Object.keys(mainCategories).forEach((mainCategory) => {
       if (!selectedCategories[mainCategory as MainCategory]) return;
       const subCategories = mainCategories[mainCategory];
-      addMainCategorySection(mainCategory, subCategories);
+      addMainCategorySection(mainCategory, subCategories, renderedMainCategoryCount === 0);
+      renderedMainCategoryCount += 1;
     });
 
     // Add any categories that don't fit the main structure
-    const knownSubCategories = Object.keys(categoryMapping);
+    const knownSubCategories = Object.keys(CATEGORY_MAPPING);
     const unknownCategories = Object.keys(groupedByCategory).filter(cat => !knownSubCategories.includes(cat));
 
     if (unknownCategories.length > 0) {
@@ -769,15 +842,16 @@ export default function ExportPanel({
         yPosition = 30;
       }
 
+      doc.setFont('times', 'bold');
       doc.setFontSize(18);
       doc.setTextColor(0, 0, 0);
       doc.text('Other Categories', 20, yPosition);
       yPosition += 15;
 
       unknownCategories.forEach((category) => {
-        const items = groupedByCategory[category];
-        if (items.length > 0) {
-          addCategorySection(category, items);
+        const categoryData = groupedByCategory[category];
+        if (categoryData.items.length > 0 || categoryData.savedSummary) {
+          addCategorySection(category, categoryData.items, categoryData.savedSummary);
         }
       });
     }
@@ -868,6 +942,18 @@ export default function ExportPanel({
       )}
     </div>
 
+      {isExporting && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/50">
+          <div className="bg-white rounded-xl shadow-xl px-10 py-8 flex flex-col items-center gap-4">
+            <svg className="animate-spin h-10 w-10 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+            </svg>
+            <p className="text-gray-700 font-medium text-sm">Exporting…</p>
+          </div>
+        </div>
+      )}
+
       {showAckModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="bg-white rounded-xl shadow-xl max-w-lg w-full mx-4 p-6 space-y-4">
@@ -901,7 +987,7 @@ export default function ExportPanel({
                 disabled={isExporting}
                 className="px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors text-sm"
               >
-                {isExporting ? "Exporting..." : "Acknowledge &amp; Export"}
+                {isExporting ? "Exporting..." : "Acknowledge & Export"}
               </button>
             </div>
           </div>
