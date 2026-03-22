@@ -8,6 +8,7 @@ const ALLOWED_KEYS = new Set([
   "settings",
   "dashboardTotalEstimate",
   "savedBulletproofSevens",
+  "savedForcedSevens",
   "bulletproofSevenAnalysis",
   "exportHistory",
 ]);

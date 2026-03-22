@@ -36,6 +36,7 @@ const MAIN_CATEGORIES = ['Military', 'Performance', 'Professional Qualities', 'L
 type MainCategory = typeof MAIN_CATEGORIES[number];
 
 const BULLETPROOF_SAVED_STORAGE_KEY = 'guest-session:savedBulletproofSevens';
+const FORCED_SEVEN_SAVED_STORAGE_KEY = 'guest-session:savedForcedSevens';
 const DASHBOARD_SUB_CATEGORIES = [
   'Military Bearing',
   'Customs, Courtesies and Traditions',
@@ -101,6 +102,9 @@ export default function ExportPanel({
   const [savedBulletproofSummaries, setSavedBulletproofSummaries] = useState<
     Record<string, SavedBulletproofSummary>
   >({});
+  const [savedForcedSevenSummaries, setSavedForcedSevenSummaries] = useState<
+    Record<string, SavedBulletproofSummary>
+  >({});
 
   useEffect(() => {
     let cancelled = false;
@@ -108,12 +112,24 @@ export default function ExportPanel({
     void (async () => {
       try {
         if (isGuestSession) {
-          const raw = sessionStorage.getItem(BULLETPROOF_SAVED_STORAGE_KEY);
-          const parsed = raw ? (JSON.parse(raw) as unknown) : null;
+          const rawBulletproof =
+            localStorage.getItem(BULLETPROOF_SAVED_STORAGE_KEY) ??
+            sessionStorage.getItem(BULLETPROOF_SAVED_STORAGE_KEY);
+          const parsedBulletproof = rawBulletproof ? (JSON.parse(rawBulletproof) as unknown) : null;
+          const rawForced =
+            localStorage.getItem(FORCED_SEVEN_SAVED_STORAGE_KEY) ??
+            sessionStorage.getItem(FORCED_SEVEN_SAVED_STORAGE_KEY);
+          const parsedForced = rawForced ? (JSON.parse(rawForced) as unknown) : null;
+
           if (!cancelled) {
             setSavedBulletproofSummaries(
-              parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-                ? (parsed as Record<string, SavedBulletproofSummary>)
+              parsedBulletproof && typeof parsedBulletproof === 'object' && !Array.isArray(parsedBulletproof)
+                ? (parsedBulletproof as Record<string, SavedBulletproofSummary>)
+                : {}
+            );
+            setSavedForcedSevenSummaries(
+              parsedForced && typeof parsedForced === 'object' && !Array.isArray(parsedForced)
+                ? (parsedForced as Record<string, SavedBulletproofSummary>)
                 : {}
             );
           }
@@ -123,6 +139,9 @@ export default function ExportPanel({
         const response = await fetch('/api/user-data?key=savedBulletproofSevens');
         const data = (await response.json()) as { value?: unknown };
         const parsed = data.value;
+        const forcedResponse = await fetch('/api/user-data?key=savedForcedSevens');
+        const forcedData = (await forcedResponse.json()) as { value?: unknown };
+        const parsedForced = forcedData.value;
 
         if (!cancelled) {
           setSavedBulletproofSummaries(
@@ -130,10 +149,16 @@ export default function ExportPanel({
               ? (parsed as Record<string, SavedBulletproofSummary>)
               : {}
           );
+          setSavedForcedSevenSummaries(
+            parsedForced && typeof parsedForced === 'object' && !Array.isArray(parsedForced)
+              ? (parsedForced as Record<string, SavedBulletproofSummary>)
+              : {}
+          );
         }
       } catch {
         if (!cancelled) {
           setSavedBulletproofSummaries({});
+          setSavedForcedSevenSummaries({});
         }
       }
     })();
@@ -284,6 +309,16 @@ export default function ExportPanel({
     return Math.min(MAX_MARK, Math.max(MIN_MARK, value));
   };
 
+  const mergedSavedSevenSummaries: Record<string, SavedBulletproofSummary> = {
+    ...savedBulletproofSummaries,
+    ...savedForcedSevenSummaries,
+  };
+
+  const exportSevenCount = DASHBOARD_SUB_CATEGORIES.filter((categoryName) => {
+    const mainCategory = CATEGORY_MAPPING[categoryName];
+    return Boolean(mainCategory && selectedCategories[mainCategory as MainCategory] && mergedSavedSevenSummaries[categoryName]);
+  }).length;
+
   const getRecommendedMarks = async (): Promise<Record<string, number>> => {
     const bulletsByCategory: Record<string, string[]> = Object.fromEntries(
       DASHBOARD_SUB_CATEGORIES.map((cat) => [cat, [] as string[]])
@@ -353,14 +388,20 @@ export default function ExportPanel({
     const groupedByCategory: Record<string, GroupedExportCategory> = {};
     const uncategorized: HistoryItem[] = [];
 
+    const getSavedSummaryForCategory = (categoryName: string) =>
+      savedForcedSevenSummaries[categoryName] ?? savedBulletproofSummaries[categoryName];
+
     const ensureCategory = (categoryName: string) => {
       if (!groupedByCategory[categoryName]) {
         groupedByCategory[categoryName] = {
           items: [],
-          savedSummary: savedBulletproofSummaries[categoryName],
+          savedSummary: getSavedSummaryForCategory(categoryName),
         };
-      } else if (!groupedByCategory[categoryName].savedSummary && savedBulletproofSummaries[categoryName]) {
-        groupedByCategory[categoryName].savedSummary = savedBulletproofSummaries[categoryName];
+      } else {
+        const latestSummary = getSavedSummaryForCategory(categoryName);
+        if (latestSummary) {
+          groupedByCategory[categoryName].savedSummary = latestSummary;
+        }
       }
 
       return groupedByCategory[categoryName];
@@ -422,6 +463,12 @@ export default function ExportPanel({
     }
 
     Object.entries(savedBulletproofSummaries).forEach(([categoryName, savedSummary]) => {
+      if (CATEGORY_MAPPING[categoryName]) {
+        ensureCategory(categoryName).savedSummary = savedSummary;
+      }
+    });
+
+    Object.entries(savedForcedSevenSummaries).forEach(([categoryName, savedSummary]) => {
       if (CATEGORY_MAPPING[categoryName]) {
         ensureCategory(categoryName).savedSummary = savedSummary;
       }
@@ -863,7 +910,7 @@ export default function ExportPanel({
   return (
     <>
     <div className="bg-white p-6 rounded-xl shadow-md space-y-6">
-      <h2 className="text-xl font-semibold">Export Bullets</h2>
+      <h2 className="text-xl font-semibold">Export Official Marks</h2>
 
       {/* ── Category Selector ── */}
       <div>
@@ -895,7 +942,7 @@ export default function ExportPanel({
             </p>
           ) : null}
           <p className="text-sm text-gray-600">
-            {exportReadyHistory.length} mark{exportReadyHistory.length !== 1 ? 's' : ''} will be exported.
+            {exportReadyHistory.length} mark{exportReadyHistory.length !== 1 ? 's' : ''} will be exported. {exportSevenCount} saved 7{exportSevenCount !== 1 ? 's' : ''} will be exported.
           </p>
           <div className="flex flex-wrap gap-3">
             <button

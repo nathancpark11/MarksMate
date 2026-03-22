@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 type DashboardPanelProps = {
   sessionUserId?: string | null;
@@ -57,6 +57,7 @@ type PersistedDashboardAnalysisState = {
   insights: SmartInsights | null;
   evaluations: Record<string, CategoryEvaluation>;
   dismissedBullets: string[];
+  dismissedMissingResultsCategories?: string[];
   dismissedUnderrepresentedCategories: boolean;
   dismissedRepetitionGroups: string[];
   dismissedCrossCategoryPairs: string[];
@@ -83,6 +84,7 @@ const DASHBOARD_ANALYSIS_STORAGE_VERSION = 1;
 const BULLETPROOF_ANALYSIS_STORAGE_VERSION = 1;
 const BULLETPROOF_SAVED_STORAGE_KEY = "guest-session:savedBulletproofSevens";
 const BULLETPROOF_ANALYSIS_STORAGE_KEY = "guest-session:bulletproofSevenAnalysis";
+const FORCED_SEVEN_SAVED_STORAGE_KEY = "guest-session:savedForcedSevens";
 
 function getDashboardAnalysisStorageKey(userId: string, isGuestSession: boolean) {
   return `${isGuestSession ? "guest-session" : "dashboardAnalysis"}:${userId}`;
@@ -337,6 +339,7 @@ export default function DashboardPanel({
   const [editingBullets, setEditingBullets] = useState<Record<string, string>>({});
   // dismissedBullets: set of original bullet texts that have been saved
   const [dismissedBullets, setDismissedBullets] = useState<Set<string>>(new Set());
+  const [dismissedMissingResultsCategories, setDismissedMissingResultsCategories] = useState<Set<string>>(new Set());
   const [dismissedUnderrepresentedCategories, setDismissedUnderrepresentedCategories] = useState(false);
   const [dismissedRepetitionGroups, setDismissedRepetitionGroups] = useState<Set<string>>(new Set());
   const [dismissedCrossCategoryPairs, setDismissedCrossCategoryPairs] = useState<Set<string>>(new Set());
@@ -345,6 +348,9 @@ export default function DashboardPanel({
   const [openConsolidationGroupKey, setOpenConsolidationGroupKey] = useState<string | null>(null);
   const [consolidatedDrafts, setConsolidatedDrafts] = useState<Record<string, string>>({});
   const [consolidatedDraftTitles, setConsolidatedDraftTitles] = useState<Record<string, string>>({});
+  const [selectedConsolidationBulletsByGroupKey, setSelectedConsolidationBulletsByGroupKey] = useState<
+    Record<string, string[]>
+  >({});
   const [consolidationLoadingKey, setConsolidationLoadingKey] = useState<string | null>(null);
   const [consolidationErrorByKey, setConsolidationErrorByKey] = useState<Record<string, string>>({});
   const [crossCategoryRewordDrafts, setCrossCategoryRewordDrafts] = useState<Record<string, string>>({});
@@ -357,6 +363,7 @@ export default function DashboardPanel({
   const [savedBulletproofSummaries, setSavedBulletproofSummaries] = useState<
     Record<string, SavedBulletproofSummary>
   >({});
+  const [hasLoadedDashboardAnalysis, setHasLoadedDashboardAnalysis] = useState(false);
   const [hasLoadedBulletproofAnalysis, setHasLoadedBulletproofAnalysis] = useState(false);
   const [persistedBulletproofAnalysis, setPersistedBulletproofAnalysis] = useState<
     PersistedBulletproofAnalysisState | null
@@ -366,7 +373,16 @@ export default function DashboardPanel({
   const [bulletproofEditDrafts, setBulletproofEditDrafts] = useState<Record<string, string>>({});
   const [bulletproofRepromptingCategory, setBulletproofRepromptingCategory] = useState<string | null>(null);
   const [bulletproofSavingCategory, setBulletproofSavingCategory] = useState<string | null>(null);
-  const shouldAutoSaveBulletproofGenerationRef = useRef(false);
+  const [shouldGenerateBulletproofSummaries, setShouldGenerateBulletproofSummaries] = useState(false);
+
+  // Forced (overridden) 7 state
+  const [forcedSevenCategories, setForcedSevenCategories] = useState<Set<string>>(new Set());
+  const [forcedSevenSummaries, setForcedSevenSummaries] = useState<Record<string, string>>({});
+  const [savedForcedSevenSummaries, setSavedForcedSevenSummaries] = useState<Record<string, SavedBulletproofSummary>>({});
+  const [generatingForcedSevenCategory, setGeneratingForcedSevenCategory] = useState<string | null>(null);
+  const [forcedSevenEditingCategory, setForcedSevenEditingCategory] = useState<string | null>(null);
+  const [forcedSevenEditDrafts, setForcedSevenEditDrafts] = useState<Record<string, string>>({});
+  const [forcedSevenSavingCategory, setForcedSevenSavingCategory] = useState<string | null>(null);
 
   // Per-bullet Reword and Edit state for repetition group bullets
   const [repBulletRewordDrafts, setRepBulletRewordDrafts] = useState<Record<string, string>>({});
@@ -379,12 +395,15 @@ export default function DashboardPanel({
 
   useEffect(() => {
     if (!sessionUserId) {
+      setHasLoadedDashboardAnalysis(true);
       return;
     }
 
+    setHasLoadedDashboardAnalysis(false);
+
     try {
-      const storage = isGuestSession ? sessionStorage : localStorage;
-      const raw = storage.getItem(getDashboardAnalysisStorageKey(sessionUserId, isGuestSession));
+      const storageKey = getDashboardAnalysisStorageKey(sessionUserId, isGuestSession);
+      const raw = localStorage.getItem(storageKey) ?? (isGuestSession ? sessionStorage.getItem(storageKey) : null);
       if (!raw) {
         return;
       }
@@ -398,6 +417,7 @@ export default function DashboardPanel({
       setInsights(parsed.insights ?? null);
       setEvaluations(parsed.evaluations ?? {});
       setDismissedBullets(new Set(parsed.dismissedBullets ?? []));
+      setDismissedMissingResultsCategories(new Set(parsed.dismissedMissingResultsCategories ?? []));
       setDismissedUnderrepresentedCategories(Boolean(parsed.dismissedUnderrepresentedCategories));
       setDismissedRepetitionGroups(new Set(parsed.dismissedRepetitionGroups ?? []));
       setDismissedCrossCategoryPairs(new Set(parsed.dismissedCrossCategoryPairs ?? []));
@@ -407,13 +427,19 @@ export default function DashboardPanel({
       if (typeof parsed.lockedTotalEstimate === "number" && Number.isFinite(parsed.lockedTotalEstimate)) {
         setLockedTotalEstimate(parsed.lockedTotalEstimate);
       }
+
+      if (isGuestSession) {
+        localStorage.setItem(storageKey, raw);
+      }
     } catch {
       // Ignore parse/storage errors and continue with in-memory state.
+    } finally {
+      setHasLoadedDashboardAnalysis(true);
     }
   }, [sessionUserId, isGuestSession]);
 
   useEffect(() => {
-    if (!sessionUserId) {
+    if (!sessionUserId || !hasLoadedDashboardAnalysis) {
       return;
     }
 
@@ -423,6 +449,7 @@ export default function DashboardPanel({
       insights,
       evaluations,
       dismissedBullets: Array.from(dismissedBullets),
+      dismissedMissingResultsCategories: Array.from(dismissedMissingResultsCategories),
       dismissedUnderrepresentedCategories,
       dismissedRepetitionGroups: Array.from(dismissedRepetitionGroups),
       dismissedCrossCategoryPairs: Array.from(dismissedCrossCategoryPairs),
@@ -432,11 +459,7 @@ export default function DashboardPanel({
     };
 
     try {
-      const storage = isGuestSession ? sessionStorage : localStorage;
-      storage.setItem(
-        getDashboardAnalysisStorageKey(sessionUserId, isGuestSession),
-        JSON.stringify(payload)
-      );
+      localStorage.setItem(getDashboardAnalysisStorageKey(sessionUserId, isGuestSession), JSON.stringify(payload));
     } catch {
       // Ignore quota/storage errors and continue with in-memory state.
     }
@@ -446,12 +469,14 @@ export default function DashboardPanel({
     insights,
     evaluations,
     dismissedBullets,
+    dismissedMissingResultsCategories,
     dismissedUnderrepresentedCategories,
     dismissedRepetitionGroups,
     dismissedCrossCategoryPairs,
     suppressedCategoryComparisons,
     dismissedPreCloseActions,
     lockedTotalEstimate,
+    hasLoadedDashboardAnalysis,
     isGuestSession,
   ]);
 
@@ -492,6 +517,52 @@ export default function DashboardPanel({
       } catch {
         if (!cancelled) {
           setSavedBulletproofSummaries({});
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionUserId, isGuestSession]);
+
+  useEffect(() => {
+    if (!sessionUserId) {
+      setSavedForcedSevenSummaries({});
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        if (isGuestSession) {
+          const raw = localStorage.getItem(FORCED_SEVEN_SAVED_STORAGE_KEY) ?? sessionStorage.getItem(FORCED_SEVEN_SAVED_STORAGE_KEY);
+          const parsed = raw ? (JSON.parse(raw) as unknown) : null;
+          if (!cancelled) {
+            setSavedForcedSevenSummaries(
+              parsed && typeof parsed === "object" && !Array.isArray(parsed)
+                ? (parsed as Record<string, SavedBulletproofSummary>)
+                : {}
+            );
+          }
+          return;
+        }
+
+        const response = await fetch("/api/user-data?key=savedForcedSevens");
+        const data = (await response.json()) as { value?: unknown };
+        const parsed = data.value;
+
+        if (!cancelled) {
+          setSavedForcedSevenSummaries(
+            parsed && typeof parsed === "object" && !Array.isArray(parsed)
+              ? (parsed as Record<string, SavedBulletproofSummary>)
+              : {}
+          );
+        }
+      } catch {
+        if (!cancelled) {
+          setSavedForcedSevenSummaries({});
         }
       }
     })();
@@ -694,9 +765,16 @@ export default function DashboardPanel({
     resolveRepetitionBullet(oldText, group);
   };
 
+  const getUnresolvedGroupBullets = (group: SmartInsights["repetitionGroups"][number]) => {
+    const groupKey = getRepetitionGroupKey(group);
+    const resolvedSet = new Set(repGroupResolvedBullets[groupKey] ?? []);
+    return group.bullets.filter((bullet) => !resolvedSet.has(bullet));
+  };
+
   const generateConsolidatedDraft = async (
     group: SmartInsights["repetitionGroups"][number],
-    groupKey: string
+    groupKey: string,
+    selectedBullets?: string[]
   ) => {
     if (!aiEnabled) {
       setConsolidationErrorByKey((prev) => ({
@@ -706,11 +784,23 @@ export default function DashboardPanel({
       return;
     }
 
+    const bulletsToConsolidate = (selectedBullets ?? getUnresolvedGroupBullets(group))
+      .map((bullet) => bullet.trim())
+      .filter((bullet) => bullet.length > 0);
+
+    if (bulletsToConsolidate.length < 2) {
+      setConsolidationErrorByKey((prev) => ({
+        ...prev,
+        [groupKey]: "Select at least 2 bullets to consolidate.",
+      }));
+      return;
+    }
+
     setConsolidationLoadingKey(groupKey);
     setConsolidationErrorByKey((prev) => ({ ...prev, [groupKey]: "" }));
 
     try {
-      const accomplishment = `Consolidate these repeated accomplishments into one stronger mark bullet:\n${group.bullets
+      const accomplishment = `Consolidate these repeated accomplishments into one stronger mark bullet:\n${bulletsToConsolidate
         .map((bullet, index) => `${index + 1}. ${bullet}`)
         .join("\n")}`;
 
@@ -752,35 +842,81 @@ export default function DashboardPanel({
 
   const handleOpenConsolidation = async (group: SmartInsights["repetitionGroups"][number]) => {
     const groupKey = getRepetitionGroupKey(group);
+    const unresolvedBullets = getUnresolvedGroupBullets(group);
+    const existingSelection = selectedConsolidationBulletsByGroupKey[groupKey] ?? [];
+    const nextSelection = existingSelection.filter((bullet) => unresolvedBullets.includes(bullet));
+    const selectionToUse = nextSelection.length > 0 ? nextSelection : unresolvedBullets;
+
+    setSelectedConsolidationBulletsByGroupKey((prev) => ({
+      ...prev,
+      [groupKey]: selectionToUse,
+    }));
     setOpenConsolidationGroupKey(groupKey);
 
     if (!consolidatedDrafts[groupKey]) {
-      await generateConsolidatedDraft(group, groupKey);
+      await generateConsolidatedDraft(group, groupKey, selectionToUse);
     }
   };
 
   const handleRepromptConsolidation = async (group: SmartInsights["repetitionGroups"][number]) => {
     const groupKey = getRepetitionGroupKey(group);
-    await generateConsolidatedDraft(group, groupKey);
+    const unresolvedBullets = getUnresolvedGroupBullets(group);
+    const selectedBullets = (selectedConsolidationBulletsByGroupKey[groupKey] ?? unresolvedBullets).filter(
+      (bullet) => unresolvedBullets.includes(bullet)
+    );
+    await generateConsolidatedDraft(group, groupKey, selectedBullets);
   };
 
   const handleCommitConsolidation = (group: SmartInsights["repetitionGroups"][number]) => {
     const groupKey = getRepetitionGroupKey(group);
+    const unresolvedBullets = getUnresolvedGroupBullets(group);
+    const selectedBullets = (selectedConsolidationBulletsByGroupKey[groupKey] ?? unresolvedBullets).filter(
+      (bullet) => unresolvedBullets.includes(bullet)
+    );
     const draft = (consolidatedDrafts[groupKey] || "").trim();
     const title = (consolidatedDraftTitles[groupKey] || "").trim();
+
+    if (selectedBullets.length < 2) {
+      setConsolidationErrorByKey((prev) => ({
+        ...prev,
+        [groupKey]: "Select at least 2 bullets to consolidate.",
+      }));
+      return;
+    }
+
     if (!draft) {
       setConsolidationErrorByKey((prev) => ({ ...prev, [groupKey]: "Consolidated bullet is empty." }));
       return;
     }
 
     if (onCommitConsolidatedRepetition) {
-      onCommitConsolidatedRepetition(group.bullets, draft, group.category, title || undefined);
+      onCommitConsolidatedRepetition(selectedBullets, draft, group.category, title || undefined);
     }
 
-    suppressGroupCategoryComparisons(group);
+    const nextResolvedSet = new Set([...(repGroupResolvedBullets[groupKey] ?? []), ...selectedBullets]);
+    const nextResolved = Array.from(nextResolvedSet);
+    const remainingBullets = group.bullets.filter((bullet) => !nextResolvedSet.has(bullet));
 
-    setDismissedRepetitionGroups((prev) => new Set(prev).add(groupKey));
-    setOpenConsolidationGroupKey((prev) => (prev === groupKey ? null : prev));
+    setRepGroupResolvedBullets((prev) => ({
+      ...prev,
+      [groupKey]: nextResolved,
+    }));
+
+    if (remainingBullets.length < 2) {
+      suppressGroupCategoryComparisons(group);
+      setDismissedRepetitionGroups((prev) => new Set(prev).add(groupKey));
+      setOpenConsolidationGroupKey((prev) => (prev === groupKey ? null : prev));
+      return;
+    }
+
+    setSelectedConsolidationBulletsByGroupKey((prev) => ({
+      ...prev,
+      [groupKey]: remainingBullets,
+    }));
+    setConsolidatedDrafts((prev) => ({ ...prev, [groupKey]: "" }));
+    setConsolidatedDraftTitles((prev) => ({ ...prev, [groupKey]: "" }));
+    setConsolidationErrorByKey((prev) => ({ ...prev, [groupKey]: "" }));
+    void generateConsolidatedDraft(group, groupKey, remainingBullets);
   };
 
   const getCrossCategoryTargetKey = (pairKey: string, target: "left" | "right") => `${pairKey}|${target}`;
@@ -1037,6 +1173,30 @@ export default function DashboardPanel({
     [isGuestSession, sessionUserId]
   );
 
+  const persistSavedForcedSevenSummaries = useCallback(
+    async (nextValue: Record<string, SavedBulletproofSummary>) => {
+      if (!sessionUserId) {
+        return;
+      }
+
+      if (isGuestSession) {
+        localStorage.setItem(FORCED_SEVEN_SAVED_STORAGE_KEY, JSON.stringify(nextValue));
+        return;
+      }
+
+      const response = await fetch("/api/user-data", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: "savedForcedSevens", value: nextValue }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Unable to save overridden 7 summaries.");
+      }
+    },
+    [isGuestSession, sessionUserId]
+  );
+
   const persistBulletproofAnalysis = useCallback(
     async (nextValue: PersistedBulletproofAnalysisState) => {
       if (!sessionUserId) {
@@ -1059,6 +1219,46 @@ export default function DashboardPanel({
       }
     },
     [isGuestSession, sessionUserId]
+  );
+
+  const clearSavedBulletproofSummary = useCallback(
+    async (categoryName: string) => {
+      if (!savedBulletproofSummaries[categoryName]) {
+        return;
+      }
+
+      const nextValue = { ...savedBulletproofSummaries };
+      delete nextValue[categoryName];
+      setSavedBulletproofSummaries(nextValue);
+
+      try {
+        await persistSavedBulletproofSummaries(nextValue);
+      } catch {
+        setSavedBulletproofSummaries(savedBulletproofSummaries);
+        setBulletproofSummaryError("Unable to update saved 7 status right now.");
+      }
+    },
+    [persistSavedBulletproofSummaries, savedBulletproofSummaries]
+  );
+
+  const clearSavedForcedSeven = useCallback(
+    async (categoryName: string) => {
+      if (!savedForcedSevenSummaries[categoryName]) {
+        return;
+      }
+
+      const nextValue = { ...savedForcedSevenSummaries };
+      delete nextValue[categoryName];
+      setSavedForcedSevenSummaries(nextValue);
+
+      try {
+        await persistSavedForcedSevenSummaries(nextValue);
+      } catch {
+        setSavedForcedSevenSummaries(savedForcedSevenSummaries);
+        setBulletproofSummaryError("Unable to update saved override 7 status right now.");
+      }
+    },
+    [persistSavedForcedSevenSummaries, savedForcedSevenSummaries]
   );
 
   const fetchBulletproofSummarySet = useCallback(async (categoriesToSummarize: Record<string, string[]>) => {
@@ -1193,7 +1393,6 @@ export default function DashboardPanel({
     setLockedTotalEstimate(latestEstimate);
     void persistLockedTotalEstimate(latestEstimate);
 
-    shouldAutoSaveBulletproofGenerationRef.current = true;
     setHasAnalyzedBulletproof(true);
     setIsAnalyzingBulletproof(true);
     setBulletproofSummaries({});
@@ -1201,13 +1400,8 @@ export default function DashboardPanel({
     setIsLoadingBulletproofSummaries(false);
     setBulletproofSummaryRequestKey("");
 
-    try {
-      if (evaluationRequestKey !== evaluationRequestBody || Object.keys(evaluations).length === 0) {
-        await fetchCategoryEvaluations();
-      }
-    } finally {
-      setIsAnalyzingBulletproof(false);
-    }
+    setShouldGenerateBulletproofSummaries(true);
+    setIsAnalyzingBulletproof(false);
   };
 
   const repromptBulletproofSummary = async (categoryName: string) => {
@@ -1233,6 +1427,7 @@ export default function DashboardPanel({
         ...prev,
         [categoryName]: summaries[categoryName] || prev[categoryName] || "Summary unavailable.",
       }));
+      await clearSavedBulletproofSummary(categoryName);
     } catch (error) {
       setBulletproofSummaryError(
         error instanceof Error ? error.message : "Unable to build Bulletproof 7 summaries."
@@ -1269,6 +1464,7 @@ export default function DashboardPanel({
       ...prev,
       [categoryName]: clampSummaryLength(nextSummary),
     }));
+    void clearSavedBulletproofSummary(categoryName);
     cancelEditingBulletproofSummary(categoryName);
   };
 
@@ -1299,6 +1495,111 @@ export default function DashboardPanel({
     }
   };
 
+  const generateForcedSeven = async (categoryName: string) => {
+    const categoryBullets = bulletsByCategory[categoryName] ?? [];
+    if (!aiEnabled || categoryBullets.length === 0) {
+      return;
+    }
+
+    setForcedSevenCategories((prev) => new Set([...prev, categoryName]));
+    setGeneratingForcedSevenCategory(categoryName);
+
+    try {
+      const summaries = await fetchBulletproofSummarySet({ [categoryName]: categoryBullets });
+      setForcedSevenSummaries((prev) => ({
+        ...prev,
+        [categoryName]: summaries[categoryName] || "Summary unavailable.",
+      }));
+      await clearSavedForcedSeven(categoryName);
+    } catch {
+      // Remove from forced set if generation failed entirely
+      setForcedSevenCategories((prev) => {
+        const next = new Set(prev);
+        next.delete(categoryName);
+        return next;
+      });
+    } finally {
+      setGeneratingForcedSevenCategory(null);
+    }
+  };
+
+  const removeForcedSeven = (categoryName: string) => {
+    setForcedSevenCategories((prev) => {
+      const next = new Set(prev);
+      next.delete(categoryName);
+      return next;
+    });
+    setForcedSevenSummaries((prev) => {
+      const next = { ...prev };
+      delete next[categoryName];
+      return next;
+    });
+    setForcedSevenEditingCategory((prev) => (prev === categoryName ? null : prev));
+    setForcedSevenEditDrafts((prev) => {
+      const next = { ...prev };
+      delete next[categoryName];
+      return next;
+    });
+  };
+
+  const startEditingForcedSeven = (categoryName: string) => {
+    setForcedSevenEditingCategory(categoryName);
+    setForcedSevenEditDrafts((prev) => ({
+      ...prev,
+      [categoryName]: forcedSevenSummaries[categoryName] || "",
+    }));
+  };
+
+  const cancelEditingForcedSeven = (categoryName: string) => {
+    setForcedSevenEditingCategory((prev) => (prev === categoryName ? null : prev));
+    setForcedSevenEditDrafts((prev) => {
+      const next = { ...prev };
+      delete next[categoryName];
+      return next;
+    });
+  };
+
+  const applyEditedForcedSeven = (categoryName: string) => {
+    const nextSummary = (forcedSevenEditDrafts[categoryName] || "").trim();
+    if (!nextSummary) {
+      return;
+    }
+
+    setForcedSevenSummaries((prev) => ({
+      ...prev,
+      [categoryName]: clampSummaryLength(nextSummary),
+    }));
+    void clearSavedForcedSeven(categoryName);
+    cancelEditingForcedSeven(categoryName);
+  };
+
+  const saveForcedSeven = async (categoryName: string) => {
+    const summary = (forcedSevenSummaries[categoryName] || "").trim();
+    if (!summary) {
+      return;
+    }
+
+    const nextValue: Record<string, SavedBulletproofSummary> = {
+      ...savedForcedSevenSummaries,
+      [categoryName]: {
+        summary,
+        savedAt: new Date().toISOString(),
+      },
+    };
+
+    setForcedSevenSavingCategory(categoryName);
+    setSavedForcedSevenSummaries(nextValue);
+
+    try {
+      await persistSavedForcedSevenSummaries(nextValue);
+    } catch {
+      setSavedForcedSevenSummaries(savedForcedSevenSummaries);
+      setBulletproofSummaryError("Unable to save this overridden 7 right now.");
+    } finally {
+      setForcedSevenSavingCategory(null);
+    }
+  };
+
   const analyzeDashboard = async () => {
     if (!aiEnabled) {
       setInsightsError("Dashboard AI is disabled in Settings.");
@@ -1315,11 +1616,11 @@ export default function DashboardPanel({
     void persistLockedTotalEstimate(latestEstimate);
 
     setHasAnalyzedDashboard(true);
-    setHasAnalyzedBulletproof(true);
     setIsAnalyzingDashboard(true);
     setInsightsError("");
     setDismissedUnderrepresentedCategories(false);
     setDismissedBullets(new Set());
+    setDismissedMissingResultsCategories(new Set());
     setDismissedRepetitionGroups(new Set());
     setDismissedCrossCategoryPairs(new Set());
     setDismissedPreCloseActions(false);
@@ -1331,10 +1632,6 @@ export default function DashboardPanel({
     setCrossCategoryRewordDrafts({});
     setCrossCategoryRewordErrorByKey({});
     setCrossCategoryRewordLoadingKey(null);
-    setBulletproofSummaries({});
-    setBulletproofSummaryError("");
-    setIsLoadingBulletproofSummaries(false);
-    setBulletproofSummaryRequestKey("");
 
     try {
       await Promise.all([
@@ -1389,6 +1686,7 @@ export default function DashboardPanel({
 
       if (section === "missingResults") {
         setDismissedBullets(new Set());
+        setDismissedMissingResultsCategories(new Set());
         setEditingBullets({});
       } else {
         setDismissedRepetitionGroups(new Set());
@@ -1410,23 +1708,14 @@ export default function DashboardPanel({
 
   useEffect(() => {
     if (!hasCategoryBullets) {
-      shouldAutoSaveBulletproofGenerationRef.current = false;
       setEvaluations({});
       setEvaluationError("");
       setEvaluationRequestKey("");
-      setInsights(null);
       setInsightsError("");
-      setHasAnalyzedDashboard(false);
-      setHasAnalyzedBulletproof(false);
       setIsEvaluating(false);
       setIsLoadingInsights(false);
       setIsAnalyzingDashboard(false);
       setIsAnalyzingBulletproof(false);
-      setDismissedUnderrepresentedCategories(false);
-      setDismissedBullets(new Set());
-      setDismissedRepetitionGroups(new Set());
-      setDismissedCrossCategoryPairs(new Set());
-      setDismissedPreCloseActions(false);
       setEditingBullets({});
       setOpenConsolidationGroupKey(null);
       setConsolidatedDrafts({});
@@ -1435,10 +1724,9 @@ export default function DashboardPanel({
       setCrossCategoryRewordDrafts({});
       setCrossCategoryRewordErrorByKey({});
       setCrossCategoryRewordLoadingKey(null);
-      setBulletproofSummaries({});
       setBulletproofSummaryError("");
       setIsLoadingBulletproofSummaries(false);
-      setBulletproofSummaryRequestKey("");
+      setShouldGenerateBulletproofSummaries(false);
     }
   }, [hasCategoryBullets]);
 
@@ -1466,6 +1754,22 @@ export default function DashboardPanel({
   const bulletproofSevenCategories = categories.filter(
     (categoryName) => counts[categoryName] > 0 && getRecommendedScore(categoryName) === MAX_MARK
   );
+  const nonSevenCategoriesWithBullets = categories.filter(
+    (categoryName) => {
+      if (counts[categoryName] === 0) {
+        return false;
+      }
+
+      const recommendedScore = getRecommendedScore(categoryName);
+      return recommendedScore > MIN_MARK && recommendedScore < MAX_MARK;
+    }
+  );
+  const forcedSevenCategoryList = [...forcedSevenCategories].filter((cat) =>
+    nonSevenCategoriesWithBullets.includes(cat)
+  );
+  const availableToForceCategoryList = nonSevenCategoriesWithBullets.filter(
+    (cat) => !forcedSevenCategories.has(cat)
+  );
   const bulletproofSummaryCategories = Object.fromEntries(
     bulletproofSevenCategories.map((categoryName) => [categoryName, bulletsByCategory[categoryName] ?? []])
   );
@@ -1473,7 +1777,7 @@ export default function DashboardPanel({
     rankLevel,
     categories: bulletproofSummaryCategories,
   });
-  const hasAnalyzedBulletproofSection = hasAnalyzedDashboard || hasAnalyzedBulletproof;
+  const hasAnalyzedBulletproofSection = hasAnalyzedBulletproof;
 
   useEffect(() => {
     if (!hasLoadedBulletproofAnalysis || !persistedBulletproofAnalysis) {
@@ -1522,6 +1826,10 @@ export default function DashboardPanel({
   ]);
 
   useEffect(() => {
+    if (!shouldGenerateBulletproofSummaries) {
+      return;
+    }
+
     const requestPayload = JSON.parse(bulletproofRequestKey) as {
       rankLevel: string;
       categories: Record<string, string[]>;
@@ -1533,24 +1841,16 @@ export default function DashboardPanel({
     }
 
     if (!hasAnalyzedBulletproofSection || !aiEnabled) {
-      shouldAutoSaveBulletproofGenerationRef.current = false;
-      setBulletproofSummaries({});
+      setShouldGenerateBulletproofSummaries(false);
       setBulletproofSummaryError("");
       setIsLoadingBulletproofSummaries(false);
-      setBulletproofSummaryRequestKey("");
       return;
     }
 
     if (categoryNames.length === 0) {
-      shouldAutoSaveBulletproofGenerationRef.current = false;
-      setBulletproofSummaries({});
+      setShouldGenerateBulletproofSummaries(false);
       setBulletproofSummaryError("");
       setIsLoadingBulletproofSummaries(false);
-      setBulletproofSummaryRequestKey("");
-      return;
-    }
-
-    if (bulletproofSummaryRequestKey === bulletproofRequestKey) {
       return;
     }
 
@@ -1563,40 +1863,11 @@ export default function DashboardPanel({
         const summaries = await fetchBulletproofSummarySet(requestPayload.categories);
 
         if (!cancelled) {
-          const shouldAutoSave = shouldAutoSaveBulletproofGenerationRef.current;
           setBulletproofSummaries(summaries);
           setBulletproofSummaryRequestKey(bulletproofRequestKey);
-
-          if (shouldAutoSave) {
-            const savedAt = new Date().toISOString();
-            const nextSavedSummaries = {
-              ...savedBulletproofSummaries,
-              ...Object.fromEntries(
-                Object.entries(summaries).map(([categoryName, summary]) => [
-                  categoryName,
-                  {
-                    summary,
-                    savedAt,
-                  },
-                ])
-              ),
-            };
-
-            setSavedBulletproofSummaries(nextSavedSummaries);
-
-            try {
-              await persistSavedBulletproofSummaries(nextSavedSummaries);
-            } catch {
-              setSavedBulletproofSummaries(savedBulletproofSummaries);
-              setBulletproofSummaryError("Built 7's, but couldn't save them for the next session.");
-            }
-
-            shouldAutoSaveBulletproofGenerationRef.current = false;
-          }
         }
       } catch (error) {
         if (!cancelled) {
-          shouldAutoSaveBulletproofGenerationRef.current = false;
           setBulletproofSummaries({});
           setBulletproofSummaryError(
             error instanceof Error ? error.message : "Unable to build Bulletproof 7 summaries."
@@ -1606,6 +1877,7 @@ export default function DashboardPanel({
       } finally {
         if (!cancelled) {
           setIsLoadingBulletproofSummaries(false);
+          setShouldGenerateBulletproofSummaries(false);
         }
       }
     })();
@@ -1620,8 +1892,7 @@ export default function DashboardPanel({
     bulletproofSummaryRequestKey,
     fetchBulletproofSummarySet,
     hasAnalyzedBulletproofSection,
-    persistSavedBulletproofSummaries,
-    savedBulletproofSummaries,
+    shouldGenerateBulletproofSummaries,
   ]);
 
   const totalEstimate = categories.reduce((sum, cat) => {
@@ -1644,7 +1915,11 @@ export default function DashboardPanel({
     ? 0
     : localUnderrepresentedCategories.length;
   const visibleMissingResultsCount = insights
-    ? insights.bulletsLackingResults.filter((item) => !dismissedBullets.has(item.bullet)).length
+    ? insights.bulletsLackingResults.filter(
+        (item) =>
+          !dismissedBullets.has(item.bullet) &&
+          !dismissedMissingResultsCategories.has(normalizeCategoryName(item.category))
+      ).length
     : 0;
   const crossCategoryBulletTextSet = new Set(
     crossCategorySimilarityPairs.flatMap((pair) => [
@@ -1745,7 +2020,13 @@ export default function DashboardPanel({
         <div className="space-y-5">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h3 className="text-base font-semibold text-(--text-strong)">AI Smart Insights</h3>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col items-start gap-2 sm:items-end">
+            {hasAnalyzedDashboard && (
+              <p className="text-xs text-(--text-soft)">
+                Analysis is saved between sessions. Click Analyze Dashboard to refresh.
+              </p>
+            )}
+            <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => void analyzeDashboard()}
@@ -1754,6 +2035,7 @@ export default function DashboardPanel({
             >
               {isAnalyzingDashboard ? "Analyzing..." : "Analyze Dashboard"}
             </button>
+            </div>
           </div>
         </div>
         {!aiEnabled && (
@@ -1786,10 +2068,10 @@ export default function DashboardPanel({
                   <svg className="h-4 w-4 text-(--color-warning) shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
                   </svg>
-                  <h4 className="text-sm font-semibold text-(--color-warning)">
+                  <h4 className="underrepresented-categories-title text-sm font-semibold text-(--color-warning)">
                     Underrepresented Categories
                     {visibleUnderrepresentedCount > 0 && (
-                      <span className="ml-2 inline-flex items-center rounded-full bg-(--color-warning-soft) px-2 py-0.5 text-xs font-medium text-(--color-warning)">
+                      <span className="underrepresented-categories-count ml-2 inline-flex items-center rounded-full bg-(--color-warning-soft) px-2 py-0.5 text-xs font-medium text-(--color-warning)">
                         {visibleUnderrepresentedCount}
                       </span>
                     )}
@@ -1827,7 +2109,7 @@ export default function DashboardPanel({
                   ) : (
                     <ul className="space-y-3">
                       {localUnderrepresentedCategories.map((item, i) => (
-                        <li key={i} className="insight-card rounded-lg bg-(--surface-1) border border-(--border-muted) p-3">
+                        <li key={i} className="underrepresented-category-item insight-card rounded-lg bg-(--surface-1) border border-(--border-muted) p-3">
                           <div className="flex items-center justify-between mb-1">
                             <p className="text-xs font-semibold text-(--text-strong)">{item.category}</p>
                             <span className="text-xs text-(--color-warning) font-medium">
@@ -1847,7 +2129,12 @@ export default function DashboardPanel({
             {/* Bullets Missing Measurable Results */}
             {visibleMissingResultsCount > 0 && (() => {
               const visible = insights.bulletsLackingResults.filter(
-                (item) => !dismissedBullets.has(item.bullet)
+                (item) =>
+                  !dismissedBullets.has(item.bullet) &&
+                  !dismissedMissingResultsCategories.has(normalizeCategoryName(item.category))
+              );
+              const visibleMissingResultsCategories = Array.from(
+                new Set(visible.map((item) => item.category))
               );
               return (
                 <div className="insight-panel overflow-hidden rounded-xl border border-(--color-warning) bg-(--color-warning-soft)">
@@ -1882,9 +2169,7 @@ export default function DashboardPanel({
                     <button
                       type="button"
                       onClick={() =>
-                        setDismissedBullets(
-                          new Set(insights.bulletsLackingResults.map((item) => item.bullet))
-                        )
+                        setDismissedBullets(new Set(visible.map((item) => item.bullet)))
                       }
                       disabled={visibleMissingResultsCount === 0}
                       className="shrink-0 rounded-md border border-(--color-warning) bg-(--surface-1) px-2.5 py-1 text-xs font-semibold text-(--color-warning) hover:bg-(--color-warning-soft) transition-colors disabled:cursor-not-allowed disabled:opacity-60"
@@ -1911,7 +2196,25 @@ export default function DashboardPanel({
                       {visible.length === 0 ? (
                         <p className="text-xs text-(--color-warning)">All missing-results suggestions dismissed.</p>
                       ) : (
-                        <ul className="space-y-3">
+                        <>
+                          <div className="mb-3 flex flex-wrap items-center gap-2">
+                            {visibleMissingResultsCategories.map((categoryName) => (
+                              <button
+                                key={categoryName}
+                                type="button"
+                                onClick={() =>
+                                  setDismissedMissingResultsCategories((prev) =>
+                                    new Set(prev).add(normalizeCategoryName(categoryName))
+                                  )
+                                }
+                                className="rounded-full border border-(--color-warning) bg-(--surface-1) px-2.5 py-1 text-xs font-semibold text-(--color-warning) hover:bg-(--color-warning-soft) transition-colors"
+                                title={`Dismiss ${categoryName}`}
+                              >
+                                Dismiss {categoryName}
+                              </button>
+                            ))}
+                          </div>
+                          <ul className="space-y-3">
                           {visible.map((item, i) => {
                             const isEditing = Object.prototype.hasOwnProperty.call(editingBullets, item.bullet);
                             return (
@@ -1976,7 +2279,8 @@ export default function DashboardPanel({
                               </li>
                             );
                           })}
-                        </ul>
+                          </ul>
+                        </>
                       )}
                     </div>
                   )}
@@ -2212,6 +2516,7 @@ export default function DashboardPanel({
                         .map((group, i) => {
                           const groupKey = getRepetitionGroupKey(group);
                           const groupIdentityKey = group.theme + "||" + group.bullets.join("||");
+                          const unresolvedGroupBullets = getUnresolvedGroupBullets(group);
                           const resolvedCategoryLabel = repetitionGroupCategoryLabels.get(groupIdentityKey) || group.category;
                           const isMultiCategory = resolvedCategoryLabel === "Multiple Categories";
                           const isOpen = openConsolidationGroupKey === groupKey;
@@ -2222,7 +2527,7 @@ export default function DashboardPanel({
                             <p className="text-xs font-semibold text-(--color-secondary)">{group.theme}</p>
                             <div className="flex items-center gap-2">
                               <span className="text-xs text-(--color-secondary) font-medium">
-                                {(repetitionGroupResolvedBullets.get(groupIdentityKey) || []).filter(b => !(repGroupResolvedBullets[groupKey] ?? []).includes(b.text)).length} bullets
+                                {unresolvedGroupBullets.length} bullets
                               </span>
                               <button
                                 type="button"
@@ -2365,20 +2670,66 @@ export default function DashboardPanel({
                           </div>
                           )}
 
-                          {!isMultiCategory && (
                           <div className="mt-3">
                             <button
                               type="button"
                               onClick={() => void handleOpenConsolidation(group)}
-                              className="rounded-md border border-(--color-secondary) bg-(--color-secondary-soft) px-3 py-1 text-xs font-semibold text-(--color-secondary) hover:opacity-80 transition-colors"
+                              disabled={unresolvedGroupBullets.length < 2}
+                              className="rounded-md border border-(--color-secondary) bg-(--color-secondary-soft) px-3 py-1 text-xs font-semibold text-(--color-secondary) hover:opacity-80 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                             >
                               Consolidate and Reprompt
                             </button>
                           </div>
-                          )}
 
-                          {!isMultiCategory && isOpen && (
+                          {isOpen && (
                             <div className="insight-subpanel mt-3 rounded-md border border-(--color-secondary) bg-(--color-secondary-soft) p-3 space-y-2">
+                              <p className="text-xs font-semibold text-(--color-secondary)">Select Bullets to Consolidate</p>
+                              <div className="space-y-1.5 rounded-md border border-(--color-secondary) bg-(--surface-1) p-2">
+                                {unresolvedGroupBullets.map((bulletText, bulletIndex) => {
+                                  const selectedBullets = selectedConsolidationBulletsByGroupKey[groupKey] ?? unresolvedGroupBullets;
+                                  const isSelected = selectedBullets.includes(bulletText);
+
+                                  return (
+                                    <label
+                                      key={`${groupKey}-selected-bullet-${bulletIndex}`}
+                                      className="flex items-start gap-2 text-xs text-(--text-strong)"
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={isSelected}
+                                        onChange={() => {
+                                          setConsolidationErrorByKey((currentErrors) => ({
+                                            ...currentErrors,
+                                            [groupKey]: "",
+                                          }));
+                                          setSelectedConsolidationBulletsByGroupKey((prev) => {
+                                            const currentSelection = prev[groupKey] ?? unresolvedGroupBullets;
+                                            const alreadySelected = currentSelection.includes(bulletText);
+                                            const nextSelection = alreadySelected
+                                              ? currentSelection.filter((text) => text !== bulletText)
+                                              : [...currentSelection, bulletText];
+
+                                            return {
+                                              ...prev,
+                                              [groupKey]: nextSelection,
+                                            };
+                                          });
+                                        }}
+                                        className="mt-0.5"
+                                      />
+                                      <span>{bulletText}</span>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                              <p className="text-[11px] text-(--text-soft)">
+                                {Math.max(
+                                  0,
+                                  (selectedConsolidationBulletsByGroupKey[groupKey] ?? unresolvedGroupBullets).filter((bullet) =>
+                                    unresolvedGroupBullets.includes(bullet)
+                                  ).length
+                                )} of {unresolvedGroupBullets.length} selected (2+ required)
+                              </p>
                               <p className="text-xs font-semibold text-(--color-secondary)">Consolidated Mark Draft</p>
                               <textarea
                                 className="w-full rounded-md border border-(--color-secondary) bg-(--surface-1) px-2.5 py-2 text-xs text-(--text-strong) focus:outline-none focus:ring-1 focus:ring-(--color-secondary) resize-none"
@@ -2395,14 +2746,24 @@ export default function DashboardPanel({
                                 <button
                                   type="button"
                                   onClick={() => handleCommitConsolidation(group)}
-                                  className="rounded-md bg-(--color-primary) px-3 py-1 text-xs font-semibold text-(--color-text-on-strong) hover:bg-(--color-primary-hover) transition-colors"
+                                  disabled={
+                                    (selectedConsolidationBulletsByGroupKey[groupKey] ?? unresolvedGroupBullets).filter((bullet) =>
+                                      unresolvedGroupBullets.includes(bullet)
+                                    ).length < 2
+                                  }
+                                  className="rounded-md bg-(--color-primary) px-3 py-1 text-xs font-semibold text-(--color-text-on-strong) hover:bg-(--color-primary-hover) transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                                 >
                                   Save
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => void handleRepromptConsolidation(group)}
-                                  disabled={isReprompting}
+                                  disabled={
+                                    isReprompting ||
+                                    (selectedConsolidationBulletsByGroupKey[groupKey] ?? unresolvedGroupBullets).filter((bullet) =>
+                                      unresolvedGroupBullets.includes(bullet)
+                                    ).length < 2
+                                  }
                                   className="rounded-md border border-(--color-secondary) bg-(--surface-1) px-3 py-1 text-xs font-semibold text-(--color-secondary) hover:bg-(--color-secondary-soft) transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                                 >
                                   {isReprompting ? "Reprompting..." : "Reprompt"}
@@ -2686,144 +3047,286 @@ export default function DashboardPanel({
           <div id="bulletproof-seven-content" className="mt-3">
           {!hasCategoryBullets ? (
             <p className="text-sm text-(--text-soft)">Add bullets to analyze Bulletproof 7 recommendations.</p>
-          ) : !hasAnalyzedBulletproofSection ? (
-            <p className="text-sm text-(--text-soft)">Run Analyze Bulletproof 7 to generate consolidated 7-level recommendations.</p>
           ) : !aiEnabled ? (
             <p className="text-sm text-(--text-soft)">Dashboard AI is disabled in Settings.</p>
           ) : isAnalyzingBulletproof || isLoadingBulletproofSummaries ? (
             <p className="text-sm text-(--text-soft)">Building consolidated 7-level summaries...</p>
           ) : bulletproofSummaryError ? (
             <p className="text-sm text-(--color-danger)">{bulletproofSummaryError}</p>
-          ) : bulletproofSevenCategories.length === 0 ? (
-            <p className="text-sm text-(--text-soft)">
-              No categories currently project a 7/7 recommendation based on bullet strength and AI quality.
-            </p>
           ) : (
             <div className="space-y-5">
-              <div>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-(--text-soft)">Generated 7&apos;s</p>
-                <ul className="space-y-3">
-                  {bulletproofSevenCategories.map((categoryName) => {
-                    const summary = bulletproofSummaries[categoryName] || "Summary unavailable.";
-                    const savedSummary = savedBulletproofSummaries[categoryName];
-                    const isEditing = bulletproofEditingCategory === categoryName;
-                    const editDraft = bulletproofEditDrafts[categoryName] ?? summary;
-                    const isReprompting = bulletproofRepromptingCategory === categoryName;
-                    const isSaving = bulletproofSavingCategory === categoryName;
-
-                    return (
-                      <li
-                        key={categoryName}
-                        className={`rounded-lg border p-3 ${
-                          savedSummary
-                            ? "border-2 border-(--color-success) bg-(--surface-2)"
-                            : "border-(--color-secondary) bg-(--surface-1)"
-                        }`}
-                      >
-                        <div className="mb-1 flex items-center justify-between gap-3">
-                          <p className="text-sm font-semibold text-(--text-strong)">{categoryName}</p>
-                          <div className="flex items-center gap-2">
-                            {savedSummary ? (
-                              <span className="rounded-md bg-(--color-success) px-2 py-0.5 text-xs font-bold text-(--color-text-on-strong)">
-                                Saved
-                              </span>
-                            ) : null}
-                            <span className="rounded-md bg-(--color-success-soft) px-2 py-0.5 text-xs font-bold text-(--color-success)">7/7</span>
-                          </div>
-                        </div>
-                        {isEditing ? (
-                          <>
-                            <textarea
-                              value={editDraft}
-                              onChange={(event) =>
-                                setBulletproofEditDrafts((prev) => ({
-                                  ...prev,
-                                  [categoryName]: event.target.value,
-                                }))
-                              }
-                              className="w-full rounded-md border border-(--color-secondary) bg-(--surface-2) px-3 py-2 text-sm text-(--text-strong) focus:outline-none focus:ring-1 focus:ring-(--color-secondary)"
-                              rows={4}
-                            />
-                            <p className="mt-1 text-xs text-(--text-soft)">{editDraft.trim().length}/250 chars</p>
-                          </>
-                        ) : (
-                          <>
-                            <p className="text-sm text-(--text-strong)">{summary}</p>
-                            <p className="mt-1 text-xs text-(--text-soft)">{summary.length}/250 chars</p>
-                          </>
-                        )}
-                        <div className="mt-3 flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => void repromptBulletproofSummary(categoryName)}
-                            disabled={isReprompting || isSaving || isEditing}
-                            className="btn-secondary rounded-md px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            {isReprompting ? "Reprompting..." : "Reprompt"}
-                          </button>
-                          {isEditing ? (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => applyEditedBulletproofSummary(categoryName)}
-                                disabled={isSaving || isReprompting || !editDraft.trim()}
-                                className="btn-secondary rounded-md px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
-                              >
-                                Apply Edit
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => cancelEditingBulletproofSummary(categoryName)}
-                                disabled={isSaving || isReprompting}
-                                className="btn-secondary rounded-md px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
-                              >
-                                Cancel
-                              </button>
-                            </>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => startEditingBulletproofSummary(categoryName)}
-                              disabled={isReprompting || isSaving}
-                              className="btn-secondary rounded-md px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              Edit
-                            </button>
-                          )}
-                          <div className="ml-auto">
-                          <button
-                            type="button"
-                            onClick={() => void saveBulletproofSummary(categoryName)}
-                            disabled={isReprompting || isSaving || isEditing}
-                            className="btn-success rounded-md px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            {isSaving ? "Saving..." : savedSummary ? "Update Saved 7" : "Save 7"}
-                          </button>
-                          </div>
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-
-              {Object.keys(savedBulletproofSummaries).length > 0 && (
+              {/* Recommended 7's */}
+              {!hasAnalyzedBulletproofSection ? (
+                <p className="text-sm text-(--text-soft)">Run Generate 7's to build consolidated 7-level recommendations.</p>
+              ) : bulletproofSevenCategories.length === 0 ? (
+                <p className="text-sm text-(--text-soft)">
+                  No categories currently project a 7/7 recommendation based on bullet strength and AI quality.
+                </p>
+              ) : (
                 <div>
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-(--text-soft)">Saved 7&apos;s</p>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-(--text-soft)">Recommended 7&apos;s</p>
                   <ul className="space-y-3">
-                    {Object.entries(savedBulletproofSummaries)
-                      .sort((left, right) => left[0].localeCompare(right[0]))
-                      .map(([categoryName, saved]) => (
-                        <li key={categoryName} className="rounded-lg border-2 border-(--color-success) bg-(--surface-2) p-3">
+                    {bulletproofSevenCategories.map((categoryName) => {
+                      const summary = bulletproofSummaries[categoryName] || "Summary unavailable.";
+                      const savedSummary = savedBulletproofSummaries[categoryName];
+                      const isEditing = bulletproofEditingCategory === categoryName;
+                      const editDraft = bulletproofEditDrafts[categoryName] ?? summary;
+                      const isReprompting = bulletproofRepromptingCategory === categoryName;
+                      const isSaving = bulletproofSavingCategory === categoryName;
+
+                      return (
+                        <li
+                          key={categoryName}
+                          className={`rounded-lg border p-3 ${
+                            savedSummary
+                              ? "border-2 border-(--color-success) bg-(--surface-2)"
+                              : "border-(--color-secondary) bg-(--surface-1)"
+                          }`}
+                        >
                           <div className="mb-1 flex items-center justify-between gap-3">
                             <p className="text-sm font-semibold text-(--text-strong)">{categoryName}</p>
-                            <span className="rounded-md bg-(--color-success) px-2 py-0.5 text-xs font-bold text-(--color-text-on-strong)">Saved</span>
+                            <div className="flex items-center gap-2">
+                              {savedSummary ? (
+                                <span className="rounded-md bg-(--color-success) px-2 py-0.5 text-xs font-bold text-(--color-text-on-strong)">
+                                  Saved
+                                </span>
+                              ) : (
+                                <span className="rounded-md bg-(--color-danger) px-2 py-0.5 text-xs font-bold text-(--color-text-on-strong)">
+                                  Not Saved
+                                </span>
+                              )}
+                              <span className="rounded-md bg-(--color-success-soft) px-2 py-0.5 text-xs font-bold text-(--color-success)">7/7</span>
+                            </div>
                           </div>
-                          <p className="text-sm text-(--text-strong)">{saved.summary}</p>
-                          <p className="mt-1 text-xs text-(--text-soft)">{saved.summary.length}/250 chars</p>
+                          {isEditing ? (
+                            <>
+                              <textarea
+                                value={editDraft}
+                                onChange={(event) =>
+                                  setBulletproofEditDrafts((prev) => ({
+                                    ...prev,
+                                    [categoryName]: event.target.value,
+                                  }))
+                                }
+                                className="w-full rounded-md border border-(--color-secondary) bg-(--surface-2) px-3 py-2 text-sm text-(--text-strong) focus:outline-none focus:ring-1 focus:ring-(--color-secondary)"
+                                rows={4}
+                              />
+                              <p className="mt-1 text-xs text-(--text-soft)">{editDraft.trim().length}/250 chars</p>
+                            </>
+                          ) : (
+                            <>
+                              <p className="text-sm text-(--text-strong)">{summary}</p>
+                              <p className="mt-1 text-xs text-(--text-soft)">{summary.length}/250 chars</p>
+                            </>
+                          )}
+                          <div className="mt-3 flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => void repromptBulletproofSummary(categoryName)}
+                              disabled={isReprompting || isSaving || isEditing}
+                              className="btn-secondary rounded-md px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {isReprompting ? "Reprompting..." : "Reprompt"}
+                            </button>
+                            {isEditing ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => applyEditedBulletproofSummary(categoryName)}
+                                  disabled={isSaving || isReprompting || !editDraft.trim()}
+                                  className="btn-secondary rounded-md px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  Apply Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => cancelEditingBulletproofSummary(categoryName)}
+                                  disabled={isSaving || isReprompting}
+                                  className="btn-secondary rounded-md px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  Cancel
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => startEditingBulletproofSummary(categoryName)}
+                                disabled={isReprompting || isSaving}
+                                className="btn-secondary rounded-md px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                Edit
+                              </button>
+                            )}
+                            <div className="ml-auto">
+                              <button
+                                type="button"
+                                onClick={() => void saveBulletproofSummary(categoryName)}
+                                disabled={isReprompting || isSaving || isEditing}
+                                className="btn-success rounded-md px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {isSaving ? "Saving..." : savedSummary ? "Update Saved 7" : "Save 7"}
+                              </button>
+                            </div>
+                          </div>
                         </li>
-                      ))}
+                      );
+                    })}
                   </ul>
+                </div>
+              )}
+
+              {/* Override 7's */}
+              {nonSevenCategoriesWithBullets.length > 0 && (
+                <div className="border-t border-(--border-muted) pt-4">
+                  <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-(--color-warning)">Override 7&apos;s</p>
+                  <p className="mb-3 text-xs text-(--text-soft)">Force-generate a 7-level summary only for categories currently scored 5/7 or 6/7.</p>
+
+                  {/* Already-forced categories with summaries */}
+                  {forcedSevenCategoryList.length > 0 && (
+                    <ul className="mb-4 space-y-3">
+                      {forcedSevenCategoryList.map((categoryName) => {
+                        const summary = forcedSevenSummaries[categoryName] || "Summary unavailable.";
+                        const isGenerating = generatingForcedSevenCategory === categoryName;
+                        const isEditing = forcedSevenEditingCategory === categoryName;
+                        const editDraft = forcedSevenEditDrafts[categoryName] ?? summary;
+                        const savedSummary = savedForcedSevenSummaries[categoryName];
+                        const isSaving = forcedSevenSavingCategory === categoryName;
+
+                        return (
+                          <li
+                            key={categoryName}
+                            className={`rounded-lg border p-3 ${
+                              savedSummary
+                                ? "border-2 border-(--color-success) bg-(--surface-2)"
+                                : "border-(--color-warning) bg-(--surface-1)"
+                            }`}
+                          >
+                            <div className="mb-1 flex items-center justify-between gap-3">
+                              <p className="text-sm font-semibold text-(--text-strong)">{categoryName}</p>
+                              <div className="flex items-center gap-2">
+                                <span className="rounded-md bg-(--color-warning-soft) px-2 py-0.5 text-xs font-bold text-(--color-warning)">Override</span>
+                                {savedSummary ? (
+                                  <span className="rounded-md bg-(--color-success) px-2 py-0.5 text-xs font-bold text-(--color-text-on-strong)">
+                                    Saved
+                                  </span>
+                                ) : (
+                                  <span className="rounded-md bg-(--color-danger) px-2 py-0.5 text-xs font-bold text-(--color-text-on-strong)">
+                                    Not Saved
+                                  </span>
+                                )}
+                                <span className="rounded-md bg-(--color-success-soft) px-2 py-0.5 text-xs font-bold text-(--color-success)">7/7</span>
+                              </div>
+                            </div>
+                            {isGenerating ? (
+                              <p className="text-sm text-(--text-soft)">Generating override summary...</p>
+                            ) : isEditing ? (
+                              <>
+                                <textarea
+                                  value={editDraft}
+                                  onChange={(event) =>
+                                    setForcedSevenEditDrafts((prev) => ({
+                                      ...prev,
+                                      [categoryName]: event.target.value,
+                                    }))
+                                  }
+                                  className="w-full rounded-md border border-(--color-warning) bg-(--surface-2) px-3 py-2 text-sm text-(--text-strong) focus:outline-none focus:ring-1 focus:ring-(--color-warning)"
+                                  rows={4}
+                                />
+                                <p className="mt-1 text-xs text-(--text-soft)">{editDraft.trim().length}/250 chars</p>
+                              </>
+                            ) : (
+                              <>
+                                <p className="text-sm text-(--text-strong)">{summary}</p>
+                                <p className="mt-1 text-xs text-(--text-soft)">{summary.length}/250 chars</p>
+                              </>
+                            )}
+                            <div className="mt-3 flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void generateForcedSeven(categoryName)}
+                                disabled={isGenerating || isSaving || isEditing}
+                                className="btn-secondary rounded-md px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {isGenerating ? "Regenerating..." : "Reprompt"}
+                              </button>
+                              {isEditing ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => applyEditedForcedSeven(categoryName)}
+                                    disabled={isSaving || isGenerating || !editDraft.trim()}
+                                    className="btn-secondary rounded-md px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    Apply Edit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => cancelEditingForcedSeven(categoryName)}
+                                    disabled={isSaving || isGenerating}
+                                    className="btn-secondary rounded-md px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    Cancel
+                                  </button>
+                                </>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => startEditingForcedSeven(categoryName)}
+                                  disabled={isGenerating || isSaving}
+                                  className="btn-secondary rounded-md px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  Edit
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => removeForcedSeven(categoryName)}
+                                disabled={isGenerating || isSaving || isEditing}
+                                className="btn-secondary rounded-md px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                Remove
+                              </button>
+                              <div className="ml-auto">
+                                <button
+                                  type="button"
+                                  onClick={() => void saveForcedSeven(categoryName)}
+                                  disabled={isGenerating || isSaving || isEditing}
+                                  className="btn-success rounded-md px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  {isSaving ? "Saving..." : savedSummary ? "Update Saved 7" : "Save 7"}
+                                </button>
+                              </div>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+
+                  {/* Categories available to force */}
+                  {availableToForceCategoryList.length > 0 && (
+                    <ul className="space-y-2">
+                      {availableToForceCategoryList.map((categoryName) => {
+                        const isGenerating = generatingForcedSevenCategory === categoryName;
+                        return (
+                          <li
+                            key={categoryName}
+                            className="flex items-center justify-between rounded-lg border border-(--border-muted) bg-(--surface-1) px-3 py-2"
+                          >
+                            <span className="text-sm text-(--text-strong)">{categoryName}</span>
+                            <button
+                              type="button"
+                              onClick={() => void generateForcedSeven(categoryName)}
+                              disabled={!aiEnabled || isGenerating || generatingForcedSevenCategory !== null}
+                              className="btn-secondary rounded-md px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {isGenerating ? "Generating..." : "Force 7"}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
                 </div>
               )}
             </div>

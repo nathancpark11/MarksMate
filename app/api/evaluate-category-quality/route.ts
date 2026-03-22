@@ -18,21 +18,75 @@ const DASHBOARD_INPUT_GUARD_LIMITS = {
   maxCombinedChars: 40000,
 };
 
-type CategoryEvaluations = Record<
-  string,
-  {
-    breakdown: {
-      impact: number;
-      leadershipLevel: number;
-      scopeOfResponsibility: number;
-      measurableResults: number;
-      initiative: number;
-      alignmentToCategory: number;
-    };
-    aiExplanation: string;
-    compiledScore: number;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeCategoryKey(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function pickEvaluationsNode(payload: unknown): Record<string, unknown> {
+  if (!isRecord(payload)) {
+    return {};
   }
->;
+
+  if (isRecord(payload.evaluations)) {
+    return payload.evaluations;
+  }
+
+  if (Array.isArray(payload.evaluations)) {
+    const entries = payload.evaluations
+      .map((entry) => {
+        if (!isRecord(entry) || typeof entry.category !== "string") {
+          return null;
+        }
+
+        const value = isRecord(entry.evaluation)
+          ? entry.evaluation
+          : {
+              breakdown: entry.breakdown,
+              aiExplanation: entry.aiExplanation,
+              compiledScore: entry.compiledScore,
+            };
+
+        return [entry.category, value] as const;
+      })
+      .filter((entry): entry is readonly [string, Record<string, unknown>] => Boolean(entry && isRecord(entry[1])));
+
+    return Object.fromEntries(entries);
+  }
+
+  return payload;
+}
+
+function parseCategoryEvaluationPayload(rawOutput: string) {
+  const sanitized = stripCodeFences(rawOutput);
+  const candidates = [sanitized];
+
+  const firstBrace = sanitized.indexOf("{");
+  const lastBrace = sanitized.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    candidates.push(sanitized.slice(firstBrace, lastBrace + 1));
+  }
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      return {
+        evaluations: pickEvaluationsNode(parsed),
+        parsed: true,
+      };
+    } catch {
+      // Try the next candidate.
+    }
+  }
+
+  return {
+    evaluations: {} as Record<string, unknown>,
+    parsed: false,
+  };
+}
 
 function clampScore(value: unknown) {
   if (typeof value !== "number" || Number.isNaN(value)) {
@@ -65,6 +119,57 @@ function compileScoreFromBreakdown(breakdown: {
 
   const normalizedScore = 4 + ((averageScore - 1) / 9) * 3;
   return Math.round(normalizedScore * 10) / 10;
+}
+
+function getUnavailableEvaluation(reason: string) {
+  return {
+    breakdown: {
+      impact: 1,
+      leadershipLevel: 1,
+      scopeOfResponsibility: 1,
+      measurableResults: 1,
+      initiative: 1,
+      alignmentToCategory: 1,
+    },
+    aiExplanation: reason,
+    compiledScore: 4,
+  };
+}
+
+function buildHeuristicEvaluation(bullets: string[]) {
+  const normalizedBullets = bullets
+    .map((bullet) => (typeof bullet === "string" ? bullet.trim() : ""))
+    .filter(Boolean);
+
+  const bulletCount = normalizedBullets.length;
+  const measurableCount = normalizedBullets.filter((bullet) => /\b\d+(?:\.\d+)?%?\b|\$\d|\b(increased|decreased|reduced|improved|saved)\b/i.test(bullet)).length;
+  const leadershipCount = normalizedBullets.filter((bullet) => /\b(led|mentored|trained|supervised|managed|coached|directed)\b/i.test(bullet)).length;
+  const initiativeCount = normalizedBullets.filter((bullet) => /\b(initiated|developed|created|implemented|volunteered|proposed|improved)\b/i.test(bullet)).length;
+  const scopeCount = normalizedBullets.filter((bullet) => /\b(team|section|shop|flight|squadron|unit|mission|program|project)\b/i.test(bullet)).length;
+
+  const countBase = Math.min(10, Math.max(2, 2 + bulletCount * 2));
+
+  const breakdown = {
+    impact: clampScore(countBase + (measurableCount > 0 ? 1 : 0)),
+    leadershipLevel: clampScore(countBase - 1 + (leadershipCount > 0 ? 2 : 0)),
+    scopeOfResponsibility: clampScore(countBase - 1 + (scopeCount > 0 ? 1 : 0)),
+    measurableResults: clampScore(countBase - 2 + Math.min(3, measurableCount)),
+    initiative: clampScore(countBase - 1 + (initiativeCount > 0 ? 2 : 0)),
+    alignmentToCategory: clampScore(countBase),
+  };
+
+  const compiledScore = compileScoreFromBreakdown(breakdown);
+  const roundedRecommendation = Math.min(7, Math.max(4, Math.round(compiledScore)));
+
+  const explanation =
+    `Recommended ${roundedRecommendation}: fallback scoring used from current bullet evidence with ${bulletCount} bullet${bulletCount === 1 ? "" : "s"}, ` +
+    `${measurableCount} measurable result${measurableCount === 1 ? "" : "s"}, and ${leadershipCount} leadership indicator${leadershipCount === 1 ? "" : "s"}.`;
+
+  return {
+    breakdown,
+    aiExplanation: explanation,
+    compiledScore,
+  };
 }
 
 export async function POST(req: Request) {
@@ -153,13 +258,23 @@ export async function POST(req: Request) {
     const rankLevelValue = typeof rankLevel === "string" && rankLevel ? rankLevel : "E5";
     await Promise.all(
       populatedCategories.map(async ([category]) => {
-        const descriptions = await getMarkDescriptionsForCategory({
-          category,
-          rankLevel: rankLevelValue,
-          maxChunks: 4,
-        });
-        if (descriptions) {
-          categoryMarkDescriptions[category] = descriptions;
+        try {
+          const descriptions = await getMarkDescriptionsForCategory({
+            category,
+            rankLevel: rankLevelValue,
+            maxChunks: 4,
+          });
+          if (descriptions) {
+            categoryMarkDescriptions[category] = descriptions;
+          }
+        } catch (guidanceError: unknown) {
+          // Guidance context is optional for scoring; keep the request alive if lookup fails.
+          logApiError("Evaluate category quality guidance lookup error", guidanceError, {
+            requestId,
+            routeName,
+            category,
+            inputLength,
+          });
         }
       })
     );
@@ -216,62 +331,100 @@ Current rank level: ${rankLevelValue}${
 Categories and bullets:
 ${JSON.stringify(populatedCategories.map(([category, bullets]) => ({ category, bullets })), null, 2)}`;
 
-    const completion = await client.chat.completions.create({
-      model: DASHBOARD_ANALYSIS_MODEL,
-      messages: [
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-      max_tokens: 1200,
-      temperature: 0.2,
-    });
+    let rawOutput = "{}";
+    try {
+      const completion = await client.chat.completions.create({
+        model: DASHBOARD_ANALYSIS_MODEL,
+        messages: [
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+        max_tokens: 1200,
+        temperature: 0.2,
+      });
 
-    await logAiUsageEvent({
-      userId: user.id,
-      endpoint: routeName,
-      model: DASHBOARD_ANALYSIS_MODEL,
-      promptTokens: completion.usage?.prompt_tokens,
-      completionTokens: completion.usage?.completion_tokens,
-      totalTokens: completion.usage?.total_tokens,
-      success: true,
-    });
+      await logAiUsageEvent({
+        userId: user.id,
+        endpoint: routeName,
+        model: DASHBOARD_ANALYSIS_MODEL,
+        promptTokens: completion.usage?.prompt_tokens,
+        completionTokens: completion.usage?.completion_tokens,
+        totalTokens: completion.usage?.total_tokens,
+        success: true,
+      });
 
-    const rawOutput = completion.choices[0]?.message?.content?.trim() || "{}";
-    const parsed = JSON.parse(stripCodeFences(rawOutput)) as {
-      evaluations?: CategoryEvaluations;
-    };
+      rawOutput = completion.choices[0]?.message?.content?.trim() || "{}";
+    } catch (aiError: unknown) {
+      await logAiUsageEvent({
+        userId: user.id,
+        endpoint: routeName,
+        model: DASHBOARD_ANALYSIS_MODEL,
+        success: false,
+        errorMessage: aiError instanceof Error ? aiError.message : "Unknown AI completion error",
+      });
+
+      logApiError("Evaluate category quality completion error", aiError, {
+        requestId,
+        routeName,
+        inputLength,
+      });
+
+      const evaluations = Object.fromEntries(
+        populatedCategories.map(([category, bullets]) => [
+          category,
+          buildHeuristicEvaluation(bullets),
+        ])
+      );
+
+      logApiRequestMetadata({ requestId, routeName, inputLength, success: true, status: 200 });
+      return Response.json({ evaluations, degraded: true });
+    }
+    const { evaluations: parsedEvaluations, parsed } = parseCategoryEvaluationPayload(rawOutput);
+
+    if (!parsed) {
+      // Do not fail the endpoint when AI returns malformed JSON; fall back to per-category defaults.
+      logApiError("Evaluate category quality parse error", new Error("Failed to parse AI response JSON"), {
+        requestId,
+        routeName,
+        inputLength,
+        rawOutputPreview: rawOutput.slice(0, 500),
+      });
+    }
+
+    const normalizedEvaluationEntries = Object.entries(parsedEvaluations).map(([category, evaluation]) => [
+      normalizeCategoryKey(category),
+      evaluation,
+    ] as const);
+    const evaluationsByNormalizedCategory = new Map<string, unknown>(normalizedEvaluationEntries);
 
     const evaluations = Object.fromEntries(
-      populatedCategories.map(([category]) => {
-        const evaluation = parsed.evaluations?.[category];
+      populatedCategories.map(([category, bullets]) => {
+        const evaluationCandidate =
+          parsedEvaluations[category] ?? evaluationsByNormalizedCategory.get(normalizeCategoryKey(category));
+
+        const evaluation = isRecord(evaluationCandidate) ? evaluationCandidate : null;
 
         if (!evaluation) {
-          return [
-            category,
-            {
-              breakdown: {
-                impact: 1,
-                leadershipLevel: 1,
-                scopeOfResponsibility: 1,
-                measurableResults: 1,
-                initiative: 1,
-                alignmentToCategory: 1,
-              },
-              aiExplanation: "AI could not score this category from the current bullets.",
-              compiledScore: 4,
-            },
-          ];
+          return [category, buildHeuristicEvaluation(bullets)];
         }
 
         const breakdown = {
-          impact: clampScore(evaluation.breakdown?.impact),
-          leadershipLevel: clampScore(evaluation.breakdown?.leadershipLevel),
-          scopeOfResponsibility: clampScore(evaluation.breakdown?.scopeOfResponsibility),
-          measurableResults: clampScore(evaluation.breakdown?.measurableResults),
-          initiative: clampScore(evaluation.breakdown?.initiative),
-          alignmentToCategory: clampScore(evaluation.breakdown?.alignmentToCategory),
+          impact: clampScore(isRecord(evaluation.breakdown) ? evaluation.breakdown.impact : undefined),
+          leadershipLevel: clampScore(
+            isRecord(evaluation.breakdown) ? evaluation.breakdown.leadershipLevel : undefined
+          ),
+          scopeOfResponsibility: clampScore(
+            isRecord(evaluation.breakdown) ? evaluation.breakdown.scopeOfResponsibility : undefined
+          ),
+          measurableResults: clampScore(
+            isRecord(evaluation.breakdown) ? evaluation.breakdown.measurableResults : undefined
+          ),
+          initiative: clampScore(isRecord(evaluation.breakdown) ? evaluation.breakdown.initiative : undefined),
+          alignmentToCategory: clampScore(
+            isRecord(evaluation.breakdown) ? evaluation.breakdown.alignmentToCategory : undefined
+          ),
         };
 
         return [

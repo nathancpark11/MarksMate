@@ -43,6 +43,7 @@ export default function HistoryPanel({
   const [editableCategories, setEditableCategories] = useState<Record<number, string>>({});
   const [editableDates, setEditableDates] = useState<Record<number, string>>({});
   const [editingMarks, setEditingMarks] = useState<Record<number, boolean>>({});
+  const [searchQuery, setSearchQuery] = useState("");
 
   const parseValidDate = (dateStr: string): Date | null => {
     if (!dateStr?.trim()) {
@@ -231,7 +232,30 @@ export default function HistoryPanel({
   };
 
   const grouped: Record<string, Record<string, { item: HistoryItem; index: number }[]>> = {};
-  history.forEach((item, index) => {
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const filteredHistoryWithIndex = history
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => {
+    if (!normalizedSearchQuery) {
+      return true;
+    }
+
+    const normalizedDate = formatDateOrBlank(item.date).toLowerCase();
+    const searchFields = [
+      item.text,
+      item.title ?? "",
+      item.category ?? "",
+      item.markingPeriod ?? "",
+      normalizedDate,
+      ...(Array.isArray(item.dates)
+        ? item.dates.map((dateValue) => formatDateOrBlank(dateValue))
+        : []),
+    ];
+
+      return searchFields.some((field) => field.toLowerCase().includes(normalizedSearchQuery));
+    });
+
+  filteredHistoryWithIndex.forEach(({ item, index }) => {
     const period = item.markingPeriod?.trim() ? item.markingPeriod : getMarkingPeriod(item.date);
     const month = getMonthLabel(item.date);
     if (!grouped[period]) grouped[period] = {};
@@ -315,7 +339,35 @@ export default function HistoryPanel({
         </div>
       </div>
 
+      <div className="mb-5">
+        <label htmlFor="official-marks-search" className="block text-xs font-semibold uppercase tracking-wide text-(--text-soft)">
+          Search Saved Marks
+        </label>
+        <div className="mt-2 flex gap-2">
+          <input
+            id="official-marks-search"
+            type="text"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="Search by mark text, title, category, or date"
+            className="w-full rounded-md border border-(--border-muted) bg-(--surface-1) px-3 py-2 text-sm text-(--text-strong) focus:outline-none focus:ring-1 focus:ring-(--color-secondary)"
+          />
+          {searchQuery.trim().length > 0 && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery("")}
+              className="btn-secondary shrink-0 rounded-md px-3 py-2 text-xs font-semibold"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      </div>
+
       {history.length === 0 && <p className="text-(--text-soft)">No bullets committed yet.</p>}
+      {history.length > 0 && filteredHistoryWithIndex.length === 0 && (
+        <p className="text-(--text-soft)">No saved marks match your search.</p>
+      )}
 
       <div className="space-y-4">
         {sortedPeriods.map((period) => {
@@ -323,15 +375,18 @@ export default function HistoryPanel({
           const sortedMonths = Object.keys(grouped[period]).sort((a, b) =>
             getMonthSortKey(b).localeCompare(getMonthSortKey(a))
           );
-          const periodCategories = Array.from(
-            new Set(
-              Object.values(grouped[period])
-                .flat()
-                .map(({ item }) => item.category)
-                .filter((category): category is string => Boolean(category?.trim()))
-                .map((category) => category.trim())
-            )
-          ).sort((a, b) => a.localeCompare(b));
+          const periodCategoryCounts = Object.values(grouped[period])
+            .flat()
+            .reduce<Record<string, number>>((acc, { item }) => {
+              const category = item.category?.trim();
+              if (!category) {
+                return acc;
+              }
+
+              acc[category] = (acc[category] ?? 0) + 1;
+              return acc;
+            }, {});
+          const periodCategories = Object.keys(periodCategoryCounts).sort((a, b) => a.localeCompare(b));
           const selectedPeriodCategoryFilters = periodCategoryFilters[period] || [];
 
           const isCategorySelected = (category: string) =>
@@ -380,6 +435,7 @@ export default function HistoryPanel({
                     </button>
                     {periodCategories.map((category) => {
                       const selected = isCategorySelected(category);
+                      const categoryCount = periodCategoryCounts[category] ?? 0;
                       return (
                         <button
                           key={category}
@@ -411,7 +467,7 @@ export default function HistoryPanel({
                           }`}
                         >
                           {selected ? "✓ " : ""}
-                          {category}
+                          {category} ({categoryCount})
                         </button>
                       );
                     })}
@@ -450,18 +506,18 @@ export default function HistoryPanel({
                             {monthItems.map(({ item, index }) => (
                               <div key={index} className="rounded-md border border-(--border-muted) bg-(--surface-2) p-3">
                                 <div
-                                  className="cursor-pointer flex items-center justify-between rounded-md bg-(--surface-2) px-3 py-2"
+                                  className="cursor-pointer flex flex-col gap-1.5 rounded-md bg-(--surface-2) px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
                                   onClick={() => setExpanded((prev) => ({ ...prev, [item.text]: !prev[item.text] }))}
                                 >
                                   <div className="flex min-w-0 items-center gap-2">
                                     {item.title && (
-                                      <h3 className="text-sm font-semibold text-(--text-strong)">{toTitleCase(item.title)}</h3>
+                                      <h3 className="truncate text-sm font-semibold text-(--text-strong)">{toTitleCase(item.title)}</h3>
                                     )}
-                                    <p className="text-xs text-(--text-soft)">
+                                    <p className="shrink-0 text-xs text-(--text-soft)">
                                       {formatDateOrBlank(item.date)}
                                     </p>
                                   </div>
-                                  <div className="ml-3 flex shrink-0 items-center gap-2">
+                                  <div className="flex items-center gap-2 sm:ml-3 sm:shrink-0">
                                     <select
                                       value={item.category ?? ""}
                                       onClick={(event) => event.stopPropagation()}
@@ -471,7 +527,7 @@ export default function HistoryPanel({
                                         setEditableCategories((prev) => ({ ...prev, [index]: nextCategory }));
                                         handleUpdateMark(index, item.text, nextCategory || undefined);
                                       }}
-                                      className="official-mark-category-select official-mark-category-select-inline w-44 rounded-md border border-(--color-secondary) bg-(--color-secondary-soft) px-2 py-1 text-xs font-medium text-(--color-primary)"
+                                      className="official-mark-category-select official-mark-category-select-inline w-full rounded-md border border-(--color-secondary) bg-(--color-secondary-soft) px-2 py-1 text-xs font-medium text-(--color-primary) sm:w-44"
                                       aria-label="Change official mark category"
                                       title="Change category"
                                     >

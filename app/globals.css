@@ -188,6 +188,19 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+html[data-theme="dark"] .underrepresented-categories-title,
+html[data-theme="dark"] .underrepresented-categories-count,
+body.theme-dark .underrepresented-categories-title,
+body.theme-dark .underrepresented-categories-count {
+  color: #f0cc85;
+}
+
+html[data-theme="dark"] .underrepresented-category-item,
+body.theme-dark .underrepresented-category-item {
+  background-color: #2f2613;
+  border-color: #7f6630;
+}
+
 .app-classification-bar {
   background-color: var(--color-success);
   color: var(--color-text-on-strong);
@@ -294,8 +307,8 @@ html[data-theme="dark"] .dashboard-notification-bubble,
 html[data-theme="dark"] .dashboard-notification-bubble[class*="bg-white"],
 body.theme-dark .dashboard-notification-bubble,
 body.theme-dark .dashboard-notification-bubble[class*="bg-white"] {
-  background-color: var(--surface-1) !important;
-  color: var(--text-strong) !important;
+  background-color: #ef4444 !important;
+  color: #ffffff !important;
 }
 
 html [class*="bg-white"],
@@ -885,34 +898,36 @@ body.theme-dark .dashboard-smart-insights .insight-panel-green [class*="bg-green
 /* Bulletproof 7 panel dark mode */
 html[data-theme="dark"] .bulletproof-seven-panel,
 body.theme-dark .bulletproof-seven-panel {
-  background-color: #1e1b4b !important;
-  border-color: #4f46e5 !important;
+  --color-secondary: #34d399;
+  --color-secondary-soft: #123c2a;
+  background-color: var(--color-secondary-soft) !important;
+  border-color: var(--color-secondary) !important;
 }
 
 html[data-theme="dark"] .bulletproof-seven-panel [class*="text-indigo-900"],
 html[data-theme="dark"] .bulletproof-seven-panel [class*="text-indigo-800"],
 body.theme-dark .bulletproof-seven-panel [class*="text-indigo-900"],
 body.theme-dark .bulletproof-seven-panel [class*="text-indigo-800"] {
-  color: #e0e7ff !important;
+  color: #ecfdf5 !important;
 }
 
 html[data-theme="dark"] .bulletproof-seven-panel [class*="text-indigo-700"],
 html[data-theme="dark"] .bulletproof-seven-panel [class*="text-indigo-600"],
 body.theme-dark .bulletproof-seven-panel [class*="text-indigo-700"],
 body.theme-dark .bulletproof-seven-panel [class*="text-indigo-600"] {
-  color: #a5b4fc !important;
+  color: #bbf7d0 !important;
 }
 
 html[data-theme="dark"] .bulletproof-seven-panel [class*="bg-indigo-100"],
 html[data-theme="dark"] .bulletproof-seven-panel [class*="bg-indigo-200"],
 body.theme-dark .bulletproof-seven-panel [class*="bg-indigo-100"],
 body.theme-dark .bulletproof-seven-panel [class*="bg-indigo-200"] {
-  background-color: #3730a3 !important;
+  background-color: #166534 !important;
 }
 
 html[data-theme="dark"] .bulletproof-seven-panel [class*="border-indigo-100"],
 html[data-theme="dark"] .bulletproof-seven-panel [class*="border-indigo-200"],
 body.theme-dark .bulletproof-seven-panel [class*="border-indigo-100"],
 body.theme-dark .bulletproof-seven-panel [class*="border-indigo-200"] {
-  border-color: #4338ca !important;
+  border-color: #22c55e !important;
 }
