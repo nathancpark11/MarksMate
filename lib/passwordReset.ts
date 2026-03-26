@@ -1,11 +1,19 @@
-import { createHmac, randomInt } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { ensureSchema, sql } from "@/lib/db";
 import { hashPassword } from "@/lib/auth";
-import { findUserByUsernameOrEmail, sanitizeUsername, updateUserPasswordHashById } from "@/lib/userStore";
+import {
+  findUserByEmail,
+  findUserById,
+  sanitizeEmail,
+  updateUserPasswordHashById,
+} from "@/lib/userStore";
+import { sendWithSendGrid } from "@/lib/sendgrid";
 
-const RESET_CODE_TTL_MINUTES = 15;
+const RESET_TOKEN_TTL_MINUTES = 20;
+const GENERIC_FORGOT_PASSWORD_MESSAGE =
+  "If an account with that email exists, a password reset link has been sent.";
 
-function getResetCodeSecret() {
+function getResetTokenSecret() {
   if (process.env.PASSWORD_RESET_SECRET) {
     return process.env.PASSWORD_RESET_SECRET;
   }
@@ -18,109 +26,180 @@ function getResetCodeSecret() {
     throw new Error("Server misconfiguration: PASSWORD_RESET_SECRET or AUTH_SECRET is not set.");
   }
 
-  return "dev-only-password-reset-secret";
+  return "dev-only-password-reset-token-secret";
 }
 
-function hashResetCode(code: string) {
-  return createHmac("sha256", getResetCodeSecret()).update(code).digest("hex");
+function hashResetToken(token: string) {
+  return createHmac("sha256", getResetTokenSecret()).update(token).digest("hex");
 }
 
-function generateResetCode() {
-  return randomInt(100000, 1000000).toString();
+function generateResetToken() {
+  return randomBytes(32).toString("hex");
 }
 
 function getResetEmailSubject() {
-  return "Your Bullet Proof password reset code";
+  return "Reset your Bullet Proof password";
 }
 
-function getResetEmailBody(code: string) {
+function getAppBaseUrl() {
+  const configured = process.env.APP_BASE_URL?.trim();
+  if (configured) {
+    return configured.replace(/\/$/, "");
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("Server misconfiguration: APP_BASE_URL is not set.");
+  }
+
+  return "http://localhost:3000";
+}
+
+function buildResetLink(token: string) {
+  return `${getAppBaseUrl()}/reset-password?token=${encodeURIComponent(token)}`;
+}
+
+function getResetEmailBody(link: string) {
   return [
     "You requested a password reset for your Bullet Proof account.",
     "",
-    `Verification code: ${code}`,
-    `This code expires in ${RESET_CODE_TTL_MINUTES} minutes.`,
+    `Reset link: ${link}`,
+    `This link expires in ${RESET_TOKEN_TTL_MINUTES} minutes.`,
     "",
     "If you did not request this reset, you can ignore this email.",
   ].join("\n");
 }
 
-async function sendResetEmail(email: string, code: string) {
-  const resendApiKey = process.env.RESEND_API_KEY;
-  const fromEmail = process.env.PASSWORD_RESET_FROM_EMAIL || process.env.EMAIL_FROM;
-
-  if (!resendApiKey || !fromEmail) {
-    if (process.env.NODE_ENV !== "production") {
-      console.info("password-reset dev fallback", { email, code });
-      return;
-    }
-
-    throw new Error("Email provider is not configured. Set RESEND_API_KEY and PASSWORD_RESET_FROM_EMAIL.");
-  }
-
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${resendApiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from: fromEmail,
-      to: [email],
-      subject: getResetEmailSubject(),
-      text: getResetEmailBody(code),
-    }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Failed to send reset email (${response.status}): ${errorText.slice(0, 300)}`);
-  }
+function getResetEmailHtml(link: string) {
+  return [
+    "<p>You requested a password reset for your Bullet Proof account.</p>",
+    `<p><a href=\"${link}\">Reset Password</a></p>`,
+    `<p>This link expires in ${RESET_TOKEN_TTL_MINUTES} minutes.</p>`,
+    "<p>If you did not request this reset, you can ignore this email.</p>",
+  ].join("");
 }
 
-export async function issuePasswordResetCode(identifier: string): Promise<void> {
-  const normalizedIdentifier = sanitizeUsername(identifier);
-  if (!normalizedIdentifier) {
+async function sendResetEmail(email: string, token: string) {
+  const fromEmail = process.env.EMAIL_FROM;
+  if (!fromEmail) {
+    throw new Error("Server misconfiguration: EMAIL_FROM is not set.");
+  }
+
+  const resetLink = buildResetLink(token);
+
+  await sendWithSendGrid({
+    from: fromEmail,
+    to: email,
+    subject: getResetEmailSubject(),
+    text: getResetEmailBody(resetLink),
+    html: getResetEmailHtml(resetLink),
+  });
+}
+
+async function clearExpiredResetTokens() {
+  await sql`
+    DELETE FROM password_reset_tokens
+    WHERE expires_at <= NOW() OR consumed_at IS NOT NULL
+  `;
+}
+
+export function getForgotPasswordSuccessMessage() {
+  return GENERIC_FORGOT_PASSWORD_MESSAGE;
+}
+
+export async function requestPasswordResetByEmail(emailInput: string): Promise<void> {
+  const email = sanitizeEmail(emailInput);
+  if (!email) {
     return;
   }
 
-  const user = await findUserByUsernameOrEmail(normalizedIdentifier);
+  const user = await findUserByEmail(email);
   if (!user || !user.emailLower || !user.email) {
     return;
   }
 
   await ensureSchema();
+  await clearExpiredResetTokens();
 
-  const code = generateResetCode();
-  const codeHash = hashResetCode(code);
-  const expiresAt = new Date(Date.now() + RESET_CODE_TTL_MINUTES * 60 * 1000).toISOString();
+  const token = generateResetToken();
+  const tokenHash = hashResetToken(token);
+  const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MINUTES * 60 * 1000).toISOString();
   const createdAt = new Date().toISOString();
 
   await sql`
-    DELETE FROM password_reset_codes
+    DELETE FROM password_reset_tokens
     WHERE user_id = ${user.id} OR expires_at <= NOW()
   `;
 
   await sql`
-    INSERT INTO password_reset_codes (user_id, code_hash, expires_at, created_at)
-    VALUES (${user.id}, ${codeHash}, ${expiresAt}, ${createdAt})
+    INSERT INTO password_reset_tokens (user_id, token_hash, expires_at, created_at)
+    VALUES (${user.id}, ${tokenHash}, ${expiresAt}, ${createdAt})
   `;
 
-  await sendResetEmail(user.email, code);
+  await sendResetEmail(user.email, token);
 }
 
-export async function resetPasswordWithCode(input: {
-  identifier: string;
-  code: string;
-  newPassword: string;
-}): Promise<{ success: true } | { success: false; error: string; status: number }> {
-  const identifier = sanitizeUsername(input.identifier);
-  const code = (input.code || "").trim();
-  const newPassword = (input.newPassword || "").trim();
-
-  if (!identifier || !code || !newPassword) {
+export async function validatePasswordResetToken(tokenInput: string): Promise<{
+  success: true;
+} | {
+  success: false;
+  error: string;
+  status: number;
+}> {
+  const token = (tokenInput || "").trim();
+  if (!token) {
     return {
       success: false,
-      error: "Identifier, verification code, and new password are required.",
+      error: "Reset token is required.",
+      status: 400,
+    };
+  }
+
+  await ensureSchema();
+  await clearExpiredResetTokens();
+
+  const tokenHash = hashResetToken(token);
+  const result = await sql`
+    SELECT id, expires_at, consumed_at
+    FROM password_reset_tokens
+    WHERE token_hash = ${tokenHash}
+    ORDER BY created_at DESC
+    LIMIT 1
+  `;
+
+  if (result.rows.length === 0) {
+    return {
+      success: false,
+      error: "Reset link is invalid or expired.",
+      status: 400,
+    };
+  }
+
+  const row = result.rows[0];
+  const expiresAt = row.expires_at as string;
+  const consumedAt = row.consumed_at as string | null;
+
+  if (consumedAt || !expiresAt || new Date(expiresAt).getTime() <= Date.now()) {
+    return {
+      success: false,
+      error: "Reset link is invalid or expired.",
+      status: 400,
+    };
+  }
+
+  return { success: true };
+}
+
+export async function resetPasswordWithToken(input: {
+  token: string;
+  newPassword: string;
+}): Promise<{ success: true } | { success: false; error: string; status: number }> {
+  const token = (input.token || "").trim();
+  const newPassword = (input.newPassword || "").trim();
+
+  if (!token || !newPassword) {
+    return {
+      success: false,
+      error: "Reset token and new password are required.",
       status: 400,
     };
   }
@@ -133,21 +212,14 @@ export async function resetPasswordWithCode(input: {
     };
   }
 
-  const user = await findUserByUsernameOrEmail(identifier);
-  if (!user || !user.emailLower) {
-    return {
-      success: false,
-      error: "Invalid verification code or account.",
-      status: 400,
-    };
-  }
-
   await ensureSchema();
+  await clearExpiredResetTokens();
 
+  const tokenHash = hashResetToken(token);
   const result = await sql`
-    SELECT id, code_hash, expires_at, consumed_at
-    FROM password_reset_codes
-    WHERE user_id = ${user.id}
+    SELECT id, user_id, expires_at, consumed_at
+    FROM password_reset_tokens
+    WHERE token_hash = ${tokenHash}
     ORDER BY created_at DESC
     LIMIT 1
   `;
@@ -155,38 +227,30 @@ export async function resetPasswordWithCode(input: {
   if (result.rows.length === 0) {
     return {
       success: false,
-      error: "Invalid verification code or account.",
+      error: "Reset link is invalid or expired.",
       status: 400,
     };
   }
 
   const row = result.rows[0];
   const resetId = row.id as number;
-  const storedHash = row.code_hash as string;
+  const userId = row.user_id as string;
   const expiresAt = row.expires_at as string;
   const consumedAt = row.consumed_at as string | null;
 
-  if (consumedAt) {
+  if (consumedAt || !expiresAt || new Date(expiresAt).getTime() <= Date.now()) {
     return {
       success: false,
-      error: "Verification code has already been used.",
+      error: "Reset link is invalid or expired.",
       status: 400,
     };
   }
 
-  if (!expiresAt || new Date(expiresAt).getTime() <= Date.now()) {
+  const user = await findUserById(userId);
+  if (!user) {
     return {
       success: false,
-      error: "Verification code has expired.",
-      status: 400,
-    };
-  }
-
-  const incomingHash = hashResetCode(code);
-  if (incomingHash !== storedHash) {
-    return {
-      success: false,
-      error: "Invalid verification code or account.",
+      error: "Reset link is invalid or expired.",
       status: 400,
     };
   }
@@ -195,13 +259,13 @@ export async function resetPasswordWithCode(input: {
   await updateUserPasswordHashById(user.id, nextHash);
 
   await sql`
-    UPDATE password_reset_codes
+    UPDATE password_reset_tokens
     SET consumed_at = NOW()
     WHERE id = ${resetId}
   `;
 
   await sql`
-    DELETE FROM password_reset_codes
+    DELETE FROM password_reset_tokens
     WHERE user_id = ${user.id} AND id <> ${resetId}
   `;
 

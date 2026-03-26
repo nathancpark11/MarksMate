@@ -12,6 +12,10 @@ Create `.env.local` in the project root:
 ```bash
 OPENAI_API_KEY=your_openai_api_key_here
 AUTH_SECRET=replace_with_a_long_random_secret
+SENDGRID_API_KEY=SG.xxxxx
+EMAIL_FROM=noreply@example.com
+APP_BASE_URL=http://localhost:3000
+PASSWORD_RESET_SECRET=replace_with_a_long_random_secret
 ```
 
 Important:
@@ -19,6 +23,7 @@ Important:
 - Use `OPENAI_API_KEY` (no `NEXT_PUBLIC_` prefix).
 - Never put your API key in client components, browser code, or public config.
 - `NEXT_PUBLIC_*` variables are bundled into frontend code and visible in the browser.
+- `APP_BASE_URL` must point to your deployed app URL in production so reset links are valid.
 
 ## Local Development
 

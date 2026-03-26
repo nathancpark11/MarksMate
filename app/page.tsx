@@ -289,13 +289,10 @@ export default function Home() {
   const [authUsername, setAuthUsername] = useState("");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
-  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [showForgotPassword, setShowForgotPassword] = useState(true);
   const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
   const [forgotPasswordBusy, setForgotPasswordBusy] = useState(false);
-  const [forgotPasswordCodeSent, setForgotPasswordCodeSent] = useState(false);
-  const [forgotPasswordIdentifier, setForgotPasswordIdentifier] = useState("");
-  const [forgotPasswordCode, setForgotPasswordCode] = useState("");
-  const [forgotPasswordNewPassword, setForgotPasswordNewPassword] = useState("");
+  const [forgotPasswordEmail, setForgotPasswordEmail] = useState("");
   const [forgotPasswordError, setForgotPasswordError] = useState("");
   const [forgotPasswordMessage, setForgotPasswordMessage] = useState("");
   const [emailPromptDismissed, setEmailPromptDismissed] = useState(false);
@@ -518,7 +515,7 @@ export default function Home() {
 
         if (isInvalidCredentials) {
           setShowForgotPassword(true);
-          setForgotPasswordIdentifier(username);
+          setForgotPasswordEmail(username.includes("@") ? username : "");
         }
 
         return;
@@ -534,9 +531,7 @@ export default function Home() {
         setEmailPromptError("");
         setShowForgotPassword(false);
         setForgotPasswordOpen(false);
-        setForgotPasswordCodeSent(false);
-        setForgotPasswordCode("");
-        setForgotPasswordNewPassword("");
+        setForgotPasswordEmail("");
         setForgotPasswordError("");
         setForgotPasswordMessage("");
         setShowNoticeModal(true);
@@ -549,11 +544,11 @@ export default function Home() {
     }
   };
 
-  const handleRequestPasswordResetCode = async () => {
-    const identifier = forgotPasswordIdentifier.trim() || authUsername.trim();
+  const handleRequestPasswordResetLink = async () => {
+    const emailCandidate = forgotPasswordEmail.trim() || authUsername.trim();
 
-    if (!identifier) {
-      setForgotPasswordError("Enter your username or email first.");
+    if (!emailCandidate) {
+      setForgotPasswordError("Enter your email first.");
       return;
     }
 
@@ -564,7 +559,7 @@ export default function Home() {
       const res = await fetch("/api/auth/forgot-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ identifier }),
+        body: JSON.stringify({ email: emailCandidate }),
       });
 
       const data = (await res.json()) as { error?: string; message?: string };
@@ -574,55 +569,13 @@ export default function Home() {
         return;
       }
 
-      setForgotPasswordCodeSent(true);
-      setForgotPasswordIdentifier(identifier);
+      setForgotPasswordEmail(emailCandidate);
       setForgotPasswordMessage(
         data.message ||
-          "If an account with a saved email exists, a verification code has been sent."
+          "If an account with that email exists, a password reset link has been sent."
       );
     } catch {
-      setForgotPasswordError("Unable to send verification code.");
-    } finally {
-      setForgotPasswordBusy(false);
-    }
-  };
-
-  const handleResetPassword = async () => {
-    const identifier = forgotPasswordIdentifier.trim() || authUsername.trim();
-
-    if (!identifier || !forgotPasswordCode.trim() || !forgotPasswordNewPassword.trim()) {
-      setForgotPasswordError("Username/email, verification code, and new password are required.");
-      return;
-    }
-
-    setForgotPasswordError("");
-    setForgotPasswordMessage("");
-    setForgotPasswordBusy(true);
-    try {
-      const res = await fetch("/api/auth/reset-password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          identifier,
-          code: forgotPasswordCode.trim(),
-          newPassword: forgotPasswordNewPassword,
-        }),
-      });
-
-      const data = (await res.json()) as { error?: string };
-
-      if (!res.ok) {
-        setForgotPasswordError(data.error || "Unable to reset password.");
-        return;
-      }
-
-      setForgotPasswordCode("");
-      setForgotPasswordNewPassword("");
-      setAuthPassword("");
-      setAuthError("");
-      setForgotPasswordMessage("Password updated. You can now log in with your new password.");
-    } catch {
-      setForgotPasswordError("Unable to reset password.");
+      setForgotPasswordError("Unable to send reset link.");
     } finally {
       setForgotPasswordBusy(false);
     }
@@ -706,6 +659,7 @@ export default function Home() {
       if (isGuestSession) {
         clearGuestSessionData();
       }
+      setShowForgotPassword(true);
       setAuthUser(null);
       setAuthPassword("");
       setAuthEmail("");
@@ -2687,7 +2641,7 @@ export default function Home() {
                     setForgotPasswordError("");
                     setForgotPasswordMessage("");
                     if (next) {
-                      setForgotPasswordIdentifier(authUsername.trim());
+                      setForgotPasswordEmail(authUsername.includes("@") ? authUsername.trim() : "");
                     }
                   }}
                   type="button"
@@ -2699,60 +2653,28 @@ export default function Home() {
                 {forgotPasswordOpen && (
                   <div className="space-y-3 rounded-md border border-slate-200 bg-slate-50 p-3">
                     <div>
-                      <label className="block text-sm font-medium text-slate-700">Username or Email</label>
+                      <label className="block text-sm font-medium text-slate-700">Email</label>
                       <input
-                        type="text"
-                        value={forgotPasswordIdentifier}
-                        onChange={(e) => setForgotPasswordIdentifier(e.target.value)}
+                        type="email"
+                        value={forgotPasswordEmail}
+                        onChange={(e) => setForgotPasswordEmail(e.target.value)}
                         className="mt-2 w-full rounded-md border border-slate-300 p-2"
-                        autoComplete="username"
+                        autoComplete="email"
                       />
                     </div>
 
                     <button
-                      onClick={() => void handleRequestPasswordResetCode()}
+                      onClick={() => void handleRequestPasswordResetLink()}
                       disabled={forgotPasswordBusy}
                       type="button"
                       className="w-full rounded-md border border-blue-200 bg-white px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      {forgotPasswordBusy ? "Sending..." : "Send Verification Code"}
+                      {forgotPasswordBusy ? "Sending..." : "Send Reset Link"}
                     </button>
 
-                    {forgotPasswordCodeSent && (
-                      <>
-                        <div>
-                          <label className="block text-sm font-medium text-slate-700">Verification Code</label>
-                          <input
-                            type="text"
-                            value={forgotPasswordCode}
-                            onChange={(e) => setForgotPasswordCode(e.target.value)}
-                            className="mt-2 w-full rounded-md border border-slate-300 p-2"
-                            inputMode="numeric"
-                            autoComplete="one-time-code"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-slate-700">New Password</label>
-                          <input
-                            type="password"
-                            value={forgotPasswordNewPassword}
-                            onChange={(e) => setForgotPasswordNewPassword(e.target.value)}
-                            className="mt-2 w-full rounded-md border border-slate-300 p-2"
-                            autoComplete="new-password"
-                          />
-                        </div>
-
-                        <button
-                          onClick={() => void handleResetPassword()}
-                          disabled={forgotPasswordBusy}
-                          type="button"
-                          className="w-full rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {forgotPasswordBusy ? "Updating..." : "Update Password"}
-                        </button>
-                      </>
-                    )}
+                    <p className="text-xs text-slate-600">
+                      Use the link in your email to open the reset page and set a new password.
+                    </p>
 
                     {forgotPasswordError ? <p className="text-sm text-red-600">{forgotPasswordError}</p> : null}
                     {forgotPasswordMessage ? <p className="text-sm text-green-700">{forgotPasswordMessage}</p> : null}
@@ -2771,19 +2693,17 @@ export default function Home() {
 
             <button
               onClick={() => {
+                const nextMode = authMode === "login" ? "signup" : "login";
                 setAuthError("");
                 setSignupStep(1);
                 setPendingUser(null);
                 setAuthEmail("");
-                setShowForgotPassword(false);
+                setShowForgotPassword(nextMode === "login");
                 setForgotPasswordOpen(false);
-                setForgotPasswordCodeSent(false);
-                setForgotPasswordIdentifier("");
-                setForgotPasswordCode("");
-                setForgotPasswordNewPassword("");
+                setForgotPasswordEmail("");
                 setForgotPasswordError("");
                 setForgotPasswordMessage("");
-                setAuthMode(authMode === "login" ? "signup" : "login");
+                setAuthMode(nextMode);
               }}
               className="w-full text-sm font-medium text-blue-700 hover:text-blue-800"
             >

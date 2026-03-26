@@ -1,30 +1,33 @@
-import { issuePasswordResetCode } from "@/lib/passwordReset";
+import {
+  getForgotPasswordSuccessMessage,
+  requestPasswordResetByEmail,
+} from "@/lib/passwordReset";
 import { enforceRateLimits } from "@/lib/rateLimit";
 import { logApiError } from "@/lib/safeLogging";
+import { isValidEmail, sanitizeEmail } from "@/lib/userStore";
 
-// Per-identifier store: max 3 requests per 15 minutes per identifier.
+// Per-email store: max 3 requests per 15 minutes per email.
 declare global {
-  var __forgotPassIdentifierStore: Map<string, number[]> | undefined;
+  var __forgotPassEmailStore: Map<string, number[]> | undefined;
 }
-const identifierStore: Map<string, number[]> =
-  globalThis.__forgotPassIdentifierStore ?? new Map();
-if (!globalThis.__forgotPassIdentifierStore) {
-  globalThis.__forgotPassIdentifierStore = identifierStore;
+const emailStore: Map<string, number[]> = globalThis.__forgotPassEmailStore ?? new Map();
+if (!globalThis.__forgotPassEmailStore) {
+  globalThis.__forgotPassEmailStore = emailStore;
 }
 
-function checkIdentifierLimit(identifier: string): boolean {
+function checkEmailLimit(email: string): boolean {
   const windowMs = 15 * 60 * 1000;
   const maxRequests = 3;
   const now = Date.now();
-  const key = identifier.toLowerCase();
-  const timestamps = identifierStore.get(key) ?? [];
+  const key = email.toLowerCase();
+  const timestamps = emailStore.get(key) ?? [];
   const recent = timestamps.filter((t) => t > now - windowMs);
   if (recent.length >= maxRequests) {
-    identifierStore.set(key, recent);
+    emailStore.set(key, recent);
     return false;
   }
   recent.push(now);
-  identifierStore.set(key, recent);
+  emailStore.set(key, recent);
   return true;
 }
 
@@ -43,35 +46,34 @@ export async function POST(req: Request) {
   }
 
   try {
-    const body = (await req.json()) as { identifier?: string; username?: string };
-    const identifier = (body.identifier || body.username || "").trim();
+    const body = (await req.json()) as { email?: string; identifier?: string };
+    const email = sanitizeEmail(body.email || body.identifier || "");
 
-    if (!identifier) {
+    if (!email || !isValidEmail(email)) {
       return Response.json(
-        { error: "Username or email is required." },
+        { error: "Enter a valid email address." },
         { status: 400 }
       );
     }
 
-    // Per-identifier: max 3 requests per 15 minutes, applied after IP check.
-    if (!checkIdentifierLimit(identifier)) {
+    // Per-email: max 3 requests per 15 minutes, applied after IP check.
+    if (!checkEmailLimit(email)) {
       return Response.json(
-        { error: "Too many reset attempts for this account. Try again in 15 minutes." },
+        { error: "Too many reset attempts for this email. Try again in 15 minutes." },
         { status: 429 }
       );
     }
 
-    await issuePasswordResetCode(identifier);
+    await requestPasswordResetByEmail(email);
 
     return Response.json({
       success: true,
-      message:
-        "If an account with a saved email exists, a verification code has been sent.",
+      message: getForgotPasswordSuccessMessage(),
     });
   } catch (error: unknown) {
     logApiError("forgot-password error", error);
     return Response.json(
-      { error: "Unable to send verification code right now." },
+      { error: "Unable to process reset request right now." },
       { status: 500 }
     );
   }

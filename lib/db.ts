@@ -74,6 +74,26 @@ export async function ensureSchema(): Promise<void> {
   `;
 
   await sql`
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      id         SERIAL PRIMARY KEY,
+      user_id    TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      consumed_at TIMESTAMPTZ,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS password_reset_tokens_user_id_idx
+    ON password_reset_tokens (user_id)
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS password_reset_tokens_expires_at_idx
+    ON password_reset_tokens (expires_at)
+  `;
+
+  await sql`
     CREATE TABLE IF NOT EXISTS guidance_datasets (
       id           SERIAL PRIMARY KEY,
       ranks_key    TEXT UNIQUE NOT NULL,
