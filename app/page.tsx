@@ -2576,6 +2576,7 @@ export default function Home() {
 
   if (!authUser) {
     return (
+      <>
       <main className="min-h-screen flex items-center justify-center bg-slate-100 p-4">
         <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-lg sm:p-8">
           <h1 className="text-2xl font-bold text-slate-900">Bullet Proof</h1>
@@ -2649,37 +2650,6 @@ export default function Home() {
                 >
                   Forgot Password?
                 </button>
-
-                {forgotPasswordOpen && (
-                  <div className="space-y-3 rounded-md border border-slate-200 bg-slate-50 p-3">
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700">Email</label>
-                      <input
-                        type="email"
-                        value={forgotPasswordEmail}
-                        onChange={(e) => setForgotPasswordEmail(e.target.value)}
-                        className="mt-2 w-full rounded-md border border-slate-300 p-2"
-                        autoComplete="email"
-                      />
-                    </div>
-
-                    <button
-                      onClick={() => void handleRequestPasswordResetLink()}
-                      disabled={forgotPasswordBusy}
-                      type="button"
-                      className="w-full rounded-md border border-blue-200 bg-white px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {forgotPasswordBusy ? "Sending..." : "Send Reset Link"}
-                    </button>
-
-                    <p className="text-xs text-slate-600">
-                      Use the link in your email to open the reset page and set a new password.
-                    </p>
-
-                    {forgotPasswordError ? <p className="text-sm text-red-600">{forgotPasswordError}</p> : null}
-                    {forgotPasswordMessage ? <p className="text-sm text-green-700">{forgotPasswordMessage}</p> : null}
-                  </div>
-                )}
               </>
             )}
 
@@ -2724,6 +2694,57 @@ export default function Home() {
           </div>
         </div>
       </main>
+      {forgotPasswordOpen && authMode === "login" && (
+        <div className="fixed inset-0 z-100 flex items-center justify-center bg-black/45 px-4">
+          <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-slate-900">Reset Password</h2>
+              <button
+                type="button"
+                onClick={() => {
+                  setForgotPasswordOpen(false);
+                  setForgotPasswordError("");
+                  setForgotPasswordMessage("");
+                }}
+                className="rounded-md px-2 py-1 text-sm font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                aria-label="Close reset password dialog"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-slate-700">Email</label>
+                <input
+                  type="email"
+                  value={forgotPasswordEmail}
+                  onChange={(e) => setForgotPasswordEmail(e.target.value)}
+                  className="mt-2 w-full rounded-md border border-slate-300 p-2"
+                  autoComplete="email"
+                />
+              </div>
+
+              <button
+                onClick={() => void handleRequestPasswordResetLink()}
+                disabled={forgotPasswordBusy}
+                type="button"
+                className="w-full rounded-md border border-blue-700 bg-blue-700 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {forgotPasswordBusy ? "Sending..." : "Send Reset Link"}
+              </button>
+
+              <p className="text-xs text-slate-600">
+                Use the link in your email to open the reset page and set a new password.
+              </p>
+
+              {forgotPasswordError ? <p className="text-sm text-red-600">{forgotPasswordError}</p> : null}
+              {forgotPasswordMessage ? <p className="text-sm text-green-700">{forgotPasswordMessage}</p> : null}
+            </div>
+          </div>
+        </div>
+      )}
+      </>
     );
   }
 
