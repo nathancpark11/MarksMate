@@ -13,6 +13,8 @@ type RequestMetadata = {
   status: number;
 };
 
+type SecurityTelemetryPayload = Record<string, string | number | boolean | null | undefined>;
+
 function isPrimitive(value: unknown): value is string | number | boolean {
   return (
     typeof value === "string" ||
@@ -65,4 +67,11 @@ export function getRequestId(req: Request) {
 
 export function logApiRequestMetadata(metadata: RequestMetadata) {
   console.info("api-request", metadata);
+}
+
+export function logSecurityEvent(event: string, payload?: SecurityTelemetryPayload) {
+  console.info("security-event", {
+    event,
+    ...(payload ?? {}),
+  });
 }

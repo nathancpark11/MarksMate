@@ -3,7 +3,7 @@ import {
   requestPasswordResetByEmail,
 } from "@/lib/passwordReset";
 import { enforceRateLimits } from "@/lib/rateLimit";
-import { logApiError } from "@/lib/safeLogging";
+import { getRequestId, logApiError, logSecurityEvent } from "@/lib/safeLogging";
 import { isValidEmail, sanitizeEmail } from "@/lib/userStore";
 
 // Per-email store: max 3 requests per 15 minutes per email.
@@ -32,6 +32,8 @@ function checkEmailLimit(email: string): boolean {
 }
 
 export async function POST(req: Request) {
+  const requestId = getRequestId(req);
+
   // Per-IP: max 5 requests per 15 minutes.
   const ipLimitResponse = enforceRateLimits(req, [
     {
@@ -42,6 +44,10 @@ export async function POST(req: Request) {
     },
   ]);
   if (ipLimitResponse) {
+    logSecurityEvent("auth.forgot_password.rate_limited", {
+      requestId,
+      limiter: "ip",
+    });
     return ipLimitResponse;
   }
 
@@ -50,6 +56,9 @@ export async function POST(req: Request) {
     const email = sanitizeEmail(body.email || body.identifier || "");
 
     if (!email || !isValidEmail(email)) {
+      logSecurityEvent("auth.forgot_password.invalid_input", {
+        requestId,
+      });
       return Response.json(
         { error: "Enter a valid email address." },
         { status: 400 }
@@ -58,6 +67,10 @@ export async function POST(req: Request) {
 
     // Per-email: max 3 requests per 15 minutes, applied after IP check.
     if (!checkEmailLimit(email)) {
+      logSecurityEvent("auth.forgot_password.rate_limited", {
+        requestId,
+        limiter: "email",
+      });
       return Response.json(
         { error: "Too many reset attempts for this email. Try again in 15 minutes." },
         { status: 429 }
@@ -66,12 +79,20 @@ export async function POST(req: Request) {
 
     await requestPasswordResetByEmail(email);
 
+    logSecurityEvent("auth.forgot_password.requested", {
+      requestId,
+      accepted: true,
+    });
+
     return Response.json({
       success: true,
       message: getForgotPasswordSuccessMessage(),
     });
   } catch (error: unknown) {
-    logApiError("forgot-password error", error);
+    logApiError("forgot-password error", error, { requestId });
+    logSecurityEvent("auth.forgot_password.error", {
+      requestId,
+    });
     return Response.json(
       { error: "Unable to process reset request right now." },
       { status: 500 }
