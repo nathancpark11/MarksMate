@@ -576,6 +576,8 @@ export default function Home() {
           };
         }
 
+        // Wait a bit for database to update
+        await new Promise(resolve => setTimeout(resolve, 500));
         await refreshSession();
 
         const expiresAtLabel = payload.betaTrialExpiresAt
