@@ -341,8 +341,8 @@ export default function Home() {
     ? new Date(authUser.betaTrialExpiresAt).getTime()
     : Number.NaN;
   const isBetaTrialActive = Number.isFinite(betaTrialExpiryMs) && betaTrialExpiryMs > Date.now();
-  const hasPremiumAccess = !isGuestSession && authUser?.planTier === "premium";
-  const canManageBillingPortal = !isGuestSession && hasPremiumAccess && authUser?.hasBillingProfile === true;
+  const hasPremiumAccess = !isGuestSession && (authUser?.planTier === "premium" || isBetaTrialActive);
+  const canManageBillingPortal = !isGuestSession && authUser?.planTier === "premium" && authUser?.hasBillingProfile === true;
   const usageCount = authUser?.dailyUsageCount ?? 0;
   const usageLimit = Math.max(authUser?.dailyUsageLimit ?? 10, 10);
   const isFreeUsageAtLimit = !hasPremiumAccess && usageCount >= usageLimit;
