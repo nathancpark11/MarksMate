@@ -48,6 +48,12 @@ export function isValidEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized);
 }
 
+function toIsoString(raw: unknown): string | null {
+  if (raw instanceof Date) return raw.toISOString();
+  if (typeof raw === "string" && raw.length > 0) return raw;
+  return null;
+}
+
 function rowToUser(row: Record<string, unknown>): UserRecord {
   const rawLastLoginAt = row.last_login_at;
   const rawPlanTier = row.plan_tier;
@@ -92,14 +98,9 @@ function rowToUser(row: Record<string, unknown>): UserRecord {
     stripeCustomerId: typeof rawStripeCustomerId === "string" ? rawStripeCustomerId : null,
     stripeSubscriptionId:
       typeof rawStripeSubscriptionId === "string" ? rawStripeSubscriptionId : null,
-    subscriptionCurrentPeriodEnd:
-      typeof rawSubscriptionCurrentPeriodEnd === "string"
-        ? rawSubscriptionCurrentPeriodEnd
-        : null,
-    betaTrialExpiresAt:
-      typeof rawBetaTrialExpiresAt === "string" ? rawBetaTrialExpiresAt : null,
-    betaTrialRedeemedAt:
-      typeof rawBetaTrialRedeemedAt === "string" ? rawBetaTrialRedeemedAt : null,
+    subscriptionCurrentPeriodEnd: toIsoString(rawSubscriptionCurrentPeriodEnd),
+    betaTrialExpiresAt: toIsoString(rawBetaTrialExpiresAt),
+    betaTrialRedeemedAt: toIsoString(rawBetaTrialRedeemedAt),
     dailyUsageCount:
       typeof rawDailyUsageCount === "number"
         ? Math.max(0, Math.floor(rawDailyUsageCount))
