@@ -22,7 +22,7 @@ export async function GET() {
         planTier: "free",
         planStatus: null,
         dailyUsageCount: 0,
-        dailyUsageLimit: 5,
+        dailyUsageLimit: 10,
       },
     });
   }
@@ -40,7 +40,7 @@ export async function GET() {
       planTier: usageSummary?.planTier ?? "free",
       planStatus: usageSummary?.planStatus ?? null,
       dailyUsageCount: usageSummary?.dailyUsageCount ?? 0,
-      dailyUsageLimit: usageSummary ? usageSummary.dailyUsageLimit : 5,
+      dailyUsageLimit: usageSummary ? usageSummary.dailyUsageLimit : 10,
     },
   });
 }

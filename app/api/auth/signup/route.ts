@@ -83,7 +83,7 @@ export async function POST(req: Request) {
         planTier: "free",
         planStatus: null,
         dailyUsageCount: 0,
-        dailyUsageLimit: 5,
+        dailyUsageLimit: 10,
       },
     });
   } catch (error: unknown) {

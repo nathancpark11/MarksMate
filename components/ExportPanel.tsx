@@ -954,7 +954,7 @@ export default function ExportPanel({
                 <button
                   type="button"
                   onClick={onUpgradeToPremium}
-                  className="mt-2 rounded-md bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700"
+                  className="mt-2 rounded-md bg-green-700 px-3 py-2 text-xs font-semibold text-white hover:bg-green-800"
                 >
                   Upgrade to Premium
                 </button>

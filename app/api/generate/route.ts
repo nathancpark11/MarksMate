@@ -277,7 +277,10 @@ export async function POST(req: Request) {
     const categoryValue = typeof category === "string" && category ? category : "Quality of Work";
     const rankValue = typeof rankLevel === "string" && rankLevel ? rankLevel : "E4";
     const ratingValue = typeof rating === "string" && rating ? rating : "Undesignated";
-    const bulletStyleValue = typeof bulletStyle === "string" && bulletStyle ? bulletStyle : "Standard";
+    const isUserPremium = generationAccess.summary?.premium ?? false;
+    const bulletStyleValue = isUserPremium
+      ? (typeof bulletStyle === "string" && bulletStyle ? bulletStyle : "Standard")
+      : "Short/Concise";
     const peopleAffectedValue =
       typeof peopleAffected === "string" && peopleAffected ? peopleAffected : "";
     const percentImprovedValue =
@@ -291,10 +294,7 @@ export async function POST(req: Request) {
     const sourceCategoryValue = typeof sourceCategory === "string" ? sourceCategory.trim() : "";
     const isAlternateCategoryRewrite = generationIntentValue === "alternate-category-rewrite";
     const isRewordForCategory = generationIntentValue === "reword-for-category";
-    const isPremiumGenerationIntent =
-      generationIntentValue === "final-polished-official-mark" ||
-      isAlternateCategoryRewrite ||
-      isRewordForCategory;
+    const isPremiumGenerationIntent = isAlternateCategoryRewrite || isRewordForCategory;
 
     if (isPremiumGenerationIntent) {
       const premiumAccess = await enforcePremiumFeatureAccess(user.id, "Refine and improve");

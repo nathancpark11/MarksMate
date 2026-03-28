@@ -256,7 +256,7 @@ export default function SettingsPanel({
                 <button
                   type="button"
                   onClick={onUpgradeToPremium}
-                  className="mt-2 rounded-md bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700"
+                  className="mt-2 rounded-md bg-green-700 px-3 py-2 text-xs font-semibold text-white hover:bg-green-800"
                 >
                   Upgrade to Premium
                 </button>
@@ -265,11 +265,16 @@ export default function SettingsPanel({
           ) : null}
 
           <div className="mt-4">
-            <label className="block text-sm font-medium">Bullet Style</label>
+            <label className="block text-sm font-medium">
+              Bullet Style
+              {!premiumFeaturesEnabled && !restrictToRankAndRate && (
+                <span className="ml-2 text-xs font-normal text-(--color-primary)">(Premium)</span>
+              )}
+            </label>
           <select
-            value={bulletStyle}
+            value={premiumFeaturesEnabled ? bulletStyle : "Short/Concise"}
             onChange={(e) => setBulletStyle(e.target.value)}
-            disabled={restrictToRankAndRate}
+            disabled={restrictToRankAndRate || !premiumFeaturesEnabled}
             className="settings-control mt-2 w-full md:w-96 border rounded-md p-3"
           >
             <option>Short/Concise</option>
@@ -278,6 +283,9 @@ export default function SettingsPanel({
           </select>
           <p className="mt-2 text-xs text-(--text-soft)">
             This default is sent to the bullet generator prompt each time you generate.
+            {!premiumFeaturesEnabled && !restrictToRankAndRate && (
+              <> Upgrade to Premium to change this setting.</>  
+            )}
           </p>
           </div>
 

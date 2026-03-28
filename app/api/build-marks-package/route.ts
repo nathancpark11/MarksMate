@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { parseLimitedJsonBody } from "@/lib/aiRequestGuards";
 import { logAiUsageEvent } from "@/lib/analytics/logging";
 import { requireSessionUser } from "@/lib/auth";
+import { enforcePremiumFeatureAccess } from "@/lib/usageLimits";
 import { validateCombinedAiInputs } from "@/lib/promptSpamGuard";
 import { enforceRateLimits } from "@/lib/rateLimit";
 import { getRequestId, logApiError, logApiRequestMetadata } from "@/lib/safeLogging";
@@ -26,6 +27,11 @@ export async function POST(req: Request) {
       return authResponse ?? Response.json({ error: "Unauthorized" }, { status: 401 });
     }
     userIdForLogging = user.id;
+
+    const premiumAccess = await enforcePremiumFeatureAccess(user.id, "Marks Package Builder");
+    if (!premiumAccess.allowed) {
+      return Response.json({ error: premiumAccess.reason, code: premiumAccess.code }, { status: 403 });
+    }
 
     const rateLimitResponse = enforceRateLimits(req, [
       {

@@ -3,6 +3,7 @@ type TabBarProps = {
   setActiveTab: (tab: string) => void;
   dashboardRecommendationCount?: number;
   canManageOfficialGuidance?: boolean;
+  hasPremiumAccess?: boolean;
 };
 
 export default function TabBar({
@@ -10,6 +11,7 @@ export default function TabBar({
   setActiveTab,
   dashboardRecommendationCount = 0,
   canManageOfficialGuidance = false,
+  hasPremiumAccess = false,
 }: TabBarProps) {
   const tabBaseClass =
     "min-w-[48%] flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors sm:min-w-0 sm:text-base";
@@ -62,11 +64,7 @@ export default function TabBar({
           Dashboard
           {dashboardRecommendationCount > 0 && (
             <span
-              className={`dashboard-notification-bubble inline-flex min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-semibold leading-none ${
-                activeTab === "dashboard"
-                  ? "bg-(--color-primary) text-(--color-text-on-strong)"
-                  : "bg-(--color-danger) text-(--color-text-on-strong)"
-              }`}
+              className="dashboard-notification-bubble inline-flex min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-semibold leading-none bg-(--color-danger) text-(--color-text-on-strong)"
               aria-label={`${dashboardRecommendationCount} dashboard recommendations`}
             >
               {dashboardRecommendationCount}
@@ -82,12 +80,14 @@ export default function TabBar({
         Export Marks
       </button>
 
-      <button
-        onClick={() => setActiveTab("marks-package")}
-        className={`app-tab ${getTabClass("marks-package")}`}
-      >
-        Marks Package Builder
-      </button>
+      {hasPremiumAccess && (
+        <button
+          onClick={() => setActiveTab("marks-package")}
+          className={`app-tab ${getTabClass("marks-package")}`}
+        >
+          Marks Package Builder
+        </button>
+      )}
 
       {canManageOfficialGuidance && (
         <button

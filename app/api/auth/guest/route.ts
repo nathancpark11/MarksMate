@@ -19,7 +19,7 @@ export async function POST() {
       planTier: "free",
       planStatus: null,
       dailyUsageCount: 0,
-      dailyUsageLimit: 5,
+      dailyUsageLimit: 10,
     },
   });
 }

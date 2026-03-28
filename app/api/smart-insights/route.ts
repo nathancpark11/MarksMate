@@ -3,6 +3,7 @@ import { parseLimitedJsonBody } from "@/lib/aiRequestGuards";
 import { logAiUsageEvent } from "@/lib/analytics/logging";
 import { requireSessionUser } from "@/lib/auth";
 import { isGuidanceAdminUsername } from "@/lib/admin";
+import { enforcePremiumFeatureAccess } from "@/lib/usageLimits";
 import { validateCombinedAiInputs } from "@/lib/promptSpamGuard";
 import { enforceRateLimits } from "@/lib/rateLimit";
 import { getRequestId, logApiError, logApiRequestMetadata } from "@/lib/safeLogging";
@@ -33,6 +34,13 @@ export async function POST(req: Request) {
       return authResponse ?? Response.json({ error: "Unauthorized" }, { status: 401 });
     }
     userIdForLogging = user.id;
+
+    if (!isGuidanceAdminUsername(user.username)) {
+      const premiumAccess = await enforcePremiumFeatureAccess(user.id, "AI Smart Insights");
+      if (!premiumAccess.allowed) {
+        return Response.json({ error: premiumAccess.reason, code: premiumAccess.code }, { status: 403 });
+      }
+    }
 
     if (!isGuidanceAdminUsername(user.username)) {
       const rateLimitResponse = enforceRateLimits(req, [

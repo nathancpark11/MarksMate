@@ -4,6 +4,8 @@ type DashboardPanelProps = {
   sessionUserId?: string | null;
   isGuestSession?: boolean;
   aiEnabled: boolean;
+  allowMultiCategorization?: boolean;
+  hasPremiumAccess?: boolean;
   history: { text: string; category?: string }[];
   suggestions: Record<string, { category: string; reason: string }>;
   rankLevel: string;
@@ -268,6 +270,8 @@ export default function DashboardPanel({
   sessionUserId,
   isGuestSession = false,
   aiEnabled,
+  allowMultiCategorization = false,
+  hasPremiumAccess = true,
   history,
   suggestions,
   rankLevel,
@@ -1040,37 +1044,39 @@ export default function DashboardPanel({
 
   const crossCategoryDetectionSource = categorizedBullets;
 
-  for (let i = 0; i < crossCategoryDetectionSource.length; i++) {
-    for (let j = i + 1; j < crossCategoryDetectionSource.length; j++) {
-      const left = crossCategoryDetectionSource[i];
-      const right = crossCategoryDetectionSource[j];
+  if (allowMultiCategorization) {
+    for (let i = 0; i < crossCategoryDetectionSource.length; i++) {
+      for (let j = i + 1; j < crossCategoryDetectionSource.length; j++) {
+        const left = crossCategoryDetectionSource[i];
+        const right = crossCategoryDetectionSource[j];
 
-      if (left.category === right.category) {
-        continue;
+        if (left.category === right.category) {
+          continue;
+        }
+
+        const matchType = getCrossCategoryMatchType(left.text, right.text);
+        if (!matchType) {
+          continue;
+        }
+
+        const categoryComparisonKey = getCategoryComparisonKey(left.category, right.category);
+        if (suppressedCategoryComparisons.has(categoryComparisonKey)) {
+          continue;
+        }
+
+        const pairKey = getCrossCategoryPairKey(left, right);
+        if (seenCrossCategoryPairKeys.has(pairKey)) {
+          continue;
+        }
+
+        seenCrossCategoryPairKeys.add(pairKey);
+        crossCategorySimilarityPairs.push({
+          key: pairKey,
+          left,
+          right,
+          matchType,
+        });
       }
-
-      const matchType = getCrossCategoryMatchType(left.text, right.text);
-      if (!matchType) {
-        continue;
-      }
-
-      const categoryComparisonKey = getCategoryComparisonKey(left.category, right.category);
-      if (suppressedCategoryComparisons.has(categoryComparisonKey)) {
-        continue;
-      }
-
-      const pairKey = getCrossCategoryPairKey(left, right);
-      if (seenCrossCategoryPairKeys.has(pairKey)) {
-        continue;
-      }
-
-      seenCrossCategoryPairKeys.add(pairKey);
-      crossCategorySimilarityPairs.push({
-        key: pairKey,
-        left,
-        right,
-        matchType,
-      });
     }
   }
 
@@ -1921,12 +1927,14 @@ export default function DashboardPanel({
           !dismissedMissingResultsCategories.has(normalizeCategoryName(item.category))
       ).length
     : 0;
-  const crossCategoryBulletTextSet = new Set(
-    crossCategorySimilarityPairs.flatMap((pair) => [
-      normalizeBulletForSimilarity(pair.left.text),
-      normalizeBulletForSimilarity(pair.right.text),
-    ])
-  );
+  const crossCategoryBulletTextSet = allowMultiCategorization
+    ? new Set(
+        crossCategorySimilarityPairs.flatMap((pair) => [
+          normalizeBulletForSimilarity(pair.left.text),
+          normalizeBulletForSimilarity(pair.right.text),
+        ])
+      )
+    : new Set<string>();
   const eligibleRepetitionGroups = insights
     ? insights.repetitionGroups.filter((group) => {
         const hasCrossCategoryBulletOverlap = group.bullets.some((bullet) =>
@@ -1968,15 +1976,17 @@ export default function DashboardPanel({
 
     repetitionGroupCategoryLabels.set(
       groupIdentityKey,
-      distinctCategories.length <= 1 ? resolvedBullets[0]?.category || group.category : "Multiple Categories"
+      distinctCategories.length <= 1 || !allowMultiCategorization
+        ? resolvedBullets[0]?.category || group.category
+        : "Multiple Categories"
     );
   });
   const visibleRepetitionCount = eligibleRepetitionGroups.filter(
     (group) => !dismissedRepetitionGroups.has(getRepetitionGroupKey(group))
   ).length;
-  const visibleCrossCategorySimilarityCount = crossCategorySimilarityPairs.filter(
-    (pair) => !dismissedCrossCategoryPairs.has(pair.key)
-  ).length;
+  const visibleCrossCategorySimilarityCount = allowMultiCategorization
+    ? crossCategorySimilarityPairs.filter((pair) => !dismissedCrossCategoryPairs.has(pair.key)).length
+    : 0;
   const visibleRepetitionInsightCount = visibleRepetitionCount + visibleCrossCategorySimilarityCount;
   const visiblePreCloseCount = insights && !dismissedPreCloseActions ? insights.preCloseActions.length : 0;
 
@@ -2030,7 +2040,7 @@ export default function DashboardPanel({
             <button
               type="button"
               onClick={() => void analyzeDashboard()}
-              disabled={!hasCategoryBullets || isAnalyzingDashboard || !aiEnabled}
+              disabled={!hasCategoryBullets || isAnalyzingDashboard || !aiEnabled || !hasPremiumAccess}
               className="analyze-dashboard-button btn-secondary rounded-md px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isAnalyzingDashboard ? "Analyzing..." : "Analyze Dashboard"}
@@ -2041,8 +2051,13 @@ export default function DashboardPanel({
         {!aiEnabled && (
           <p className="text-xs text-amber-700">Dashboard AI is disabled in Settings.</p>
         )}
+        {!hasPremiumAccess && (
+          <p className="py-4 text-center text-sm text-(--text-soft)">
+            AI Smart Insights is a <span className="font-semibold text-(--color-primary)">Premium</span> feature. Upgrade to access.
+          </p>
+        )}
 
-        {!hasCategoryBullets ? (
+        {hasPremiumAccess && (!hasCategoryBullets ? (
           <p className="py-4 text-center text-sm text-(--text-soft)">
             Add bullets to generate AI smart insights.
           </p>
@@ -2861,7 +2876,7 @@ export default function DashboardPanel({
             )}
 
           </div>
-        ) : null}
+        ) : null)}
         </div>
       </div>
 
@@ -3035,7 +3050,7 @@ export default function DashboardPanel({
               <button
                 type="button"
                 onClick={() => void analyzeBulletproofSeven()}
-                disabled={!hasCategoryBullets || isAnalyzingBulletproof || isAnalyzingDashboard || !aiEnabled}
+                disabled={!hasCategoryBullets || isAnalyzingBulletproof || isAnalyzingDashboard || !aiEnabled || !hasPremiumAccess}
                 className="btn-secondary rounded-md px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {isAnalyzingBulletproof ? "Analyzing..." : "Generate 7's"}
@@ -3047,6 +3062,8 @@ export default function DashboardPanel({
           <div id="bulletproof-seven-content" className="mt-3">
           {!hasCategoryBullets ? (
             <p className="text-sm text-(--text-soft)">Add bullets to analyze Bulletproof 7 recommendations.</p>
+          ) : !hasPremiumAccess ? (
+            <p className="text-sm text-(--text-soft)">Your Bulletproof &quot;7&quot; is a <span className="font-semibold text-(--color-primary)">Premium</span> feature. Upgrade to access.</p>
           ) : !aiEnabled ? (
             <p className="text-sm text-(--text-soft)">Dashboard AI is disabled in Settings.</p>
           ) : isAnalyzingBulletproof || isLoadingBulletproofSummaries ? (

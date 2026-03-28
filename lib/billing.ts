@@ -1,7 +1,7 @@
 export type PlanTier = "free" | "premium";
 export type BillingStatus = "trialing" | "active" | "past_due" | "canceled" | null;
 
-export const FREE_DAILY_GENERATION_LIMIT = 5;
+export const FREE_DAILY_GENERATION_LIMIT = 10;
 export const FREE_SAVED_BULLETS_LIMIT = 10;
 
 const PREMIUM_BYPASS_USERNAMES = new Set(["nathancpark11"]);

@@ -63,7 +63,7 @@ export async function POST(req: Request) {
         planTier: usageSummary?.planTier ?? "free",
         planStatus: usageSummary?.planStatus ?? null,
         dailyUsageCount: usageSummary?.dailyUsageCount ?? 0,
-        dailyUsageLimit: usageSummary ? usageSummary.dailyUsageLimit : 5,
+        dailyUsageLimit: usageSummary ? usageSummary.dailyUsageLimit : 10,
       },
     });
   } catch (error: unknown) {

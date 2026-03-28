@@ -335,7 +335,8 @@ export default function Home() {
   const isGuestSession = authUser?.isGuest === true;
   const hasPremiumAccess = !isGuestSession && authUser?.planTier === "premium";
   const usageCount = authUser?.dailyUsageCount ?? 0;
-  const usageLimit = authUser?.dailyUsageLimit ?? 5;
+  const usageLimit = Math.max(authUser?.dailyUsageLimit ?? 10, 10);
+  const isFreeUsageAtLimit = !hasPremiumAccess && usageCount >= usageLimit;
   const planLabel =
     authUser?.planStatus === "trialing"
       ? "Trial"
@@ -497,6 +498,13 @@ export default function Home() {
     },
     [authUser, billingBusy, isGuestSession]
   );
+
+  const openUpgradeModal = useCallback((message?: string) => {
+    if (message) {
+      setUpgradeModalMessage(message);
+    }
+    setShowUpgradeModal(true);
+  }, []);
 
   const handleManageSubscription = useCallback(async () => {
     if (!authUser || isGuestSession || billingBusy) {
@@ -1545,6 +1553,29 @@ export default function Home() {
     };
   };
 
+  const consumeOfficialMarkUsage = async () => {
+    const response = await fetch("/api/official-mark/consume", {
+      method: "POST",
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      if (
+        data?.code === "FREE_DAILY_LIMIT_REACHED" ||
+        data?.code === "PREMIUM_REQUIRED"
+      ) {
+        setUpgradeModalMessage(
+          typeof data.error === "string"
+            ? data.error
+            : "You've reached your daily limit. Upgrade to Premium for unlimited bullets."
+        );
+        setShowUpgradeModal(true);
+      }
+
+      throw new Error(data?.error || "Unable to generate mark right now.");
+    }
+  };
+
   const handleGenerate = async () => {
     if (generateRequestInFlightRef.current || loading) {
       return;
@@ -1678,6 +1709,9 @@ export default function Home() {
         resolveCategoryForText(trimmedInput, category || undefined),
         summarizeTitleForText(normalizedText),
       ]);
+
+      await consumeOfficialMarkUsage();
+      await refreshSession();
 
       setBullet({
         text: normalizedText ? `- ${normalizedText}` : "",
@@ -3242,7 +3276,10 @@ export default function Home() {
               {!hasPremiumAccess ? (
                 <>
                   {" "}
-                  • Usage today: <span className="font-semibold text-slate-900">{usageCount}/{usageLimit}</span>
+                  • Usage today:{" "}
+                  <span className={`font-semibold ${isFreeUsageAtLimit ? "text-red-600" : "text-slate-900"}`}>
+                    {usageCount}/{usageLimit}
+                  </span>
                 </>
               ) : null}
             </p>
@@ -3271,22 +3308,13 @@ export default function Home() {
           </div>
           <div className="flex items-center gap-3">
             {!isGuestSession && !hasPremiumAccess ? (
-              <>
-                <button
-                  onClick={() => void handleUpgradeToPremium("monthly")}
-                  disabled={billingBusy}
-                  className="rounded-md bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {billingBusy ? "Starting..." : "Upgrade Monthly"}
-                </button>
-                <button
-                  onClick={() => void handleUpgradeToPremium("yearly")}
-                  disabled={billingBusy}
-                  className="rounded-md border border-emerald-600 px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  Yearly
-                </button>
-              </>
+              <button
+                onClick={() => openUpgradeModal("Choose a plan to upgrade your account.")}
+                disabled={billingBusy}
+                className="rounded-md bg-green-700 px-3 py-2 text-sm font-semibold text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {billingBusy ? "Starting..." : "Upgrade"}
+              </button>
             ) : null}
             {!isGuestSession && hasPremiumAccess ? (
               <button
@@ -3316,6 +3344,7 @@ export default function Home() {
           setActiveTab={handleTabChange}
           dashboardRecommendationCount={dashboardRecommendationCount}
           canManageOfficialGuidance={canManageOfficialGuidance}
+          hasPremiumAccess={hasPremiumAccess}
         />
 
         {loadFailed ? (
@@ -3432,6 +3461,8 @@ export default function Home() {
             sessionUserId={authUser?.id ?? null}
             isGuestSession={isGuestSession}
             aiEnabled={aiDashboardInsightsEnabled && !isGuestSession}
+            allowMultiCategorization={hasPremiumAccess}
+            hasPremiumAccess={hasPremiumAccess}
             history={history}
             suggestions={suggestions}
             rankLevel={rankLevel}
@@ -3712,7 +3743,9 @@ export default function Home() {
             rankLevel={rankLevel}
             isGuestSession={isGuestSession}
             isPremiumPlan={hasPremiumAccess}
-            onUpgradeToPremium={() => void handleUpgradeToPremium("monthly")}
+            onUpgradeToPremium={() =>
+              openUpgradeModal("Export is a Premium feature. Choose a plan to continue.")
+            }
           />
         )}
 
@@ -3769,7 +3802,11 @@ export default function Home() {
             aiGeneratorAlternateDraftsEnabled={aiGeneratorAlternateDraftsEnabled}
             setAiGeneratorAlternateDraftsEnabled={setAiGeneratorAlternateDraftsEnabled}
             premiumFeaturesEnabled={hasPremiumAccess}
-            onUpgradeToPremium={() => void handleUpgradeToPremium("monthly")}
+            onUpgradeToPremium={() =>
+              openUpgradeModal(
+                "AI split recommendations and alternate drafts are Premium features. Choose a plan to continue."
+              )
+            }
             aiLogImportEnabled={aiLogImportEnabled}
             setAiLogImportEnabled={setAiLogImportEnabled}
             aiDashboardInsightsEnabled={aiDashboardInsightsEnabled}
@@ -4049,22 +4086,36 @@ export default function Home() {
           <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl">
             <h3 className="text-lg font-semibold text-gray-900">Upgrade to Premium</h3>
             <p className="mt-3 text-sm text-gray-700">{upgradeModalMessage}</p>
-            <div className="mt-5 flex flex-col justify-end gap-2 sm:flex-row">
+            <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {!isGuestSession && (
+                <button
+                  onClick={() => void handleUpgradeToPremium("monthly")}
+                  disabled={billingBusy}
+                  className="rounded-md bg-green-700 px-4 py-2 text-sm font-medium text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {billingBusy ? "Starting..." : "Monthly Plan"}
+                </button>
+              )}
+              {!isGuestSession && (
+                <button
+                  onClick={() => void handleUpgradeToPremium("yearly")}
+                  disabled={billingBusy}
+                  className="relative rounded-md border border-green-700 px-4 py-2 text-sm font-medium text-green-700 hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <span className="absolute -right-2 -top-2 rounded-full bg-green-700 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+                    Best value
+                  </span>
+                  Yearly Plan
+                </button>
+              )}
+            </div>
+            <div className="mt-2 flex justify-end gap-2">
               <button
                 onClick={() => setShowUpgradeModal(false)}
                 className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
               >
                 Not now
               </button>
-              {!isGuestSession && (
-                <button
-                  onClick={() => void handleUpgradeToPremium("monthly")}
-                  disabled={billingBusy}
-                  className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {billingBusy ? "Starting..." : "Upgrade Monthly"}
-                </button>
-              )}
             </div>
           </div>
         </div>

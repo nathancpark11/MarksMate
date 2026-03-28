@@ -62,7 +62,7 @@ const TUTORIAL_CONTENT: Record<TutorialStep, TutorialContent> = {
         items: [
           "Automatically categorize the bullet into the correct marking category",
           "Determine if the accomplishment should be split into multiple bullets",
-          "Identify if multiple categories may apply",
+          "Identify if multiple categories may apply (Premium)",
         ],
       },
       {

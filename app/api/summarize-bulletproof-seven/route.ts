@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { parseLimitedJsonBody } from "@/lib/aiRequestGuards";
 import { requireSessionUser } from "@/lib/auth";
 import { isGuidanceAdminUsername } from "@/lib/admin";
+import { enforcePremiumFeatureAccess } from "@/lib/usageLimits";
 import { getMarkDescriptionsForCategory } from "@/lib/officialGuidance";
 import { validateCombinedAiInputs } from "@/lib/promptSpamGuard";
 import { enforceRateLimits } from "@/lib/rateLimit";
@@ -52,6 +53,13 @@ export async function POST(req: Request) {
     const { user, response: authResponse } = await requireSessionUser();
     if (authResponse || !user) {
       return authResponse ?? Response.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (!isGuidanceAdminUsername(user.username)) {
+      const premiumAccess = await enforcePremiumFeatureAccess(user.id, "Bulletproof 7");
+      if (!premiumAccess.allowed) {
+        return Response.json({ error: premiumAccess.reason, code: premiumAccess.code }, { status: 403 });
+      }
     }
 
     if (!isGuidanceAdminUsername(user.username)) {
