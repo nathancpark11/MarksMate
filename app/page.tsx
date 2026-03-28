@@ -291,6 +291,9 @@ export default function Home() {
     lastLoginAt?: string | null;
     planTier?: "free" | "premium";
     planStatus?: "trialing" | "active" | "past_due" | "canceled" | null;
+    betaTrialExpiresAt?: string | null;
+    betaTrialRedeemedAt?: string | null;
+    hasBillingProfile?: boolean;
     dailyUsageCount?: number;
     dailyUsageLimit?: number | null;
   };
@@ -334,12 +337,19 @@ export default function Home() {
     ? new Date(authUser.lastLoginAt).toLocaleString()
     : null;
   const isGuestSession = authUser?.isGuest === true;
+  const betaTrialExpiryMs = authUser?.betaTrialExpiresAt
+    ? new Date(authUser.betaTrialExpiresAt).getTime()
+    : Number.NaN;
+  const isBetaTrialActive = Number.isFinite(betaTrialExpiryMs) && betaTrialExpiryMs > Date.now();
   const hasPremiumAccess = !isGuestSession && authUser?.planTier === "premium";
+  const canManageBillingPortal = !isGuestSession && hasPremiumAccess && authUser?.hasBillingProfile === true;
   const usageCount = authUser?.dailyUsageCount ?? 0;
   const usageLimit = Math.max(authUser?.dailyUsageLimit ?? 10, 10);
   const isFreeUsageAtLimit = !hasPremiumAccess && usageCount >= usageLimit;
   const planLabel =
-    authUser?.planStatus === "trialing"
+    isBetaTrialActive
+      ? "Beta Trial"
+      : authUser?.planStatus === "trialing"
       ? "Trial"
       : hasPremiumAccess
         ? "Premium"
@@ -530,6 +540,65 @@ export default function Home() {
       setBillingBusy(false);
     }
   }, [authUser, billingBusy, isGuestSession]);
+
+  const handleRedeemBetaCode = useCallback(
+    async (code: string) => {
+      if (!authUser || isGuestSession || billingBusy) {
+        return {
+          ok: false,
+          message: "Sign in to a non-guest account to redeem a beta code.",
+        };
+      }
+
+      const normalizedCode = code.trim();
+      if (!normalizedCode) {
+        return { ok: false, message: "Enter a beta code." };
+      }
+
+      setBillingBusy(true);
+      try {
+        const response = await fetch("/api/billing/redeem-beta-code", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code: normalizedCode }),
+        });
+
+        const payload = (await response.json().catch(() => ({}))) as {
+          error?: string;
+          success?: boolean;
+          betaTrialExpiresAt?: string;
+        };
+
+        if (!response.ok || !payload.success) {
+          return {
+            ok: false,
+            message: payload.error || "Unable to redeem beta code.",
+          };
+        }
+
+        await refreshSession();
+
+        const expiresAtLabel = payload.betaTrialExpiresAt
+          ? new Date(payload.betaTrialExpiresAt).toLocaleString()
+          : null;
+
+        return {
+          ok: true,
+          message: expiresAtLabel
+            ? `Beta access enabled through ${expiresAtLabel}.`
+            : "Beta access enabled for 14 days.",
+        };
+      } catch {
+        return {
+          ok: false,
+          message: "Network error while redeeming beta code.",
+        };
+      } finally {
+        setBillingBusy(false);
+      }
+    },
+    [authUser, billingBusy, isGuestSession, refreshSession]
+  );
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -3304,12 +3373,20 @@ export default function Home() {
           Guest Mode: Temporary session. Data is cleared when this browser session ends.
         </div>
       ) : null}
+      {isBetaTrialActive && authUser?.betaTrialExpiresAt ? (
+        <div className="fixed inset-x-0 z-90 flex h-8 items-center justify-center bg-sky-500 text-center text-xs font-semibold text-white shadow-sm" style={{
+          top: isGuestSession ? "calc(var(--unclassified-bar-height) + 2rem)" : "var(--unclassified-bar-height)",
+        }}>
+          🎯 Beta Trial Active • Expires: {new Date(authUser.betaTrialExpiresAt).toLocaleString()}
+        </div>
+      ) : null}
     <main
       className={`min-h-screen flex justify-center p-3 sm:p-6 ${
         isGuestSession
           ? "pt-[calc(var(--unclassified-bar-height)+2.5rem)] sm:pt-[calc(var(--unclassified-bar-height)+3.5rem)]"
           : "pt-[calc(var(--unclassified-bar-height)+0.5rem)] sm:pt-12"
       }`}
+      style={isBetaTrialActive ? { paddingTop: `calc(${isGuestSession ? "var(--unclassified-bar-height) + 2.5rem" : "var(--unclassified-bar-height) + 0.5rem"} + 2rem)` } : undefined}
     >
       <div className="w-full max-w-4xl space-y-6">
         <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
@@ -3329,6 +3406,11 @@ export default function Home() {
                 </>
               ) : null}
             </p>
+            {isBetaTrialActive && authUser?.betaTrialExpiresAt ? (
+              <p className="mt-1 text-xs font-medium text-emerald-700">
+                Beta access ends: {new Date(authUser.betaTrialExpiresAt).toLocaleString()}
+              </p>
+            ) : null}
             {syncFailed ? (
               <p className="mt-1 text-xs font-medium text-red-600">
                 ⚠ Data failed to sync.{" "}
@@ -3362,7 +3444,7 @@ export default function Home() {
                 {billingBusy ? "Starting..." : "Upgrade"}
               </button>
             ) : null}
-            {!isGuestSession && hasPremiumAccess ? (
+            {canManageBillingPortal ? (
               <button
                 onClick={() => void handleManageSubscription()}
                 disabled={billingBusy}
@@ -3848,11 +3930,15 @@ export default function Home() {
             aiGeneratorAlternateDraftsEnabled={aiGeneratorAlternateDraftsEnabled}
             setAiGeneratorAlternateDraftsEnabled={setAiGeneratorAlternateDraftsEnabled}
             premiumFeaturesEnabled={hasPremiumAccess}
+            betaTrialExpiresAt={authUser?.betaTrialExpiresAt ?? null}
+            betaTrialActive={isBetaTrialActive}
+            billingBusy={billingBusy}
             onUpgradeToPremium={() =>
               openUpgradeModal(
                 "AI split recommendations and alternate drafts are Premium features. Choose a plan to continue."
               )
             }
+            onRedeemBetaCode={(code) => handleRedeemBetaCode(code)}
             aiLogImportEnabled={aiLogImportEnabled}
             setAiLogImportEnabled={setAiLogImportEnabled}
             aiDashboardInsightsEnabled={aiDashboardInsightsEnabled}

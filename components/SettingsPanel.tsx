@@ -32,7 +32,11 @@ type SettingsPanelProps = {
   aiGeneratorAlternateDraftsEnabled: boolean;
   setAiGeneratorAlternateDraftsEnabled: (value: boolean) => void;
   premiumFeaturesEnabled?: boolean;
+  betaTrialExpiresAt?: string | null;
+  betaTrialActive?: boolean;
+  billingBusy?: boolean;
   onUpgradeToPremium?: () => void;
+  onRedeemBetaCode?: (code: string) => Promise<{ ok: boolean; message: string }>;
   aiLogImportEnabled: boolean;
   setAiLogImportEnabled: (value: boolean) => void;
   aiDashboardInsightsEnabled: boolean;
@@ -77,7 +81,11 @@ export default function SettingsPanel({
   aiGeneratorAlternateDraftsEnabled,
   setAiGeneratorAlternateDraftsEnabled,
   premiumFeaturesEnabled = false,
+  betaTrialExpiresAt = null,
+  betaTrialActive = false,
+  billingBusy = false,
   onUpgradeToPremium,
+  onRedeemBetaCode,
   aiLogImportEnabled,
   setAiLogImportEnabled,
   aiDashboardInsightsEnabled,
@@ -114,6 +122,9 @@ export default function SettingsPanel({
   const [selectedImportPeriod, setSelectedImportPeriod] = useState(archivedMarkingPeriods[0]?.period ?? "");
   const [selectedArchivedMarkIndexes, setSelectedArchivedMarkIndexes] = useState<number[]>([]);
   const [deleteArchiveTarget, setDeleteArchiveTarget] = useState<ArchivedMarkingPeriod | null>(null);
+  const [betaCode, setBetaCode] = useState("");
+  const [betaMessage, setBetaMessage] = useState("");
+  const [betaBusy, setBetaBusy] = useState(false);
 
   const restrictToRankAndRate = isGuestSession;
   const selectedArchive = archivedMarkingPeriods.find((entry) => entry.period === selectedImportPeriod) ?? null;
@@ -138,6 +149,27 @@ export default function SettingsPanel({
     setSelectedArchivedMarkIndexes((prev) =>
       prev.includes(index) ? prev.filter((value) => value !== index) : [...prev, index].sort((a, b) => a - b)
     );
+  };
+
+  const handleRedeemBeta = async () => {
+    if (!onRedeemBetaCode) {
+      return;
+    }
+
+    setBetaBusy(true);
+    setBetaMessage("");
+
+    try {
+      const result = await onRedeemBetaCode(betaCode);
+      setBetaMessage(result.message);
+      if (result.ok) {
+        setBetaCode("");
+      }
+    } catch {
+      setBetaMessage("Unable to redeem beta code.");
+    } finally {
+      setBetaBusy(false);
+    }
   };
 
   return (
@@ -228,6 +260,44 @@ export default function SettingsPanel({
           </div>
         </div>
       </section>
+
+      {!restrictToRankAndRate ? (
+        <section className="space-y-4 rounded-lg border border-(--border-muted) bg-(--surface-2) p-4 sm:p-5">
+          <h3 className="text-lg font-semibold text-(--text-strong)">Beta Access</h3>
+          <p className="text-sm text-(--text-soft)">
+            Enter your invite code to enable Premium features for 14 days.
+          </p>
+
+          {betaTrialActive && betaTrialExpiresAt ? (
+            <div className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+              Beta access is active through {new Date(betaTrialExpiresAt).toLocaleString()}.
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <input
+                type="text"
+                value={betaCode}
+                onChange={(e) => setBetaCode(e.target.value.toUpperCase())}
+                placeholder="Enter beta code"
+                disabled={betaBusy || billingBusy}
+                className="settings-control w-full sm:max-w-xs border rounded-md p-3"
+              />
+              <button
+                type="button"
+                onClick={() => void handleRedeemBeta()}
+                disabled={!betaCode.trim() || betaBusy || billingBusy || !onRedeemBetaCode}
+                className="rounded-md bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {betaBusy ? "Redeeming..." : "Redeem Code"}
+              </button>
+            </div>
+          )}
+
+          {betaMessage ? (
+            <p className="text-sm text-(--text-soft)">{betaMessage}</p>
+          ) : null}
+        </section>
+      ) : null}
 
       <section className="rounded-lg border border-(--border-muted) bg-(--surface-2) p-4 sm:p-5">
         <button

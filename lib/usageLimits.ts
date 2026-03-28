@@ -37,6 +37,7 @@ export async function getUsageSummary(userId: string) {
     planTier: user.planTier,
     planStatus: user.planStatus,
     subscriptionCurrentPeriodEnd: user.subscriptionCurrentPeriodEnd,
+    betaTrialExpiresAt: user.betaTrialExpiresAt,
     username: user.username,
     email: user.emailLower,
   });
@@ -44,6 +45,7 @@ export async function getUsageSummary(userId: string) {
     planTier: premium ? "premium" : user.planTier,
     planStatus: user.planStatus,
     subscriptionCurrentPeriodEnd: user.subscriptionCurrentPeriodEnd,
+    betaTrialExpiresAt: user.betaTrialExpiresAt,
     dailyUsageCount: user.dailyUsageCount,
     dailyUsageLimit: premium ? null : FREE_DAILY_GENERATION_LIMIT,
     premium,

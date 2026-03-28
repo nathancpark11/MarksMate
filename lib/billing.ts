@@ -1,7 +1,7 @@
 export type PlanTier = "free" | "premium";
 export type BillingStatus = "trialing" | "active" | "past_due" | "canceled" | null;
 
-export const FREE_DAILY_GENERATION_LIMIT = 10;
+export const FREE_DAILY_GENERATION_LIMIT = 30;
 export const FREE_SAVED_BULLETS_LIMIT = 10;
 
 const PREMIUM_BYPASS_USERNAMES = new Set(["nathancpark11"]);
@@ -26,6 +26,7 @@ export function isPremiumEntitled(input: {
   planTier: PlanTier;
   planStatus: BillingStatus;
   subscriptionCurrentPeriodEnd: string | null;
+  betaTrialExpiresAt?: string | null;
   username?: string | null;
   email?: string | null;
 }): boolean {
@@ -43,13 +44,23 @@ export function isPremiumEntitled(input: {
 
   if (input.planStatus === "canceled") {
     if (!input.subscriptionCurrentPeriodEnd) {
-      return false;
+      if (!input.betaTrialExpiresAt) {
+        return false;
+      }
+    } else {
+      const endsAt = new Date(input.subscriptionCurrentPeriodEnd).getTime();
+      if (Number.isFinite(endsAt) && endsAt > Date.now()) {
+        return true;
+      }
     }
-    const endsAt = new Date(input.subscriptionCurrentPeriodEnd).getTime();
-    return Number.isFinite(endsAt) && endsAt > Date.now();
   }
 
-  return false;
+  if (!input.betaTrialExpiresAt) {
+    return false;
+  }
+
+  const betaEndsAt = new Date(input.betaTrialExpiresAt).getTime();
+  return Number.isFinite(betaEndsAt) && betaEndsAt > Date.now();
 }
 
 export function normalizeBillingStatus(status: string | null | undefined): BillingStatus {

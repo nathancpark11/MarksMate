@@ -16,6 +16,8 @@ export type UserRecord = {
   stripeCustomerId: string | null;
   stripeSubscriptionId: string | null;
   subscriptionCurrentPeriodEnd: string | null;
+  betaTrialExpiresAt: string | null;
+  betaTrialRedeemedAt: string | null;
   dailyUsageCount: number;
   lastUsageResetDate: string | null;
   updatedAt: string | null;
@@ -53,6 +55,8 @@ function rowToUser(row: Record<string, unknown>): UserRecord {
   const rawStripeCustomerId = row.stripe_customer_id;
   const rawStripeSubscriptionId = row.stripe_subscription_id;
   const rawSubscriptionCurrentPeriodEnd = row.subscription_current_period_end;
+  const rawBetaTrialExpiresAt = row.beta_trial_expires_at;
+  const rawBetaTrialRedeemedAt = row.beta_trial_redeemed_at;
   const rawDailyUsageCount = row.daily_usage_count;
   const rawLastUsageResetDate = row.last_usage_reset_date;
   const rawUpdatedAt = row.updated_at;
@@ -92,6 +96,10 @@ function rowToUser(row: Record<string, unknown>): UserRecord {
       typeof rawSubscriptionCurrentPeriodEnd === "string"
         ? rawSubscriptionCurrentPeriodEnd
         : null,
+    betaTrialExpiresAt:
+      typeof rawBetaTrialExpiresAt === "string" ? rawBetaTrialExpiresAt : null,
+    betaTrialRedeemedAt:
+      typeof rawBetaTrialRedeemedAt === "string" ? rawBetaTrialRedeemedAt : null,
     dailyUsageCount:
       typeof rawDailyUsageCount === "number"
         ? Math.max(0, Math.floor(rawDailyUsageCount))
@@ -186,6 +194,8 @@ export async function createUser(input: {
     stripeCustomerId: null,
     stripeSubscriptionId: null,
     subscriptionCurrentPeriodEnd: null,
+    betaTrialExpiresAt: null,
+    betaTrialRedeemedAt: null,
     dailyUsageCount: 0,
     lastUsageResetDate: createdAt.slice(0, 10),
     updatedAt: createdAt,
@@ -222,6 +232,39 @@ export async function updateUserSubscriptionByStripeCustomerId(input: {
       updated_at = NOW()
     WHERE stripe_customer_id = ${input.stripeCustomerId}
   `;
+}
+
+export async function redeemBetaTrialByUserId(input: {
+  userId: string;
+  durationDays?: number;
+}): Promise<{ granted: boolean; expiresAt: string | null }> {
+  await ensureSchema();
+  const durationDays =
+    typeof input.durationDays === "number" && Number.isFinite(input.durationDays)
+      ? Math.max(1, Math.floor(input.durationDays))
+      : 14;
+
+  const result = await sql`
+    UPDATE users
+    SET
+      beta_trial_expires_at = NOW() + (${durationDays} * INTERVAL '1 day'),
+      beta_trial_redeemed_at = NOW(),
+      updated_at = NOW()
+    WHERE id = ${input.userId}
+      AND beta_trial_redeemed_at IS NULL
+      AND (beta_trial_expires_at IS NULL OR beta_trial_expires_at <= NOW())
+    RETURNING beta_trial_expires_at
+  `;
+
+  if (result.rows.length === 0) {
+    return { granted: false, expiresAt: null };
+  }
+
+  const rawExpiresAt = result.rows[0]?.beta_trial_expires_at;
+  return {
+    granted: true,
+    expiresAt: typeof rawExpiresAt === "string" ? rawExpiresAt : null,
+  };
 }
 
 export async function enablePremiumAiSettingsByStripeCustomerId(stripeCustomerId: string): Promise<void> {
