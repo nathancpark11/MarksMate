@@ -36,7 +36,12 @@ async function cancelStripeSubscriptionsForUser(userId: string) {
       continue;
     }
 
-    await stripe.subscriptions.cancel(subscriptionId);
+    await stripe.subscriptions.cancel(subscriptionId, {
+      cancellation_details: {
+        feedback: "other",
+        comment: "Trial Period",
+      },
+    });
   }
 }
 
