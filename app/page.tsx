@@ -323,6 +323,7 @@ export default function Home() {
   const [signupUserUnit, setSignupUserUnit] = useState("");
   const [signupBulletStyle, setSignupBulletStyle] = useState("Short/Concise");
   const [billingBusy, setBillingBusy] = useState(false);
+  const [billingSyncInProgress, setBillingSyncInProgress] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [upgradeModalMessage, setUpgradeModalMessage] = useState(
     "You've reached your daily limit. Upgrade to Premium for unlimited bullets."
@@ -465,8 +466,10 @@ export default function Home() {
       };
       const sessionUser = data.authenticated ? data.user ?? null : null;
       setAuthUser(sessionUser);
+      return sessionUser;
     } catch {
       // Keep current session state if refresh fails.
+      return null;
     }
   }, []);
 
@@ -535,9 +538,51 @@ export default function Home() {
 
     const params = new URLSearchParams(window.location.search);
     const billingResult = params.get("billing");
-    if (billingResult === "success" || billingResult === "cancel") {
+    if (billingResult === "cancel") {
       void refreshSession();
+      params.delete("billing");
+      const nextQuery = params.toString();
+      window.history.replaceState({}, "", `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}`);
+      return;
     }
+
+    if (billingResult !== "success") {
+      return;
+    }
+
+    let canceled = false;
+    const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+    void (async () => {
+      setBillingSyncInProgress(true);
+      setSyncFailed(false);
+
+      try {
+        for (let attempt = 0; attempt < 10; attempt += 1) {
+          const sessionUser = await refreshSession();
+          if (canceled) {
+            return;
+          }
+
+          if (sessionUser?.planTier === "premium") {
+            break;
+          }
+
+          await wait(2000);
+        }
+      } finally {
+        if (!canceled) {
+          setBillingSyncInProgress(false);
+          params.delete("billing");
+          const nextQuery = params.toString();
+          window.history.replaceState({}, "", `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}`);
+        }
+      }
+    })();
+
+    return () => {
+      canceled = true;
+    };
   }, [refreshSession]);
 
   const clearGuestSessionData = useCallback(() => {
@@ -814,7 +859,7 @@ export default function Home() {
   };
 
   const handleRetrySave = () => {
-    if (!authUser || isGuestSession || loadFailed) return;
+    if (!authUser || isGuestSession || loadFailed || billingSyncInProgress) return;
     saveUserData("history", history).then(() => setSyncFailed(false)).catch(() => setSyncFailed(true));
     saveUserData("archivedMarkingPeriods", archivedMarkingPeriods).catch(() => setSyncFailed(true));
     saveUserData("log", logEntries).catch(() => setSyncFailed(true));
@@ -1157,7 +1202,7 @@ export default function Home() {
     if (!settingsHydratedRef.current) {
       return;
     }
-    if (loadFailed) {
+    if (loadFailed || billingSyncInProgress) {
       return;
     }
     saveUserData("settings", {
@@ -1202,6 +1247,7 @@ export default function Home() {
     tacticalColorSchemeEnabled,
     highContrastEnabled,
     authUser,
+    billingSyncInProgress,
     loadFailed,
     saveUserData,
   ]);
@@ -1391,11 +1437,11 @@ export default function Home() {
     if (!historyHydratedRef.current) {
       return;
     }
-    if (loadFailed) {
+    if (loadFailed || billingSyncInProgress) {
       return;
     }
     saveUserData("history", history).then(() => setSyncFailed(false)).catch(() => setSyncFailed(true));
-  }, [history, authUser, loadFailed, saveUserData]);
+  }, [history, authUser, billingSyncInProgress, loadFailed, saveUserData]);
 
   useEffect(() => {
     if (!authUser) {
@@ -1405,13 +1451,13 @@ export default function Home() {
     if (!historyHydratedRef.current) {
       return;
     }
-    if (loadFailed) {
+    if (loadFailed || billingSyncInProgress) {
       return;
     }
     saveUserData("archivedMarkingPeriods", archivedMarkingPeriods)
       .then(() => setSyncFailed(false))
       .catch(() => setSyncFailed(true));
-  }, [archivedMarkingPeriods, authUser, loadFailed, saveUserData]);
+  }, [archivedMarkingPeriods, authUser, billingSyncInProgress, loadFailed, saveUserData]);
 
   useEffect(() => {
     if (!authUser) {
@@ -1421,11 +1467,11 @@ export default function Home() {
     if (!logHydratedRef.current) {
       return;
     }
-    if (loadFailed) {
+    if (loadFailed || billingSyncInProgress) {
       return;
     }
     saveUserData("log", logEntries).then(() => setSyncFailed(false)).catch(() => setSyncFailed(true));
-  }, [logEntries, authUser, loadFailed, saveUserData]);
+  }, [logEntries, authUser, billingSyncInProgress, loadFailed, saveUserData]);
 
   // ======================================================
   // GENERATE BULLET
