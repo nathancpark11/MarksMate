@@ -244,26 +244,20 @@ export async function redeemBetaTrialByUserId(input: {
       ? Math.max(1, Math.floor(input.durationDays))
       : 14;
 
-  const result = await sql`
+  const expiresAtDate = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString();
+
+  await sql`
     UPDATE users
     SET
-      beta_trial_expires_at = NOW() + (${durationDays} * INTERVAL '1 day'),
+      beta_trial_expires_at = ${expiresAtDate},
       beta_trial_redeemed_at = NOW(),
       updated_at = NOW()
     WHERE id = ${input.userId}
-      AND beta_trial_redeemed_at IS NULL
-      AND (beta_trial_expires_at IS NULL OR beta_trial_expires_at <= NOW())
-    RETURNING beta_trial_expires_at
   `;
 
-  if (result.rows.length === 0) {
-    return { granted: false, expiresAt: null };
-  }
-
-  const rawExpiresAt = result.rows[0]?.beta_trial_expires_at;
   return {
     granted: true,
-    expiresAt: typeof rawExpiresAt === "string" ? rawExpiresAt : null,
+    expiresAt: expiresAtDate,
   };
 }
 
