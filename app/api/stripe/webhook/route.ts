@@ -2,7 +2,7 @@ import Stripe from "stripe";
 import { ensureSchema, sql } from "@/lib/db";
 import { normalizeBillingStatus, normalizePlanTier } from "@/lib/billing";
 import { getStripeClient, getStripeWebhookSecret } from "@/lib/stripe";
-import { updateUserSubscriptionByStripeCustomerId } from "@/lib/userStore";
+import { updateUserSubscriptionByStripeCustomerId, enablePremiumAiSettingsByStripeCustomerId } from "@/lib/userStore";
 
 function toIsoFromUnix(seconds: number | null | undefined) {
   if (typeof seconds !== "number" || !Number.isFinite(seconds)) {
@@ -77,6 +77,11 @@ async function applySubscriptionState(subscription: Stripe.Subscription) {
     planStatus: rawStatus,
     subscriptionCurrentPeriodEnd: periodEndIso,
   });
+
+  // Auto-enable all AI settings for premium users
+  if (planTier === "premium") {
+    await enablePremiumAiSettingsByStripeCustomerId(stripeCustomerId);
+  }
 }
 
 export async function POST(req: Request) {

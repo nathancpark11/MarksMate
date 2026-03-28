@@ -4100,7 +4100,7 @@ export default function Home() {
                 <button
                   onClick={() => void handleUpgradeToPremium("yearly")}
                   disabled={billingBusy}
-                  className="relative rounded-md border border-green-700 px-4 py-2 text-sm font-medium text-green-700 hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="relative rounded-md bg-white border border-green-700 px-4 py-2 text-sm font-medium text-gray-900 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <span className="absolute -right-2 -top-2 rounded-full bg-green-700 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
                     Best value

@@ -224,6 +224,61 @@ export async function updateUserSubscriptionByStripeCustomerId(input: {
   `;
 }
 
+export async function enablePremiumAiSettingsByStripeCustomerId(stripeCustomerId: string): Promise<void> {
+  await ensureSchema();
+
+  // Get the user by stripe customer ID
+  const userResult = await sql`
+    SELECT id FROM users WHERE stripe_customer_id = ${stripeCustomerId} LIMIT 1
+  `;
+
+  if (userResult.rows.length === 0) {
+    return;
+  }
+
+  const userId = (userResult.rows[0].id as string) ?? null;
+  if (!userId) {
+    return;
+  }
+
+  // Get existing settings
+  const existingResult = await sql`
+    SELECT data_value FROM user_data WHERE user_id = ${userId} AND data_key = 'settings' LIMIT 1
+  `;
+
+  let settings: Record<string, unknown> = {};
+  if (existingResult.rows.length > 0) {
+    try {
+      const parsed = JSON.parse((existingResult.rows[0].data_value as string) ?? "{}");
+      settings = typeof parsed === "object" && parsed !== null ? parsed : {};
+    } catch {
+      settings = {};
+    }
+  }
+
+  // Enable all AI settings
+  const updatedSettings = {
+    ...settings,
+    aiGeneratorEnabled: true,
+    aiGeneratorSplitRecommendationsEnabled: true,
+    aiGeneratorAlternateDraftsEnabled: true,
+    aiLogImportEnabled: true,
+    aiDashboardInsightsEnabled: true,
+    aiMarksPackageEnabled: true,
+  };
+
+  const settingsJson = JSON.stringify(updatedSettings);
+
+  // Upsert settings into user_data
+  await sql`
+    INSERT INTO user_data (user_id, data_key, data_value)
+    VALUES (${userId}, 'settings', ${settingsJson})
+    ON CONFLICT (user_id, data_key) DO UPDATE SET
+      data_value = ${settingsJson},
+      updated_at = NOW()
+  `;
+}
+
 export async function markTutorialCompleted(id: string): Promise<UserRecord | null> {
   await ensureSchema();
   await sql`UPDATE users SET has_completed_tutorial = TRUE WHERE id = ${id}`;
