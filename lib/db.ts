@@ -51,6 +51,34 @@ export async function ensureSchema(): Promise<void> {
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT`;
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_lower TEXT`;
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_tier TEXT NOT NULL DEFAULT 'free'`;
+  await sql`ALTER TABLE users ALTER COLUMN plan_status DROP NOT NULL`;
+  await sql`ALTER TABLE users ALTER COLUMN plan_status DROP DEFAULT`;
+  await sql`
+    UPDATE users
+    SET plan_status = NULL
+    WHERE plan_status = 'free'
+  `;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_current_period_end TIMESTAMPTZ`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_usage_count INTEGER NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_usage_reset_date TEXT`;
+  await sql`
+    UPDATE users
+    SET last_usage_reset_date = COALESCE(last_usage_reset_date, TO_CHAR(NOW()::DATE, 'YYYY-MM-DD'))
+    WHERE last_usage_reset_date IS NULL
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS users_stripe_customer_id_unique
+    ON users (stripe_customer_id)
+    WHERE stripe_customer_id IS NOT NULL
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS users_stripe_subscription_id_unique
+    ON users (stripe_subscription_id)
+    WHERE stripe_subscription_id IS NOT NULL
+  `;
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_unique
     ON users (email_lower)
@@ -198,6 +226,20 @@ export async function ensureSchema(): Promise<void> {
   await sql`
     CREATE INDEX IF NOT EXISTS user_metrics_rank_rate_idx
     ON user_metrics (rank, rate)
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS stripe_webhook_events (
+      id              SERIAL PRIMARY KEY,
+      event_id        TEXT NOT NULL UNIQUE,
+      event_type      TEXT NOT NULL,
+      stripe_object_id TEXT,
+      processed_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS stripe_webhook_events_processed_idx
+    ON stripe_webhook_events (processed_at DESC)
   `;
 
   await sql`

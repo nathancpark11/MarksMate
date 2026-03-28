@@ -4,6 +4,7 @@ import { requireSessionUser } from "@/lib/auth";
 import { validateCombinedAiInputs } from "@/lib/promptSpamGuard";
 import { enforceRateLimits } from "@/lib/rateLimit";
 import { getRequestId, logApiError, logApiRequestMetadata } from "@/lib/safeLogging";
+import { enforcePremiumFeatureAccess } from "@/lib/usageLimits";
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY ?? "missing-openai-api-key",
@@ -25,9 +26,21 @@ export async function POST(req: Request) {
   let inputLength = 0;
 
   try {
-    const { response: authResponse } = await requireSessionUser();
+    const { user, response: authResponse } = await requireSessionUser();
     if (authResponse) {
       return authResponse;
+    }
+
+    const premiumAccess = await enforcePremiumFeatureAccess(user.id, "Split recommendations");
+    if (!premiumAccess.allowed) {
+      return Response.json(
+        {
+          error: premiumAccess.reason,
+          code: premiumAccess.code,
+          usage: premiumAccess.summary,
+        },
+        { status: 403 }
+      );
     }
 
     const rateLimitResponse = enforceRateLimits(req, [

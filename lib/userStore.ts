@@ -11,7 +11,13 @@ export type UserRecord = {
   createdAt: string;
   hasCompletedTutorial: boolean;
   lastLoginAt: string | null;
-  planStatus: string;
+  planTier: "free" | "premium";
+  planStatus: "trialing" | "active" | "past_due" | "canceled" | null;
+  stripeCustomerId: string | null;
+  stripeSubscriptionId: string | null;
+  subscriptionCurrentPeriodEnd: string | null;
+  dailyUsageCount: number;
+  lastUsageResetDate: string | null;
   updatedAt: string | null;
 };
 
@@ -42,8 +48,30 @@ export function isValidEmail(email: string) {
 
 function rowToUser(row: Record<string, unknown>): UserRecord {
   const rawLastLoginAt = row.last_login_at;
+  const rawPlanTier = row.plan_tier;
   const rawPlanStatus = row.plan_status;
+  const rawStripeCustomerId = row.stripe_customer_id;
+  const rawStripeSubscriptionId = row.stripe_subscription_id;
+  const rawSubscriptionCurrentPeriodEnd = row.subscription_current_period_end;
+  const rawDailyUsageCount = row.daily_usage_count;
+  const rawLastUsageResetDate = row.last_usage_reset_date;
   const rawUpdatedAt = row.updated_at;
+  const normalizedPlanTier =
+    typeof rawPlanTier === "string" && rawPlanTier.toLowerCase() === "premium"
+      ? "premium"
+      : "free";
+  let normalizedPlanStatus: "trialing" | "active" | "past_due" | "canceled" | null = null;
+  if (typeof rawPlanStatus === "string") {
+    const candidate = rawPlanStatus.trim().toLowerCase();
+    if (
+      candidate === "trialing" ||
+      candidate === "active" ||
+      candidate === "past_due" ||
+      candidate === "canceled"
+    ) {
+      normalizedPlanStatus = candidate;
+    }
+  }
 
   return {
     id: row.id as string,
@@ -55,7 +83,23 @@ function rowToUser(row: Record<string, unknown>): UserRecord {
     createdAt: row.created_at as string,
     hasCompletedTutorial: row.has_completed_tutorial as boolean,
     lastLoginAt: typeof rawLastLoginAt === "string" ? rawLastLoginAt : null,
-    planStatus: typeof rawPlanStatus === "string" && rawPlanStatus.trim().length > 0 ? rawPlanStatus : "free",
+    planTier: normalizedPlanTier,
+    planStatus: normalizedPlanStatus,
+    stripeCustomerId: typeof rawStripeCustomerId === "string" ? rawStripeCustomerId : null,
+    stripeSubscriptionId:
+      typeof rawStripeSubscriptionId === "string" ? rawStripeSubscriptionId : null,
+    subscriptionCurrentPeriodEnd:
+      typeof rawSubscriptionCurrentPeriodEnd === "string"
+        ? rawSubscriptionCurrentPeriodEnd
+        : null,
+    dailyUsageCount:
+      typeof rawDailyUsageCount === "number"
+        ? Math.max(0, Math.floor(rawDailyUsageCount))
+        : typeof rawDailyUsageCount === "string"
+          ? Math.max(0, Math.floor(Number(rawDailyUsageCount) || 0))
+          : 0,
+    lastUsageResetDate:
+      typeof rawLastUsageResetDate === "string" ? rawLastUsageResetDate : null,
     updatedAt: typeof rawUpdatedAt === "string" ? rawUpdatedAt : null,
   };
 }
@@ -137,9 +181,47 @@ export async function createUser(input: {
     createdAt,
     hasCompletedTutorial: false,
     lastLoginAt: null,
-    planStatus: "free",
+    planTier: "free",
+    planStatus: null,
+    stripeCustomerId: null,
+    stripeSubscriptionId: null,
+    subscriptionCurrentPeriodEnd: null,
+    dailyUsageCount: 0,
+    lastUsageResetDate: createdAt.slice(0, 10),
     updatedAt: createdAt,
   };
+}
+
+export async function updateUserStripeCustomerIdById(
+  id: string,
+  stripeCustomerId: string
+): Promise<void> {
+  await ensureSchema();
+  await sql`
+    UPDATE users
+    SET stripe_customer_id = ${stripeCustomerId}, updated_at = NOW()
+    WHERE id = ${id}
+  `;
+}
+
+export async function updateUserSubscriptionByStripeCustomerId(input: {
+  stripeCustomerId: string;
+  stripeSubscriptionId: string | null;
+  planTier: "free" | "premium";
+  planStatus: "trialing" | "active" | "past_due" | "canceled" | null;
+  subscriptionCurrentPeriodEnd: string | null;
+}): Promise<void> {
+  await ensureSchema();
+  await sql`
+    UPDATE users
+    SET
+      stripe_subscription_id = ${input.stripeSubscriptionId},
+      plan_tier = ${input.planTier},
+      plan_status = ${input.planStatus},
+      subscription_current_period_end = ${input.subscriptionCurrentPeriodEnd},
+      updated_at = NOW()
+    WHERE stripe_customer_id = ${input.stripeCustomerId}
+  `;
 }
 
 export async function markTutorialCompleted(id: string): Promise<UserRecord | null> {

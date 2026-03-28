@@ -100,6 +100,11 @@ export default function Home() {
     sourceGroupedLogEntryIds?: string[];
     sourceGroupedLogEntryGroupName?: string;
   };
+  type ArchivedMarkingPeriod = {
+    period: string;
+    archivedAt: string;
+    marks: HistoryItem[];
+  };
   type LogEntry = {
     id?: string;
     text: string;
@@ -109,6 +114,7 @@ export default function Home() {
     committed?: boolean;
   };
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [archivedMarkingPeriods, setArchivedMarkingPeriods] = useState<ArchivedMarkingPeriod[]>([]);
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const [pendingLogPull, setPendingLogPull] = useState<number | null>(null);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
@@ -216,6 +222,12 @@ export default function Home() {
   const [mpUnitName, setMpUnitName] = useState("");
   const [mpPeriodStart, setMpPeriodStart] = useState("");
   const [mpPeriodEnd, setMpPeriodEnd] = useState("");
+  const [currentMarkingPeriodOverride, setCurrentMarkingPeriodOverride] = useState("");
+  const MARKING_PERIOD_SEPARATOR = " – ";
+  const SHORT_MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+  const normalizeMarkingPeriodLabel = (value: string): string =>
+    value.replace(/\s*[\-–]\s*/g, MARKING_PERIOD_SEPARATOR).trim();
 
   // ======================================================
   // SETTINGS STATE
@@ -277,6 +289,10 @@ export default function Home() {
     needsTutorial?: boolean;
     needsEmail?: boolean;
     lastLoginAt?: string | null;
+    planTier?: "free" | "premium";
+    planStatus?: "trialing" | "active" | "past_due" | "canceled" | null;
+    dailyUsageCount?: number;
+    dailyUsageLimit?: number | null;
   };
   const [authLoading, setAuthLoading] = useState(true);
   const [authUser, setAuthUser] = useState<SessionUser | null>(null);
@@ -306,12 +322,26 @@ export default function Home() {
   const [signupUserName, setSignupUserName] = useState("");
   const [signupUserUnit, setSignupUserUnit] = useState("");
   const [signupBulletStyle, setSignupBulletStyle] = useState("Short/Concise");
+  const [billingBusy, setBillingBusy] = useState(false);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [upgradeModalMessage, setUpgradeModalMessage] = useState(
+    "You've reached your daily limit. Upgrade to Premium for unlimited bullets."
+  );
   const canManageOfficialGuidance = isGuidanceAdminUsername(authUser?.username);
 
   const formattedLastLogin = authUser?.lastLoginAt
     ? new Date(authUser.lastLoginAt).toLocaleString()
     : null;
   const isGuestSession = authUser?.isGuest === true;
+  const hasPremiumAccess = !isGuestSession && authUser?.planTier === "premium";
+  const usageCount = authUser?.dailyUsageCount ?? 0;
+  const usageLimit = authUser?.dailyUsageLimit ?? 5;
+  const planLabel =
+    authUser?.planStatus === "trialing"
+      ? "Trial"
+      : hasPremiumAccess
+        ? "Premium"
+        : "Free";
   const showAddEmailPrompt =
     !!authUser && !isGuestSession && authUser.needsEmail === true && !emailPromptDismissed;
   const rankLevelRef = useRef(rankLevel);
@@ -355,6 +385,7 @@ export default function Home() {
 
   type UserDataKey =
     | "history"
+    | "archivedMarkingPeriods"
     | "log"
     | "settings"
     | "dashboardTotalEstimate"
@@ -403,14 +434,106 @@ export default function Home() {
       });
 
       if (!res.ok) {
-        throw new Error(`Save failed (${res.status})`);
+        let message = `Save failed (${res.status})`;
+        try {
+          const data = (await res.json()) as { error?: string; code?: string };
+          if (typeof data.error === "string" && data.error) {
+            message = data.error;
+          }
+          if (data.code === "FREE_SAVED_LIMIT_REACHED") {
+            setUpgradeModalMessage(
+              data.error ?? "Free plan supports up to 10 saved bullets. Upgrade to Premium for unlimited saves."
+            );
+            setShowUpgradeModal(true);
+          }
+        } catch {
+          // Fall back to generic message.
+        }
+        throw new Error(message);
       }
     },
     [getGuestStorageKey, isGuestSession]
   );
 
+  const refreshSession = useCallback(async () => {
+    try {
+      const res = await fetch("/api/auth/session", { method: "GET" });
+      const data = (await res.json()) as {
+        authenticated?: boolean;
+        user?: SessionUser | null;
+      };
+      const sessionUser = data.authenticated ? data.user ?? null : null;
+      setAuthUser(sessionUser);
+    } catch {
+      // Keep current session state if refresh fails.
+    }
+  }, []);
+
+  const handleUpgradeToPremium = useCallback(
+    async (billingCycle: "monthly" | "yearly" = "monthly") => {
+      if (!authUser || isGuestSession || billingBusy) {
+        return;
+      }
+
+      setBillingBusy(true);
+      try {
+        const response = await fetch("/api/billing/create-checkout-session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ billingCycle }),
+        });
+        const data = (await response.json()) as { url?: string; error?: string };
+
+        if (!response.ok || !data.url) {
+          throw new Error(data.error || "Unable to start checkout.");
+        }
+
+        window.location.assign(data.url);
+      } catch (upgradeError: unknown) {
+        setError(upgradeError instanceof Error ? upgradeError.message : "Unable to start checkout.");
+      } finally {
+        setBillingBusy(false);
+      }
+    },
+    [authUser, billingBusy, isGuestSession]
+  );
+
+  const handleManageSubscription = useCallback(async () => {
+    if (!authUser || isGuestSession || billingBusy) {
+      return;
+    }
+
+    setBillingBusy(true);
+    try {
+      const response = await fetch("/api/billing/create-portal-session", {
+        method: "POST",
+      });
+      const data = (await response.json()) as { url?: string; error?: string };
+      if (!response.ok || !data.url) {
+        throw new Error(data.error || "Unable to open billing portal.");
+      }
+      window.location.assign(data.url);
+    } catch (portalError: unknown) {
+      setError(portalError instanceof Error ? portalError.message : "Unable to open billing portal.");
+    } finally {
+      setBillingBusy(false);
+    }
+  }, [authUser, billingBusy, isGuestSession]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const billingResult = params.get("billing");
+    if (billingResult === "success" || billingResult === "cancel") {
+      void refreshSession();
+    }
+  }, [refreshSession]);
+
   const clearGuestSessionData = useCallback(() => {
-    const keys: UserDataKey[] = ["history", "log", "settings", "dashboardTotalEstimate", "exportHistory"];
+    const keys: UserDataKey[] = ["history", "archivedMarkingPeriods", "log", "settings", "dashboardTotalEstimate", "exportHistory"];
 
     for (const key of keys) {
       sessionStorage.removeItem(getGuestStorageKey(key));
@@ -667,6 +790,7 @@ export default function Home() {
       setEmailPromptInput("");
       setEmailPromptError("");
       setHistory([]);
+      setArchivedMarkingPeriods([]);
       setLogEntries([]);
       setSuggestions({});
       setBullet(null);
@@ -684,12 +808,18 @@ export default function Home() {
   const handleRetrySave = () => {
     if (!authUser || isGuestSession || loadFailed) return;
     saveUserData("history", history).then(() => setSyncFailed(false)).catch(() => setSyncFailed(true));
+    saveUserData("archivedMarkingPeriods", archivedMarkingPeriods).catch(() => setSyncFailed(true));
     saveUserData("log", logEntries).catch(() => setSyncFailed(true));
     saveUserData("settings", {
       rankLevel,
       rating,
       userName,
       userUnit,
+      mpMemberName,
+      mpUnitName,
+      mpPeriodStart,
+      mpPeriodEnd,
+      currentMarkingPeriodOverride,
       bulletStyle,
       aiGeneratorEnabled,
       aiGeneratorSplitRecommendationsEnabled,
@@ -728,6 +858,7 @@ export default function Home() {
     setEmailPromptInput("");
     setEmailPromptError("");
     setHistory([]);
+    setArchivedMarkingPeriods([]);
     setLogEntries([]);
     setSuggestions({});
     setBullet(null);
@@ -748,6 +879,7 @@ export default function Home() {
     if (!authUser) {
       historyHydratedRef.current = false;
       setHistory([]);
+      setArchivedMarkingPeriods([]);
       return;
     }
 
@@ -756,6 +888,7 @@ export default function Home() {
     void (async () => {
       try {
         const loadedHistory = await loadUserData<unknown>("history");
+        const loadedArchivedMarkingPeriods = await loadUserData<unknown>("archivedMarkingPeriods");
         if (Array.isArray(loadedHistory) && loadedHistory.length > 0) {
           setHistory(loadedHistory as HistoryItem[]);
         } else {
@@ -786,6 +919,20 @@ export default function Home() {
           } else {
             setHistory([]);
           }
+        }
+
+        if (Array.isArray(loadedArchivedMarkingPeriods)) {
+          setArchivedMarkingPeriods(
+            loadedArchivedMarkingPeriods.filter(
+              (entry): entry is ArchivedMarkingPeriod =>
+                !!entry &&
+                typeof entry === "object" &&
+                typeof (entry as ArchivedMarkingPeriod).period === "string" &&
+                Array.isArray((entry as ArchivedMarkingPeriod).marks)
+            )
+          );
+        } else {
+          setArchivedMarkingPeriods([]);
         }
 
         historyHydratedRef.current = true;
@@ -872,6 +1019,7 @@ export default function Home() {
     setMpUnitName("");
     setMpPeriodStart("");
     setMpPeriodEnd("");
+    setCurrentMarkingPeriodOverride("");
     setAiGeneratorEnabled(true);
     setAiGeneratorSplitRecommendationsEnabled(true);
     setAiGeneratorAlternateDraftsEnabled(true);
@@ -889,6 +1037,11 @@ export default function Home() {
         rating?: string;
         userName?: string;
         userUnit?: string;
+        mpMemberName?: string;
+        mpUnitName?: string;
+        mpPeriodStart?: string;
+        mpPeriodEnd?: string;
+        currentMarkingPeriodOverride?: string;
         bulletStyle?: string;
         aiGeneratorEnabled?: boolean;
         aiGeneratorSplitRecommendationsEnabled?: boolean;
@@ -925,6 +1078,13 @@ export default function Home() {
           if (loaded.rating) setRating(loaded.rating);
           if (loaded.userName) setUserName(loaded.userName);
           if (loaded.userUnit) setUserUnit(loaded.userUnit);
+          if (loaded.mpMemberName) setMpMemberName(loaded.mpMemberName);
+          if (loaded.mpUnitName) setMpUnitName(loaded.mpUnitName);
+          if (loaded.mpPeriodStart) setMpPeriodStart(loaded.mpPeriodStart);
+          if (loaded.mpPeriodEnd) setMpPeriodEnd(loaded.mpPeriodEnd);
+          if (loaded.currentMarkingPeriodOverride) {
+            setCurrentMarkingPeriodOverride(normalizeMarkingPeriodLabel(loaded.currentMarkingPeriodOverride));
+          }
           if (loaded.bulletStyle) {
             const mappedStyle =
               loaded.bulletStyle === "Balanced"
@@ -945,7 +1105,14 @@ export default function Home() {
             setAiGeneratorSplitRecommendationsEnabled(loaded.aiGeneratorEnabled);
           }
           if (typeof loaded.aiGeneratorAlternateDraftsEnabled === "boolean") {
-            setAiGeneratorAlternateDraftsEnabled(loaded.aiGeneratorAlternateDraftsEnabled);
+            // If the user is now premium but the saved value is false (set by auto-disable
+            // when they were on the free plan), restore it to true.
+            const isPremiumUser = !isGuestSession && authUser?.planTier === "premium";
+            setAiGeneratorAlternateDraftsEnabled(
+              isPremiumUser && !loaded.aiGeneratorAlternateDraftsEnabled
+                ? true
+                : loaded.aiGeneratorAlternateDraftsEnabled
+            );
           } else if (typeof loaded.aiGeneratorEnabled === "boolean") {
             setAiGeneratorAlternateDraftsEnabled(loaded.aiGeneratorEnabled);
           }
@@ -990,6 +1157,11 @@ export default function Home() {
       rating,
       userName,
       userUnit,
+      mpMemberName,
+      mpUnitName,
+      mpPeriodStart,
+      mpPeriodEnd,
+      currentMarkingPeriodOverride,
       bulletStyle,
       aiGeneratorEnabled,
       aiGeneratorSplitRecommendationsEnabled,
@@ -1006,6 +1178,11 @@ export default function Home() {
     rating,
     userName,
     userUnit,
+    mpMemberName,
+    mpUnitName,
+    mpPeriodStart,
+    mpPeriodEnd,
+    currentMarkingPeriodOverride,
     bulletStyle,
     aiGeneratorEnabled,
     aiGeneratorSplitRecommendationsEnabled,
@@ -1062,6 +1239,21 @@ export default function Home() {
     setAltCategoryDrafts({});
     setManualAltCategory("");
   }, [aiGeneratorAlternateDraftsEnabled]);
+
+  useEffect(() => {
+    if (!authUser || isGuestSession || hasPremiumAccess) {
+      return;
+    }
+
+    if (aiGeneratorSplitRecommendationsEnabled) {
+      setAiGeneratorSplitRecommendationsEnabled(false);
+    }
+  }, [
+    aiGeneratorSplitRecommendationsEnabled,
+    authUser,
+    hasPremiumAccess,
+    isGuestSession,
+  ]);
 
   useEffect(() => {
     document.documentElement.style.setProperty(
@@ -1202,6 +1394,22 @@ export default function Home() {
       return;
     }
 
+    if (!historyHydratedRef.current) {
+      return;
+    }
+    if (loadFailed) {
+      return;
+    }
+    saveUserData("archivedMarkingPeriods", archivedMarkingPeriods)
+      .then(() => setSyncFailed(false))
+      .catch(() => setSyncFailed(true));
+  }, [archivedMarkingPeriods, authUser, loadFailed, saveUserData]);
+
+  useEffect(() => {
+    if (!authUser) {
+      return;
+    }
+
     if (!logHydratedRef.current) {
       return;
     }
@@ -1315,6 +1523,17 @@ export default function Home() {
 
     const data = await res.json();
     if (!res.ok) {
+      if (
+        data?.code === "FREE_DAILY_LIMIT_REACHED" ||
+        data?.code === "PREMIUM_REQUIRED"
+      ) {
+        setUpgradeModalMessage(
+          typeof data.error === "string"
+            ? data.error
+            : "You've reached your daily limit. Upgrade to Premium for unlimited bullets."
+        );
+        setShowUpgradeModal(true);
+      }
       throw new Error(data.error || "Failed to generate bullet.");
     }
 
@@ -1372,6 +1591,7 @@ export default function Home() {
       const generatedDraft = await generateBulletDraft(trimmedInput, {
         preferredCategory: category || undefined,
       });
+      await refreshSession();
 
       setBullet({ text: generatedDraft.text, category: generatedDraft.category, title: generatedDraft.title, guidanceSections: generatedDraft.guidanceSections });
       setWasCategoryUserSelected(wasUserSelected);
@@ -1475,6 +1695,12 @@ export default function Home() {
   };
 
   const handleApplySplitRecommendation = async () => {
+    if (!hasPremiumAccess) {
+      setUpgradeModalMessage("Refine/improve tools are Premium features. Upgrade to continue.");
+      setShowUpgradeModal(true);
+      return;
+    }
+
     if (!splitBulletRecommendation?.shouldSplit || splitBulletRecommendation.splitActions.length === 0) {
       return;
     }
@@ -1529,6 +1755,12 @@ export default function Home() {
   };
 
   const handleRepromptSplitBulletDraft = async (draftId: string) => {
+    if (!hasPremiumAccess) {
+      setUpgradeModalMessage("Refine/improve tools are Premium features. Upgrade to continue.");
+      setShowUpgradeModal(true);
+      return;
+    }
+
     if (!aiGeneratorEnabled) {
       setError("Generator AI is disabled in Settings.");
       return;
@@ -1568,6 +1800,13 @@ export default function Home() {
     sourceTitle?: string,
     sourceDates?: string[]
   ) => {
+    if (!hasPremiumAccess) {
+      setAltCategorySuggestion(null);
+      setAltCategoryDrafts({});
+      setManualAltCategory("");
+      return;
+    }
+
     if (!aiGeneratorAlternateDraftsEnabled) {
       setAltCategorySuggestion(null);
       setAltCategoryDrafts({});
@@ -1611,6 +1850,12 @@ export default function Home() {
   };
 
   const handleGenerateAltCategoryDraft = async (categoryName: string) => {
+    if (!hasPremiumAccess) {
+      setUpgradeModalMessage("Alternate category drafts are Premium features. Upgrade to continue.");
+      setShowUpgradeModal(true);
+      return;
+    }
+
     if (!aiGeneratorEnabled || !aiGeneratorAlternateDraftsEnabled) return;
     if (!altCategorySuggestion) return;
     setAltCategoryDrafts((prev) => ({ ...prev, [categoryName]: { text: "", title: "", generating: true } }));
@@ -1816,6 +2061,27 @@ export default function Home() {
         return `${monthNames[startMonth]} ${year - 1} – ${monthNames[eerMonth]} ${year}`;
       }
     }
+  };
+
+  const getNextMarkingPeriod = (period: string, rank: string): string => {
+    const normalizedPeriod = normalizeMarkingPeriodLabel(period);
+    const endPart = normalizedPeriod.split(MARKING_PERIOD_SEPARATOR)[1]?.trim();
+    if (!endPart) {
+      return "";
+    }
+
+    const [endMonthStr, endYearStr] = endPart.split(/\s+/);
+    const endMonthIndex = SHORT_MONTH_NAMES.indexOf(endMonthStr);
+    const endYear = Number.parseInt(endYearStr, 10);
+    if (endMonthIndex === -1 || Number.isNaN(endYear)) {
+      return "";
+    }
+
+    const nextMonthIndex = (endMonthIndex + 1) % 12;
+    const nextYear = endMonthIndex === SHORT_MONTH_NAMES.length - 1 ? endYear + 1 : endYear;
+    const nextDate = `${nextYear}-${String(nextMonthIndex + 1).padStart(2, "0")}-15`;
+
+    return computeMarkingPeriod(nextDate, rank);
   };
 
   // ======================================================
@@ -2129,11 +2395,103 @@ export default function Home() {
     setLogEntries([]);
   };
 
+  const handleArchiveMarkingPeriod = (period: string, switchToNextPeriod = false) => {
+    const normalizedPeriod = normalizeMarkingPeriodLabel(period.trim());
+    if (!normalizedPeriod) {
+      return;
+    }
+
+    const resolveItemPeriod = (item: { markingPeriod?: string; date: string }) =>
+      normalizeMarkingPeriodLabel(
+        item.markingPeriod?.trim() ||
+        (item.date ? computeMarkingPeriod(item.date, rankLevel) : "") ||
+        currentMarkingPeriodOverride ||
+        computeMarkingPeriod(new Date().toISOString(), rankLevel)
+      );
+
+    const marksToArchive = history.filter((item) => resolveItemPeriod(item) === normalizedPeriod);
+
+    if (marksToArchive.length === 0) {
+      return;
+    }
+
+    setArchivedMarkingPeriods((prev) => {
+      const existing = prev.find((entry) => entry.period === normalizedPeriod);
+      const archivedAt = new Date().toISOString();
+
+      if (existing) {
+        return prev.map((entry) =>
+          entry.period === normalizedPeriod
+            ? {
+                ...entry,
+                archivedAt,
+                marks: [...marksToArchive, ...entry.marks],
+              }
+            : entry
+        );
+      }
+
+      return [
+        {
+          period: normalizedPeriod,
+          archivedAt,
+          marks: marksToArchive,
+        },
+        ...prev,
+      ];
+    });
+
+    setHistory((prev) =>
+      prev.filter((item) => resolveItemPeriod(item) !== normalizedPeriod)
+    );
+    setLogEntries([]);
+    setPendingLogPull(null);
+    setPulledLogDate(null);
+    setPulledLogDates([]);
+    setPulledLogIndex(null);
+    setPulledLogEntryId(null);
+    setPulledGroupedEntryIndexes([]);
+    setBullet(null);
+    setEditingIndex(null);
+
+    if (switchToNextPeriod) {
+      const nextPeriod = getNextMarkingPeriod(normalizedPeriod, rankLevel);
+      const nextParts = nextPeriod.split(MARKING_PERIOD_SEPARATOR);
+      if (nextParts.length === 2) {
+        setMpPeriodStart(nextParts[0]);
+        setMpPeriodEnd(nextParts[1]);
+      }
+      setCurrentMarkingPeriodOverride(normalizeMarkingPeriodLabel(nextPeriod));
+    }
+
+    setSettingsMessage(`Archived ${normalizedPeriod}. Daily Log entries were cleared.`);
+    setActiveTab("history");
+  };
+
+  const handleSwitchToNextPeriod = (period: string) => {
+    const normalizedPeriod = normalizeMarkingPeriodLabel(period.trim());
+    if (!normalizedPeriod) return;
+    const nextPeriod = getNextMarkingPeriod(normalizedPeriod, rankLevel);
+    const nextParts = nextPeriod.split(MARKING_PERIOD_SEPARATOR);
+    if (nextParts.length === 2) {
+      setMpPeriodStart(nextParts[0]);
+      setMpPeriodEnd(nextParts[1]);
+    }
+    setCurrentMarkingPeriodOverride(normalizeMarkingPeriodLabel(nextPeriod));
+  };
+
+  const handleRevertMarkingPeriod = () => {
+    setCurrentMarkingPeriodOverride("");
+    setMpPeriodStart("");
+    setMpPeriodEnd("");
+  };
+
   const handleExportBackup = () => {
     const backup = {
       version: 1,
       exportedAt: new Date().toISOString(),
       history,
+      archivedMarkingPeriods,
       settings: {
         rankLevel,
         rating,
@@ -2187,6 +2545,7 @@ export default function Home() {
           tacticalColorSchemeEnabled?: boolean;
           highContrastEnabled?: boolean;
         };
+        archivedMarkingPeriods?: ArchivedMarkingPeriod[];
       };
 
       if (Array.isArray(parsed.history)) {
@@ -2195,6 +2554,18 @@ export default function Home() {
         } else {
           setHistory(parsed.history as HistoryItem[]);
         }
+      }
+
+      if (Array.isArray(parsed.archivedMarkingPeriods)) {
+        setArchivedMarkingPeriods(
+          parsed.archivedMarkingPeriods.filter(
+            (entry): entry is ArchivedMarkingPeriod =>
+              !!entry &&
+              typeof entry === "object" &&
+              typeof entry.period === "string" &&
+              Array.isArray(entry.marks)
+          )
+        );
       }
 
       if (parsed.settings) {
@@ -2229,10 +2600,95 @@ export default function Home() {
     }
   };
 
+  const handleImportArchivedMarks = (period: string, markIndexes?: number[]) => {
+    const archive = archivedMarkingPeriods.find((entry) => entry.period === period);
+    if (!archive) {
+      setSettingsMessage("Choose an archived marking period to import.");
+      return;
+    }
+
+    const selectedMarks =
+      Array.isArray(markIndexes) && markIndexes.length > 0
+        ? archive.marks.filter((_, index) => markIndexes.includes(index))
+        : archive.marks;
+
+    if (selectedMarks.length === 0) {
+      setSettingsMessage("Select at least one archived mark to import.");
+      return;
+    }
+
+    let importedCount = 0;
+    setHistory((prev) => {
+      const existingKeys = new Set(
+        prev.map((item) => `${item.text}__${item.date}__${item.category ?? ""}`)
+      );
+      const restoredMarks = selectedMarks.filter((item) => {
+        const key = `${item.text}__${item.date}__${item.category ?? ""}`;
+        if (existingKeys.has(key)) {
+          return false;
+        }
+        existingKeys.add(key);
+        return true;
+      });
+
+      importedCount = restoredMarks.length;
+      return [...restoredMarks, ...prev];
+    });
+
+    if (importedCount === 0) {
+      setSettingsMessage(`All selected marks from ${period} are already in Official Marks.`);
+      return;
+    }
+
+    setSettingsMessage(`Imported ${importedCount} archived mark${importedCount === 1 ? "" : "s"} from ${period}.`);
+  };
+
+  const handleDeleteArchivedMarkingPeriod = (period: string) => {
+    const normalizedPeriod = period.trim();
+    if (!normalizedPeriod) {
+      return;
+    }
+
+    const existingArchive = archivedMarkingPeriods.find((entry) => entry.period === normalizedPeriod);
+    if (!existingArchive) {
+      setSettingsMessage("Archived marking period not found.");
+      return;
+    }
+
+    setArchivedMarkingPeriods((prev) => prev.filter((entry) => entry.period !== normalizedPeriod));
+    setSettingsMessage(`Deleted archived marking period ${normalizedPeriod}.`);
+  };
+
+  const handleDeleteMarkingPeriod = (period: string) => {
+    const normalizedPeriod = normalizeMarkingPeriodLabel(period.trim());
+    if (!normalizedPeriod) {
+      return;
+    }
+
+    const resolveItemPeriodDelete = (item: { markingPeriod?: string; date: string }) =>
+      normalizeMarkingPeriodLabel(
+        item.markingPeriod?.trim() ||
+        (item.date ? computeMarkingPeriod(item.date, rankLevel) : "") ||
+        currentMarkingPeriodOverride ||
+        computeMarkingPeriod(new Date().toISOString(), rankLevel)
+      );
+
+    const marksInPeriod = history.filter((item) => resolveItemPeriodDelete(item) === normalizedPeriod);
+
+    if (marksInPeriod.length === 0) {
+      return;
+    }
+
+    setHistory((prev) => prev.filter((item) => resolveItemPeriodDelete(item) !== normalizedPeriod));
+    setSettingsMessage(`Deleted ${marksInPeriod.length} mark${marksInPeriod.length === 1 ? "" : "s"} from ${normalizedPeriod}.`);
+    setActiveTab("history");
+  };
+
   const handleClearAllBullets = () => {
     const confirmed = window.confirm("Clear all saved bullets from history? This cannot be undone.");
     if (!confirmed) return;
     setHistory([]);
+    setArchivedMarkingPeriods([]);
     setSuggestions({});
     setBullet(null);
     setEditingIndex(null);
@@ -2781,6 +3237,15 @@ export default function Home() {
             <p className="text-sm font-medium text-slate-700">
               Signed in as <span className="font-bold text-slate-900">{authUser.username}</span>
             </p>
+            <p className="mt-1 text-xs font-medium text-slate-600">
+              Plan: <span className="font-semibold text-slate-900">{planLabel}</span>
+              {!hasPremiumAccess ? (
+                <>
+                  {" "}
+                  • Usage today: <span className="font-semibold text-slate-900">{usageCount}/{usageLimit}</span>
+                </>
+              ) : null}
+            </p>
             {syncFailed ? (
               <p className="mt-1 text-xs font-medium text-red-600">
                 ⚠ Data failed to sync.{" "}
@@ -2805,6 +3270,33 @@ export default function Home() {
             ) : null}
           </div>
           <div className="flex items-center gap-3">
+            {!isGuestSession && !hasPremiumAccess ? (
+              <>
+                <button
+                  onClick={() => void handleUpgradeToPremium("monthly")}
+                  disabled={billingBusy}
+                  className="rounded-md bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {billingBusy ? "Starting..." : "Upgrade Monthly"}
+                </button>
+                <button
+                  onClick={() => void handleUpgradeToPremium("yearly")}
+                  disabled={billingBusy}
+                  className="rounded-md border border-emerald-600 px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Yearly
+                </button>
+              </>
+            ) : null}
+            {!isGuestSession && hasPremiumAccess ? (
+              <button
+                onClick={() => void handleManageSubscription()}
+                disabled={billingBusy}
+                className="rounded-md border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Manage Subscription
+              </button>
+            ) : null}
             {formattedLastLogin ? (
               <span className="text-xs font-normal text-slate-500">
                 Last login: {formattedLastLogin}
@@ -2892,11 +3384,17 @@ export default function Home() {
         {activeTab === "history" && (
           <HistoryPanel
             history={history}
+            archivedMarkingPeriods={archivedMarkingPeriods}
             rankLevel={rankLevel}
+            currentPeriodOverride={currentMarkingPeriodOverride}
             handleCopy={handleCopy}
             handleDelete={handleDelete}
             handleUpdateMark={handleUpdateMark}
             handleReprompt={handleReprompt}
+            handleArchiveMarkingPeriod={handleArchiveMarkingPeriod}
+            handleDeleteMarkingPeriod={handleDeleteMarkingPeriod}
+            handleSwitchToNextPeriod={handleSwitchToNextPeriod}
+            handleRevertMarkingPeriod={handleRevertMarkingPeriod}
           />
         )}
 
@@ -3213,6 +3711,8 @@ export default function Home() {
             suggestions={suggestions}
             rankLevel={rankLevel}
             isGuestSession={isGuestSession}
+            isPremiumPlan={hasPremiumAccess}
+            onUpgradeToPremium={() => void handleUpgradeToPremium("monthly")}
           />
         )}
 
@@ -3268,6 +3768,8 @@ export default function Home() {
             setAiGeneratorSplitRecommendationsEnabled={setAiGeneratorSplitRecommendationsEnabled}
             aiGeneratorAlternateDraftsEnabled={aiGeneratorAlternateDraftsEnabled}
             setAiGeneratorAlternateDraftsEnabled={setAiGeneratorAlternateDraftsEnabled}
+            premiumFeaturesEnabled={hasPremiumAccess}
+            onUpgradeToPremium={() => void handleUpgradeToPremium("monthly")}
             aiLogImportEnabled={aiLogImportEnabled}
             setAiLogImportEnabled={setAiLogImportEnabled}
             aiDashboardInsightsEnabled={aiDashboardInsightsEnabled}
@@ -3281,9 +3783,12 @@ export default function Home() {
             highContrastEnabled={highContrastEnabled}
             setHighContrastEnabled={setHighContrastEnabled}
             historyCount={history.length}
+            archivedMarkingPeriods={archivedMarkingPeriods}
             settingsMessage={settingsMessage}
             onExportBackup={handleExportBackup}
             onImportBackup={handleImportBackup}
+            onImportArchivedMarks={handleImportArchivedMarks}
+            onDeleteArchivedMarkingPeriod={handleDeleteArchivedMarkingPeriod}
             onClearAllBullets={handleClearAllBullets}
             onClearDailyLog={handleClearLogEntries}
             onReviewTutorial={() => {
@@ -3378,7 +3883,7 @@ export default function Home() {
                     </div>
                     <p className="mt-1 text-xs text-gray-500">{reason}</p>
                     {generatedText && (
-                      <div className="generated-bullet-preview mt-3 rounded-md border border-blue-100 bg-blue-50 p-3">
+                      <div className="generated-bullet-preview mt-3 rounded-md border border-slate-200 bg-slate-50 p-3">
                         <p className="generated-bullet-preview-text text-sm font-semibold text-gray-900">{generatedText}</p>
                         {draftEntry?.guidanceSections && draftEntry.guidanceSections.length > 0 && (
                           <div className="generated-bullet-reference mt-2 rounded-md border border-emerald-200 bg-emerald-50 p-2">
@@ -3534,6 +4039,32 @@ export default function Home() {
               >
                 I Understand
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showUpgradeModal && !showNoticeModal && !showGuestProfilePrompt && !showTutorialModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl">
+            <h3 className="text-lg font-semibold text-gray-900">Upgrade to Premium</h3>
+            <p className="mt-3 text-sm text-gray-700">{upgradeModalMessage}</p>
+            <div className="mt-5 flex flex-col justify-end gap-2 sm:flex-row">
+              <button
+                onClick={() => setShowUpgradeModal(false)}
+                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
+              >
+                Not now
+              </button>
+              {!isGuestSession && (
+                <button
+                  onClick={() => void handleUpgradeToPremium("monthly")}
+                  disabled={billingBusy}
+                  className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {billingBusy ? "Starting..." : "Upgrade Monthly"}
+                </button>
+              )}
             </div>
           </div>
         </div>

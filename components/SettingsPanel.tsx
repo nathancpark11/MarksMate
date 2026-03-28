@@ -1,5 +1,18 @@
 import { useRef, useState } from "react";
 
+type ArchivedMarkingPeriod = {
+  period: string;
+  archivedAt: string;
+  marks: Array<{
+    text: string;
+    date: string;
+    dates?: string[];
+    category?: string;
+    markingPeriod?: string;
+    title?: string;
+  }>;
+};
+
 type SettingsPanelProps = {
   isGuestSession?: boolean;
   rankLevel: string;
@@ -18,6 +31,8 @@ type SettingsPanelProps = {
   setAiGeneratorSplitRecommendationsEnabled: (value: boolean) => void;
   aiGeneratorAlternateDraftsEnabled: boolean;
   setAiGeneratorAlternateDraftsEnabled: (value: boolean) => void;
+  premiumFeaturesEnabled?: boolean;
+  onUpgradeToPremium?: () => void;
   aiLogImportEnabled: boolean;
   setAiLogImportEnabled: (value: boolean) => void;
   aiDashboardInsightsEnabled: boolean;
@@ -31,9 +46,12 @@ type SettingsPanelProps = {
   highContrastEnabled: boolean;
   setHighContrastEnabled: (value: boolean) => void;
   historyCount: number;
+  archivedMarkingPeriods: ArchivedMarkingPeriod[];
   settingsMessage: string;
   onExportBackup: () => void;
   onImportBackup: (file: File) => void;
+  onImportArchivedMarks: (period: string, markIndexes?: number[]) => void;
+  onDeleteArchivedMarkingPeriod: (period: string) => void;
   onClearAllBullets: () => void;
   onClearDailyLog: () => void;
   onReviewTutorial: () => void;
@@ -58,6 +76,8 @@ export default function SettingsPanel({
   setAiGeneratorSplitRecommendationsEnabled,
   aiGeneratorAlternateDraftsEnabled,
   setAiGeneratorAlternateDraftsEnabled,
+  premiumFeaturesEnabled = false,
+  onUpgradeToPremium,
   aiLogImportEnabled,
   setAiLogImportEnabled,
   aiDashboardInsightsEnabled,
@@ -71,9 +91,12 @@ export default function SettingsPanel({
   highContrastEnabled,
   setHighContrastEnabled,
   historyCount,
+  archivedMarkingPeriods,
   settingsMessage,
   onExportBackup,
   onImportBackup,
+  onImportArchivedMarks,
+  onDeleteArchivedMarkingPeriod,
   onClearAllBullets,
   onClearDailyLog,
   onReviewTutorial,
@@ -83,8 +106,39 @@ export default function SettingsPanel({
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   const [generatorTabAiOpen, setGeneratorTabAiOpen] = useState(false);
+  const [expandedArchivedPeriods, setExpandedArchivedPeriods] = useState<Record<string, boolean>>({});
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importSource, setImportSource] = useState<"archive" | "file">(
+    archivedMarkingPeriods.length > 0 ? "archive" : "file"
+  );
+  const [selectedImportPeriod, setSelectedImportPeriod] = useState(archivedMarkingPeriods[0]?.period ?? "");
+  const [selectedArchivedMarkIndexes, setSelectedArchivedMarkIndexes] = useState<number[]>([]);
+  const [deleteArchiveTarget, setDeleteArchiveTarget] = useState<ArchivedMarkingPeriod | null>(null);
 
   const restrictToRankAndRate = isGuestSession;
+  const selectedArchive = archivedMarkingPeriods.find((entry) => entry.period === selectedImportPeriod) ?? null;
+
+  const openImportModal = () => {
+    const defaultPeriod = archivedMarkingPeriods[0]?.period ?? "";
+    setImportSource(archivedMarkingPeriods.length > 0 ? "archive" : "file");
+    setSelectedImportPeriod(defaultPeriod);
+    setSelectedArchivedMarkIndexes(
+      archivedMarkingPeriods[0]?.marks.map((_, index) => index) ?? []
+    );
+    setImportModalOpen(true);
+  };
+
+  const handleImportPeriodChange = (period: string) => {
+    setSelectedImportPeriod(period);
+    const nextArchive = archivedMarkingPeriods.find((entry) => entry.period === period);
+    setSelectedArchivedMarkIndexes(nextArchive?.marks.map((_, index) => index) ?? []);
+  };
+
+  const toggleArchivedMark = (index: number) => {
+    setSelectedArchivedMarkIndexes((prev) =>
+      prev.includes(index) ? prev.filter((value) => value !== index) : [...prev, index].sort((a, b) => a - b)
+    );
+  };
 
   return (
     <div className="bg-(--surface-1) p-4 sm:p-8 rounded-xl shadow-md space-y-8">
@@ -194,6 +248,22 @@ export default function SettingsPanel({
         </button>
         {aiSettingsOpen && (
           <>
+          {!restrictToRankAndRate && !premiumFeaturesEnabled ? (
+            <div className="mt-4 rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+              <p className="font-semibold">Refine/improve features are Premium-only.</p>
+              <p className="mt-1">Upgrade to enable split recommendations and alternate drafts.</p>
+              {onUpgradeToPremium ? (
+                <button
+                  type="button"
+                  onClick={onUpgradeToPremium}
+                  className="mt-2 rounded-md bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700"
+                >
+                  Upgrade to Premium
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+
           <div className="mt-4">
             <label className="block text-sm font-medium">Bullet Style</label>
           <select
@@ -255,7 +325,7 @@ export default function SettingsPanel({
                     className="mt-1 h-4 w-4"
                     checked={aiGeneratorSplitRecommendationsEnabled}
                     onChange={(e) => setAiGeneratorSplitRecommendationsEnabled(e.target.checked)}
-                    disabled={restrictToRankAndRate}
+                    disabled={restrictToRankAndRate || !premiumFeaturesEnabled}
                   />
                   <span>
                     <span className="block text-sm font-medium text-(--text-strong)">Split Recommendations</span>
@@ -269,7 +339,7 @@ export default function SettingsPanel({
                     className="mt-1 h-4 w-4"
                     checked={aiGeneratorAlternateDraftsEnabled}
                     onChange={(e) => setAiGeneratorAlternateDraftsEnabled(e.target.checked)}
-                    disabled={restrictToRankAndRate}
+                    disabled={restrictToRankAndRate || !premiumFeaturesEnabled}
                   />
                   <span>
                     <span className="block text-sm font-medium text-(--text-strong)">Alternate Drafts</span>
@@ -411,6 +481,7 @@ export default function SettingsPanel({
       <section className="space-y-4 rounded-lg border border-(--border-muted) bg-(--surface-2) p-4 sm:p-5">
         <h3 className="text-lg font-semibold text-(--text-strong)">Data Management</h3>
         <p className="text-sm text-(--text-soft)">Saved bullets: {historyCount}</p>
+        <p className="text-sm text-(--text-soft)">Archived marking periods: {archivedMarkingPeriods.length}</p>
 
         <div className="flex flex-wrap gap-3">
           <button
@@ -422,7 +493,7 @@ export default function SettingsPanel({
           </button>
 
           <button
-            onClick={() => importInputRef.current?.click()}
+            onClick={openImportModal}
             disabled={restrictToRankAndRate}
             className="btn-secondary px-4 py-2 rounded-md text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60"
           >
@@ -454,6 +525,7 @@ export default function SettingsPanel({
           onChange={(e) => {
             const file = e.target.files?.[0];
             if (file) {
+              setImportModalOpen(false);
               onImportBackup(file);
             }
             e.currentTarget.value = "";
@@ -461,7 +533,315 @@ export default function SettingsPanel({
         />
 
         {settingsMessage && <p className="text-sm text-(--text-strong)">{settingsMessage}</p>}
+
+        <div className="rounded-lg border border-(--border-muted) bg-(--surface-1) p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h4 className="text-sm font-semibold text-(--text-strong)">Archived Marking Periods</h4>
+              <p className="mt-1 text-xs text-(--text-soft)">
+                Review archived periods here, then use Import Backup to pull an entire archived period or selected marks back into Official Marks.
+              </p>
+            </div>
+          </div>
+
+          {archivedMarkingPeriods.length === 0 ? (
+            <p className="mt-3 text-sm text-(--text-soft)">No archived marking periods yet.</p>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {archivedMarkingPeriods.map((archive) => {
+                const archiveKey = `${archive.period}-${archive.archivedAt}`;
+                const isOpen = expandedArchivedPeriods[archiveKey] === true;
+
+                return (
+                  <div key={archiveKey} className="overflow-hidden rounded-lg border border-(--border-muted)">
+                    <div className="flex flex-col gap-3 bg-(--surface-2) px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpandedArchivedPeriods((prev) => ({
+                            ...prev,
+                            [archiveKey]: !isOpen,
+                          }))
+                        }
+                        className="flex min-w-0 flex-1 items-center justify-between text-left"
+                      >
+                        <div>
+                          <p className="text-sm font-semibold text-(--text-strong)">{archive.period}</p>
+                          <p className="mt-1 text-xs text-(--text-soft)">
+                            Archived {new Date(archive.archivedAt).toLocaleString()} • {archive.marks.length} marks
+                          </p>
+                        </div>
+                        <span className="ml-3 text-xs text-(--text-soft)">{isOpen ? "Hide" : "Review"}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDeleteArchiveTarget(archive)}
+                        className="rounded-md border border-(--color-danger) px-3 py-2 text-xs font-semibold text-(--color-danger) transition hover:bg-(--color-danger-soft)"
+                      >
+                        Delete
+                      </button>
+                    </div>
+
+                    {isOpen && (
+                      <div className="space-y-3 px-4 py-4">
+                        {archive.marks.map((mark, index) => (
+                          <div key={`${archiveKey}-${index}`} className="rounded-md border border-(--border-muted) bg-(--surface-2) p-3">
+                            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                              <p className="text-sm font-medium text-(--text-strong)">{mark.title || "Official Mark"}</p>
+                              <p className="text-xs text-(--text-soft)">
+                                {mark.date ? new Date(mark.date).toLocaleDateString() : "Not Dated"}
+                              </p>
+                            </div>
+                            {mark.category && (
+                              <p className="mt-2 text-xs font-medium uppercase tracking-wide text-(--text-soft)">{mark.category}</p>
+                            )}
+                            <p className="mt-2 text-sm text-(--text-strong)">{mark.text}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </section>
+
+      {importModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="max-h-[85vh] w-full max-w-3xl overflow-y-auto rounded-xl border border-(--border-muted) bg-(--surface-1) p-6 shadow-xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-semibold text-(--text-strong)">Import Backup</h3>
+                <p className="mt-1 text-sm text-(--text-soft)">
+                  Restore official marks from a backup JSON file or from an archived marking period.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setImportModalOpen(false)}
+                className="btn-secondary rounded-md px-3 py-2 text-sm font-medium"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-5 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setImportSource("archive")}
+                className={`rounded-md px-4 py-2 text-sm font-medium ${
+                  importSource === "archive" ? "btn-primary" : "btn-secondary"
+                }`}
+                disabled={archivedMarkingPeriods.length === 0}
+              >
+                Archived Marking Periods
+              </button>
+              <button
+                type="button"
+                onClick={() => setImportSource("file")}
+                className={`rounded-md px-4 py-2 text-sm font-medium ${
+                  importSource === "file" ? "btn-primary" : "btn-secondary"
+                }`}
+              >
+                Backup JSON File
+              </button>
+            </div>
+
+            {importSource === "archive" ? (
+              <div className="mt-5 space-y-4">
+                {archivedMarkingPeriods.length === 0 ? (
+                  <p className="text-sm text-(--text-soft)">No archived marking periods are available to import.</p>
+                ) : (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-(--text-strong)">Archived Marking Period</label>
+                      <select
+                        value={selectedImportPeriod}
+                        onChange={(e) => handleImportPeriodChange(e.target.value)}
+                        className="settings-control mt-2 w-full rounded-md border p-3"
+                      >
+                        {archivedMarkingPeriods.map((archive) => (
+                          <option key={`${archive.period}-${archive.archivedAt}`} value={archive.period}>
+                            {archive.period} ({archive.marks.length} marks)
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {selectedArchive && (
+                      <div className="rounded-lg border border-(--border-muted) bg-(--surface-2) p-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <p className="text-sm font-semibold text-(--text-strong)">{selectedArchive.period}</p>
+                            <p className="mt-1 text-xs text-(--text-soft)">
+                              Archived {new Date(selectedArchive.archivedAt).toLocaleString()} • {selectedArchive.marks.length} marks
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedArchivedMarkIndexes(selectedArchive.marks.map((_, index) => index))}
+                              className="btn-secondary rounded-md px-3 py-2 text-xs font-medium"
+                            >
+                              Select All
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedArchivedMarkIndexes([])}
+                              className="btn-secondary rounded-md px-3 py-2 text-xs font-medium"
+                            >
+                              Clear Selection
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDeleteArchiveTarget(selectedArchive);
+                                setImportModalOpen(false);
+                              }}
+                              className="rounded-md border border-(--color-danger) px-3 py-2 text-xs font-semibold text-(--color-danger) transition hover:bg-(--color-danger-soft)"
+                            >
+                              Delete
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onImportArchivedMarks(selectedArchive.period);
+                                setImportModalOpen(false);
+                              }}
+                              className="btn-primary rounded-md px-3 py-2 text-xs font-semibold"
+                            >
+                              Import All Marks
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 space-y-3">
+                          {selectedArchive.marks.map((mark, index) => {
+                            const selected = selectedArchivedMarkIndexes.includes(index);
+
+                            return (
+                              <label
+                                key={`${selectedArchive.period}-${index}`}
+                                className="flex gap-3 rounded-md border border-(--border-muted) bg-(--surface-1) p-3"
+                              >
+                                <input
+                                  type="checkbox"
+                                  className="mt-1 h-4 w-4"
+                                  checked={selected}
+                                  onChange={() => toggleArchivedMark(index)}
+                                />
+                                <span className="min-w-0 flex-1">
+                                  <span className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                                    <span className="text-sm font-medium text-(--text-strong)">{mark.title || "Official Mark"}</span>
+                                    <span className="text-xs text-(--text-soft)">
+                                      {mark.date ? new Date(mark.date).toLocaleDateString() : "Not Dated"}
+                                    </span>
+                                  </span>
+                                  {mark.category && (
+                                    <span className="mt-2 block text-xs font-medium uppercase tracking-wide text-(--text-soft)">
+                                      {mark.category}
+                                    </span>
+                                  )}
+                                  <span className="mt-2 block text-sm text-(--text-strong)">{mark.text}</span>
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
+
+                        <div className="mt-4 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                          <button
+                            type="button"
+                            onClick={() => setImportModalOpen(false)}
+                            className="btn-secondary rounded-md px-4 py-2 text-sm font-medium"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onImportArchivedMarks(selectedArchive.period, selectedArchivedMarkIndexes);
+                              setImportModalOpen(false);
+                            }}
+                            disabled={selectedArchivedMarkIndexes.length === 0}
+                            className="btn-primary rounded-md px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            Import Selected Marks ({selectedArchivedMarkIndexes.length})
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            ) : (
+              <div className="mt-5 rounded-lg border border-(--border-muted) bg-(--surface-2) p-4">
+                <p className="text-sm text-(--text-soft)">
+                  Choose a backup JSON file to restore saved data into this account.
+                </p>
+                <div className="mt-4 flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={() => importInputRef.current?.click()}
+                    className="btn-primary rounded-md px-4 py-2 text-sm font-medium"
+                  >
+                    Choose Backup File
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setImportModalOpen(false)}
+                    className="btn-secondary rounded-md px-4 py-2 text-sm font-medium"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {deleteArchiveTarget && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-lg rounded-xl border border-(--border-muted) bg-(--surface-1) p-6 shadow-xl">
+            <h3 className="text-lg font-semibold text-(--text-strong)">Delete Archived Marking Period?</h3>
+            <p className="mt-3 text-sm text-(--text-soft)">
+              Deleting {deleteArchiveTarget.period} will permanently remove every archived mark in this marking period.
+            </p>
+            <p className="mt-2 text-sm text-(--text-soft)">
+              If you continue, these marks will be gone forever and cannot be recovered from the archive.
+            </p>
+            <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setDeleteArchiveTarget(null)}
+                className="btn-secondary rounded-md px-4 py-2 text-sm font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onDeleteArchivedMarkingPeriod(deleteArchiveTarget.period);
+                  if (selectedImportPeriod === deleteArchiveTarget.period) {
+                    const nextArchive = archivedMarkingPeriods.find(
+                      (archive) => archive.period !== deleteArchiveTarget.period
+                    );
+                    setSelectedImportPeriod(nextArchive?.period ?? "");
+                    setSelectedArchivedMarkIndexes(nextArchive?.marks.map((_, index) => index) ?? []);
+                  }
+                  setDeleteArchiveTarget(null);
+                }}
+                className="rounded-md bg-(--color-danger) px-4 py-2 text-sm font-semibold text-(--color-text-on-strong) hover:brightness-95"
+              >
+                Delete Forever
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <section className="space-y-4 rounded-lg border border-(--border-muted) bg-(--surface-2) p-4 sm:p-5">
         <h3 className="text-lg font-semibold text-(--text-strong)">Help</h3>

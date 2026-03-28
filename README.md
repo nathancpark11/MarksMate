@@ -16,6 +16,12 @@ SENDGRID_API_KEY=SG.xxxxx
 EMAIL_FROM=noreply@example.com
 APP_BASE_URL=http://localhost:3000
 PASSWORD_RESET_SECRET=replace_with_a_long_random_secret
+STRIPE_SECRET_KEY=sk_test_xxx
+STRIPE_WEBHOOK_SECRET=whsec_xxx
+STRIPE_PRICE_MONTHLY_ID=price_xxx
+STRIPE_PRICE_YEARLY_ID=price_xxx
+NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_xxx
+NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
 
 Important:
@@ -24,6 +30,8 @@ Important:
 - Never put your API key in client components, browser code, or public config.
 - `NEXT_PUBLIC_*` variables are bundled into frontend code and visible in the browser.
 - `APP_BASE_URL` must point to your deployed app URL in production so reset links are valid.
+- Stripe secret values (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`) must remain server-only.
+- Configure Stripe webhook delivery to `POST /api/stripe/webhook`.
 
 ## Local Development
 

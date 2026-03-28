@@ -4,9 +4,11 @@ import {
   isValidEmail,
   sanitizeEmail,
   sanitizeUsername,
+  updateUserStripeCustomerIdById,
 } from "@/lib/userStore";
 import { hashPassword, setSessionCookie } from "@/lib/auth";
 import { logApiError } from "@/lib/safeLogging";
+import { getStripeClient } from "@/lib/stripe";
 
 export async function POST(req: Request) {
   try {
@@ -52,6 +54,24 @@ export async function POST(req: Request) {
     const passwordHash = await hashPassword(password);
     const user = await createUser({ username, email, passwordHash });
 
+    try {
+      const stripe = getStripeClient();
+      const customer = await stripe.customers.create({
+        email: user.email ?? undefined,
+        name: user.username,
+        metadata: {
+          appUserId: user.id,
+        },
+      });
+
+      await updateUserStripeCustomerIdById(user.id, customer.id);
+    } catch (stripeError: unknown) {
+      // Best effort: signup should still succeed even if Stripe is temporarily unavailable.
+      logApiError("signup stripe customer creation error", stripeError, {
+        routeName: "/api/auth/signup",
+      });
+    }
+
     await setSessionCookie({ id: user.id, username: user.username });
 
     return Response.json({
@@ -60,6 +80,10 @@ export async function POST(req: Request) {
         username: user.username,
         needsTutorial: !user.hasCompletedTutorial,
         needsEmail: !user.emailLower,
+        planTier: "free",
+        planStatus: null,
+        dailyUsageCount: 0,
+        dailyUsageLimit: 5,
       },
     });
   } catch (error: unknown) {

@@ -3057,7 +3057,7 @@ export default function DashboardPanel({
             <div className="space-y-5">
               {/* Recommended 7's */}
               {!hasAnalyzedBulletproofSection ? (
-                <p className="text-sm text-(--text-soft)">Run Generate 7's to build consolidated 7-level recommendations.</p>
+                <p className="text-sm text-(--text-soft)">Run Generate 7&apos;s to build consolidated 7-level recommendations.</p>
               ) : bulletproofSevenCategories.length === 0 ? (
                 <p className="text-sm text-(--text-soft)">
                   No categories currently project a 7/7 recommendation based on bullet strength and AI quality.

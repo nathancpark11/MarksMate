@@ -5,6 +5,7 @@ import { validateCombinedAiInputs } from "@/lib/promptSpamGuard";
 import { enforceRateLimits } from "@/lib/rateLimit";
 import { getRequestId, logApiError, logApiRequestMetadata } from "@/lib/safeLogging";
 import { getCategorySpecificGuidanceContext } from "@/lib/officialGuidance";
+import { enforceGenerationAccess, enforcePremiumFeatureAccess, incrementDailyGenerationUsage } from "@/lib/usageLimits";
 import {
   GENERATE_REQUEST_MAX_BYTES,
   getUtf8ByteLength,
@@ -155,6 +156,18 @@ export async function POST(req: Request) {
     }
     userIdForLogging = user.id;
 
+    const generationAccess = await enforceGenerationAccess(user.id);
+    if (!generationAccess.allowed) {
+      return Response.json(
+        {
+          error: generationAccess.reason,
+          code: generationAccess.code,
+          usage: generationAccess.summary,
+        },
+        { status: 403 }
+      );
+    }
+
     const rateLimitResponse = enforceRateLimits(req, [
       {
         key: "generate-per-minute",
@@ -278,6 +291,24 @@ export async function POST(req: Request) {
     const sourceCategoryValue = typeof sourceCategory === "string" ? sourceCategory.trim() : "";
     const isAlternateCategoryRewrite = generationIntentValue === "alternate-category-rewrite";
     const isRewordForCategory = generationIntentValue === "reword-for-category";
+    const isPremiumGenerationIntent =
+      generationIntentValue === "final-polished-official-mark" ||
+      isAlternateCategoryRewrite ||
+      isRewordForCategory;
+
+    if (isPremiumGenerationIntent) {
+      const premiumAccess = await enforcePremiumFeatureAccess(user.id, "Refine and improve");
+      if (!premiumAccess.allowed) {
+        return Response.json(
+          {
+            error: premiumAccess.reason,
+            code: premiumAccess.code,
+            usage: premiumAccess.summary,
+          },
+          { status: 403 }
+        );
+      }
+    }
 
     const categoryGuidance = getCategoryGuidance(categoryValue);
     const rankGuidance = getRankGuidance(rankValue);
@@ -456,6 +487,7 @@ Your previous answer matched the existing bullet too closely. Try again and prod
       retrievalCallCount: officialGuidanceSections.length > 0 ? 1 : 0,
       docContextPromptTokens: estimateTokenCountFromText(officialGuidanceContext),
     });
+    await incrementDailyGenerationUsage(user.id);
 
     logApiRequestMetadata({ requestId, routeName, inputLength, success: true, status: 200 });
     return Response.json({

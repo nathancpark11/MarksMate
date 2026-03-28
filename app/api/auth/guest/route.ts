@@ -16,6 +16,10 @@ export async function POST() {
       needsTutorial: false,
       needsEmail: false,
       lastLoginAt: null,
+      planTier: "free",
+      planStatus: null,
+      dailyUsageCount: 0,
+      dailyUsageLimit: 5,
     },
   });
 }

@@ -7,6 +7,7 @@ import { validateCombinedAiInputs } from "@/lib/promptSpamGuard";
 import { enforceRateLimits } from "@/lib/rateLimit";
 import { getRequestId, logApiError, logApiRequestMetadata } from "@/lib/safeLogging";
 import { getMarkDescriptionsForCategory } from "@/lib/officialGuidance";
+import { enforcePremiumFeatureAccess } from "@/lib/usageLimits";
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY ?? "missing-openai-api-key",
@@ -209,6 +210,7 @@ export async function POST(req: Request) {
     const parsedBody = await parseLimitedJsonBody<{
       rankLevel?: string;
       categories?: Record<string, string[]>;
+      feature?: string;
     }>(req);
     inputLength = parsedBody.bodyBytes;
     if (!parsedBody.ok) {
@@ -216,7 +218,21 @@ export async function POST(req: Request) {
       return parsedBody.response;
     }
 
-    const { rankLevel, categories } = parsedBody.data;
+    const { rankLevel, categories, feature } = parsedBody.data;
+
+    if (feature === "export") {
+      const premiumAccess = await enforcePremiumFeatureAccess(user.id, "Export");
+      if (!premiumAccess.allowed) {
+        return Response.json(
+          {
+            error: premiumAccess.reason,
+            code: premiumAccess.code,
+            usage: premiumAccess.summary,
+          },
+          { status: 403 }
+        );
+      }
+    }
 
     if (!categories || typeof categories !== "object") {
       return Response.json(

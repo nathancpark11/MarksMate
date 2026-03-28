@@ -5,6 +5,7 @@ import {
 } from "@/lib/userStore";
 import { setSessionCookie, verifyPassword } from "@/lib/auth";
 import { logApiError } from "@/lib/safeLogging";
+import { getUsageSummary } from "@/lib/usageLimits";
 
 export async function POST(req: Request) {
   try {
@@ -50,6 +51,8 @@ export async function POST(req: Request) {
 
     await setSessionCookie({ id: user.id, username: user.username });
 
+    const usageSummary = await getUsageSummary(user.id);
+
     return Response.json({
       user: {
         id: user.id,
@@ -57,6 +60,10 @@ export async function POST(req: Request) {
         needsTutorial: !user.hasCompletedTutorial,
         needsEmail: !user.emailLower,
         lastLoginAt,
+        planTier: usageSummary?.planTier ?? "free",
+        planStatus: usageSummary?.planStatus ?? null,
+        dailyUsageCount: usageSummary?.dailyUsageCount ?? 0,
+        dailyUsageLimit: usageSummary ? usageSummary.dailyUsageLimit : 5,
       },
     });
   } catch (error: unknown) {

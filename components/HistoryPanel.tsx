@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 
 type HistoryItem = { text: string; date: string; dates?: string[]; category?: string; markingPeriod?: string; title?: string };
+type ArchivedMarkingPeriod = { period: string; archivedAt: string; marks: HistoryItem[] };
 
 const OFFICIAL_MARK_CATEGORIES = [
   "Military Bearing",
@@ -20,20 +22,32 @@ const OFFICIAL_MARK_CATEGORIES = [
 
 type HistoryPanelProps = {
   history: HistoryItem[];
+  archivedMarkingPeriods: ArchivedMarkingPeriod[];
   rankLevel: string;
+  currentPeriodOverride?: string;
   handleCopy: (text: string) => void;
   handleDelete: (index: number) => void;
   handleUpdateMark: (index: number, nextText: string, nextCategory?: string, nextDate?: string) => void;
   handleReprompt: (index: number) => void;
+  handleArchiveMarkingPeriod: (period: string, switchToNextPeriod?: boolean) => void;
+  handleDeleteMarkingPeriod: (period: string) => void;
+  handleSwitchToNextPeriod: (period: string) => void;
+  handleRevertMarkingPeriod: () => void;
 };
 
 export default function HistoryPanel({
   history,
+  archivedMarkingPeriods,
   rankLevel,
+  currentPeriodOverride,
   handleCopy,
   handleDelete,
   handleUpdateMark,
   handleReprompt,
+  handleArchiveMarkingPeriod,
+  handleDeleteMarkingPeriod,
+  handleSwitchToNextPeriod,
+  handleRevertMarkingPeriod,
 }: HistoryPanelProps) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [expandedPeriods, setExpandedPeriods] = useState<Record<string, boolean>>({});
@@ -44,6 +58,9 @@ export default function HistoryPanel({
   const [editableDates, setEditableDates] = useState<Record<number, string>>({});
   const [editingMarks, setEditingMarks] = useState<Record<number, boolean>>({});
   const [searchQuery, setSearchQuery] = useState("");
+  const [archiveTargetPeriod, setArchiveTargetPeriod] = useState<string | null>(null);
+  const [deleteTargetPeriod, setDeleteTargetPeriod] = useState<string | null>(null);
+  const [switchPeriodPromptPeriod, setSwitchPeriodPromptPeriod] = useState<string | null>(null);
 
   const parseValidDate = (dateStr: string): Date | null => {
     if (!dateStr?.trim()) {
@@ -187,8 +204,8 @@ export default function HistoryPanel({
   const getMarkingPeriod = (dateStr: string): string => {
     const d = parseValidDate(dateStr);
     if (!d) {
-      // Blank or invalid dates are treated as part of the current (most recent) marking period.
-      return getMarkingPeriodFromDate(new Date());
+      // Blank or invalid dates are treated as part of the active marking period.
+      return currentPeriodOverride?.trim() || getMarkingPeriodFromDate(new Date());
     }
 
     return getMarkingPeriodFromDate(d);
@@ -269,7 +286,7 @@ export default function HistoryPanel({
 
   const getCurrentPeriodInfo = () => {
     const now = new Date();
-    const currentPeriod = getMarkingPeriod(now.toISOString());
+    const currentPeriod = currentPeriodOverride?.trim() || getMarkingPeriod(now.toISOString());
     // Parse end portion: "MMM YYYY"
     const endPart = currentPeriod.split(' – ')[1] ?? '';
     const [endMonthStr, endYearStr] = endPart.split(' ');
@@ -322,10 +339,15 @@ export default function HistoryPanel({
         <p className="mt-1 text-sm text-(--text-soft)">
           This is where your official marks are stored. These are the bullets that will be displayed when exported.
         </p>
+        {archivedMarkingPeriods.length > 0 && (
+          <p className="mt-2 text-xs font-medium uppercase tracking-wide text-(--text-soft)">
+            Archived periods available in Settings: {archivedMarkingPeriods.length}
+          </p>
+        )}
       </div>
 
       <div className="mb-5 grid grid-cols-1 gap-4 rounded-lg border border-(--color-secondary) bg-(--color-secondary-soft) p-4 text-center sm:grid-cols-3">
-        <div>
+        <div className="flex flex-col items-center text-center">
           <p className="text-xs font-medium uppercase tracking-wide text-(--text-soft)">Current Marking Period</p>
           <p className="mt-1 font-semibold text-(--text-strong)">{currentPeriod}</p>
         </div>
@@ -337,6 +359,17 @@ export default function HistoryPanel({
           <p className="text-xs font-medium uppercase tracking-wide text-(--text-soft)">Days Remaining</p>
           <p className={`mt-1 font-bold text-lg ${urgencyColor}`}>{daysRemaining > 0 ? daysRemaining : 0}</p>
         </div>
+        {currentPeriodOverride && (
+          <div className="sm:col-span-3 flex justify-center">
+            <button
+              type="button"
+              onClick={handleRevertMarkingPeriod}
+              className="mt-1 inline-flex items-center justify-center rounded-md border border-(--color-secondary) px-3 py-1 text-center text-xs font-semibold text-(--color-primary) transition hover:bg-(--color-secondary)"
+            >
+              Revert Marking Period
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="mb-5">
@@ -388,6 +421,9 @@ export default function HistoryPanel({
             }, {});
           const periodCategories = Object.keys(periodCategoryCounts).sort((a, b) => a.localeCompare(b));
           const selectedPeriodCategoryFilters = periodCategoryFilters[period] || [];
+          const isPeriodAlreadyArchived = archivedMarkingPeriods.some(
+            (archive) => archive.period === period
+          );
 
           const isCategorySelected = (category: string) =>
             selectedPeriodCategoryFilters.some(
@@ -408,13 +444,42 @@ export default function HistoryPanel({
           return (
             <div key={period} className="overflow-hidden rounded-lg border border-(--border-muted)">
               <div className="bg-(--surface-2) px-4 py-3">
-                <button
-                  className="flex w-full items-center justify-between text-left hover:text-(--text-strong)"
-                  onClick={() => setExpandedPeriods((prev) => ({ ...prev, [period]: !isPeriodOpen }))}
-                >
-                  <span className="font-semibold text-(--text-strong)">Marking Period: {period}</span>
-                  <span className="text-sm text-(--text-soft)">{isPeriodOpen ? '▼' : '▶'}</span>
-                </button>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <button
+                    className="flex min-w-0 flex-1 items-center justify-between text-left hover:text-(--text-strong)"
+                    onClick={() => setExpandedPeriods((prev) => ({ ...prev, [period]: !isPeriodOpen }))}
+                  >
+                    <span className="font-semibold text-(--text-strong)">Marking Period: {period}</span>
+                    <span className="ml-3 text-sm text-(--text-soft)">{isPeriodOpen ? '▼' : '▶'}</span>
+                  </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {isPeriodAlreadyArchived ? (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setDeleteTargetPeriod(period);
+                        }}
+                        className="rounded-md border border-(--color-danger) px-3 py-2 text-xs font-semibold text-(--color-danger) transition hover:bg-(--color-danger-soft)"
+                      >
+                        Delete
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setArchiveTargetPeriod(period);
+                        }}
+                        className="rounded-md border border-(--color-danger) px-3 py-2 text-xs font-semibold text-(--color-danger) transition hover:bg-(--color-danger-soft)"
+                      >
+                        Archive Marking Period
+                      </button>
+                    )}
+                  </div>
+                </div>
 
                 <div className="mt-3">
                   <p className="block text-xs font-semibold uppercase tracking-wide text-(--text-soft)">
@@ -670,6 +735,138 @@ export default function HistoryPanel({
           );
         })}
       </div>
+
+      {archiveTargetPeriod && typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-100 flex items-center justify-center bg-black/50 px-4"
+            onClick={() => setArchiveTargetPeriod(null)}
+          >
+            <div
+              className="w-full max-w-lg rounded-xl border border-(--border-muted) bg-(--surface-1) p-6 shadow-xl"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <h3 className="text-lg font-semibold text-(--text-strong)">Archive Marking Period?</h3>
+              <p className="mt-3 text-sm text-(--text-soft)">
+                Archiving {archiveTargetPeriod} commits every official mark in this period to archive, clears Daily Log entries, and switches you to the next marking period.
+              </p>
+              <p className="mt-2 text-sm text-(--text-soft)">
+                Archived marks can be found in Settings under Data Management.
+              </p>
+              <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => setArchiveTargetPeriod(null)}
+                  className="btn-secondary rounded-md px-4 py-2 text-sm font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!archiveTargetPeriod) {
+                      return;
+                    }
+                    handleArchiveMarkingPeriod(archiveTargetPeriod, false);
+                    setSwitchPeriodPromptPeriod(archiveTargetPeriod);
+                    setArchiveTargetPeriod(null);
+                  }}
+                  className="rounded-md bg-(--color-danger) px-4 py-2 text-sm font-semibold text-(--color-text-on-strong) hover:brightness-95"
+                >
+                  Archive
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {deleteTargetPeriod && typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-100 flex items-center justify-center bg-black/50 px-4"
+            onClick={() => setDeleteTargetPeriod(null)}
+          >
+            <div
+              className="w-full max-w-lg rounded-xl border border-(--border-muted) bg-(--surface-1) p-6 shadow-xl"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <h3 className="text-lg font-semibold text-(--text-strong)">Delete from Official Marks?</h3>
+              <p className="mt-3 text-sm text-(--text-soft)">
+                This period is already archived. Deleting removes only the active copy from Official Marks.
+              </p>
+              <p className="mt-2 text-sm text-(--text-soft)">
+                Archived marks remain available in Settings under Data Management.
+              </p>
+              <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => setDeleteTargetPeriod(null)}
+                  className="btn-secondary rounded-md px-4 py-2 text-sm font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!deleteTargetPeriod) {
+                      return;
+                    }
+                    handleDeleteMarkingPeriod(deleteTargetPeriod);
+                    setDeleteTargetPeriod(null);
+                  }}
+                  className="rounded-md bg-(--color-danger) px-4 py-2 text-sm font-semibold text-(--color-text-on-strong) hover:brightness-95"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {switchPeriodPromptPeriod && typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-100 flex items-center justify-center bg-black/50 px-4"
+            onClick={() => setSwitchPeriodPromptPeriod(null)}
+          >
+            <div
+              className="w-full max-w-lg rounded-xl border border-(--border-muted) bg-(--surface-1) p-6 shadow-xl"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <h3 className="text-lg font-semibold text-(--text-strong)">Switch to Next Marking Period?</h3>
+              <p className="mt-3 text-sm text-(--text-soft)">
+                {switchPeriodPromptPeriod} has been archived. Would you like to switch to the next marking period now?
+              </p>
+              <p className="mt-2 text-sm text-(--text-soft)">
+                You can revert this at any time using the Revert Marking Period button.
+              </p>
+              <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => setSwitchPeriodPromptPeriod(null)}
+                  className="btn-secondary rounded-md px-4 py-2 text-sm font-medium"
+                >
+                  Stay on Current Period
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!switchPeriodPromptPeriod) return;
+                    handleSwitchToNextPeriod(switchPeriodPromptPeriod);
+                    setSwitchPeriodPromptPeriod(null);
+                  }}
+                  className="btn-primary rounded-md px-4 py-2 text-sm font-semibold"
+                >
+                  Switch Period
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
     </div>
   );
 }

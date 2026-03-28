@@ -1,9 +1,12 @@
 import { requireSessionUser } from "@/lib/auth";
 import { sql, ensureSchema } from "@/lib/db";
 import { sanitizeUnknownStrings } from "@/lib/textSanitization";
+import { FREE_SAVED_BULLETS_LIMIT } from "@/lib/billing";
+import { getUsageSummary } from "@/lib/usageLimits";
 
 const ALLOWED_KEYS = new Set([
   "history",
+  "archivedMarkingPeriods",
   "log",
   "settings",
   "dashboardTotalEstimate",
@@ -54,6 +57,24 @@ export async function PUT(req: Request) {
   }
 
   await ensureSchema();
+
+  if (key === "history") {
+    const usageSummary = await getUsageSummary(user.id);
+    const isPremium = usageSummary?.premium === true;
+    if (!isPremium) {
+      const historyValue = Array.isArray(value) ? value : [];
+      if (historyValue.length > FREE_SAVED_BULLETS_LIMIT) {
+        return Response.json(
+          {
+            error: `Free plan supports up to ${FREE_SAVED_BULLETS_LIMIT} saved bullets. Upgrade to Premium for unlimited saves.`,
+            code: "FREE_SAVED_LIMIT_REACHED",
+            limit: FREE_SAVED_BULLETS_LIMIT,
+          },
+          { status: 403 }
+        );
+      }
+    }
+  }
 
   const valueToStore = key === "settings" ? sanitizeUnknownStrings(value) : value;
   const serialized = JSON.stringify(valueToStore);
