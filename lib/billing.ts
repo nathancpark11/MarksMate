@@ -34,6 +34,15 @@ export function isPremiumEntitled(input: {
     return true;
   }
 
+  // Check if beta trial is active (grants premium regardless of planTier)
+  if (input.betaTrialExpiresAt) {
+    const betaEndsAt = new Date(input.betaTrialExpiresAt).getTime();
+    if (Number.isFinite(betaEndsAt) && betaEndsAt > Date.now()) {
+      return true;
+    }
+  }
+
+  // Check regular premium subscription
   if (input.planTier !== "premium") {
     return false;
   }
@@ -44,23 +53,13 @@ export function isPremiumEntitled(input: {
 
   if (input.planStatus === "canceled") {
     if (!input.subscriptionCurrentPeriodEnd) {
-      if (!input.betaTrialExpiresAt) {
-        return false;
-      }
-    } else {
-      const endsAt = new Date(input.subscriptionCurrentPeriodEnd).getTime();
-      if (Number.isFinite(endsAt) && endsAt > Date.now()) {
-        return true;
-      }
+      return false;
     }
+    const endsAt = new Date(input.subscriptionCurrentPeriodEnd).getTime();
+    return Number.isFinite(endsAt) && endsAt > Date.now();
   }
 
-  if (!input.betaTrialExpiresAt) {
-    return false;
-  }
-
-  const betaEndsAt = new Date(input.betaTrialExpiresAt).getTime();
-  return Number.isFinite(betaEndsAt) && betaEndsAt > Date.now();
+  return false;
 }
 
 export function normalizeBillingStatus(status: string | null | undefined): BillingStatus {
