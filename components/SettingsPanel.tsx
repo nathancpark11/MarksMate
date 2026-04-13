@@ -269,7 +269,7 @@ export default function SettingsPanel({
           </p>
 
           {betaTrialActive && betaTrialExpiresAt ? (
-            <div className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+            <div className="rounded-md border px-3 py-2 text-sm" style={{ backgroundColor: 'color-mix(in srgb, var(--color-success) 15%, var(--color-surface-1))', borderColor: 'var(--color-success)', color: 'var(--color-success)' }}>
               Beta access is active through {new Date(betaTrialExpiresAt).toLocaleString()}.
             </div>
           ) : (

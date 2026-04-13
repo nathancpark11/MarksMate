@@ -79,12 +79,25 @@ function getResetEmailHtml(link: string) {
 }
 
 async function sendResetEmail(email: string, token: string) {
-  const fromEmail = process.env.EMAIL_FROM;
-  if (!fromEmail) {
-    throw new Error("Server misconfiguration: EMAIL_FROM is not set.");
-  }
-
   const resetLink = buildResetLink(token);
+  const fromEmail = process.env.EMAIL_FROM?.trim();
+  const sendGridApiKey = process.env.SENDGRID_API_KEY?.trim();
+
+  if (!fromEmail || !sendGridApiKey) {
+    if (process.env.NODE_ENV === "production") {
+      if (!fromEmail) {
+        throw new Error("Server misconfiguration: EMAIL_FROM is not set.");
+      }
+      throw new Error("Server misconfiguration: SENDGRID_API_KEY is not set.");
+    }
+
+    // Local dev fallback: keep the reset flow testable without SendGrid.
+    console.warn(
+      "Password reset email transport is not configured (missing EMAIL_FROM or SENDGRID_API_KEY)."
+    );
+    console.info(`Password reset link for ${email}: ${resetLink}`);
+    return;
+  }
 
   await sendWithSendGrid({
     from: fromEmail,

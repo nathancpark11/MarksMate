@@ -6,8 +6,27 @@ import {
 import { setSessionCookie, verifyPassword } from "@/lib/auth";
 import { logApiError } from "@/lib/safeLogging";
 import { getUsageSummary } from "@/lib/usageLimits";
+import { enforceRateLimits } from "@/lib/rateLimit";
 
 export async function POST(req: Request) {
+  const rateLimitResponse = enforceRateLimits(req, [
+    {
+      key: "login-per-minute",
+      maxRequests: 10,
+      windowMs: 60_000,
+      errorMessage: "Too many login attempts. Try again in a minute.",
+    },
+    {
+      key: "login-per-15min",
+      maxRequests: 20,
+      windowMs: 15 * 60_000,
+      errorMessage: "Too many login attempts from this IP. Try again later.",
+    },
+  ]);
+  if (rateLimitResponse) {
+    return rateLimitResponse;
+  }
+
   try {
     const body = (await req.json()) as {
       identifier?: string;
@@ -62,6 +81,9 @@ export async function POST(req: Request) {
         lastLoginAt,
         planTier: usageSummary?.planTier ?? "free",
         planStatus: usageSummary?.planStatus ?? null,
+        betaTrialExpiresAt: usageSummary?.betaTrialExpiresAt ?? user.betaTrialExpiresAt ?? null,
+        betaTrialRedeemedAt: user.betaTrialRedeemedAt ?? null,
+        hasBillingProfile: !!user.stripeCustomerId,
         dailyUsageCount: usageSummary?.dailyUsageCount ?? 0,
         dailyUsageLimit: usageSummary ? usageSummary.dailyUsageLimit : 10,
       },

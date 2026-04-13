@@ -70,17 +70,6 @@ export default function CategoryReferencePanel({
     <section className="rounded-xl border border-(--border-muted) bg-(--surface-1) p-4 shadow-md sm:p-8" aria-label="Category reference">
       <h2 className="text-xl text-center font-bold text-(--text-strong) sm:text-2xl">Category Reference</h2>
 
-      <div className="mt-4 flex justify-center">
-        <a
-          href={pdfUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="btn-secondary inline-flex rounded-md px-3 py-2 text-sm font-semibold"
-        >
-          Open Marking Sheet PDF
-        </a>
-      </div>
-
       <div className="mt-6 grid gap-3 sm:grid-cols-2">
         {CATEGORY_DETAILS.map((category) => (
           <button
@@ -97,6 +86,17 @@ export default function CategoryReferencePanel({
             <p className="mt-1 text-sm text-(--text-soft)">{category.description}</p>
           </button>
         ))}
+      </div>
+
+      <div className="mt-6 flex justify-center">
+        <a
+          href={pdfUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="btn-secondary inline-flex rounded-md px-3 py-2 text-sm font-semibold"
+        >
+          Open Marking Sheet PDF
+        </a>
       </div>
     </section>
   );

@@ -83,6 +83,10 @@ type GeneratorPanelProps = {
   handleRepromptSplitBulletDraft: (draftId: string) => void | Promise<void>;
   handleCommitSplitBulletDrafts: (draftIds: string[]) => void;
   handleCommitBullet: () => void;
+  showGenerationCountInGenerator?: boolean;
+  generationUsageCount?: number;
+  generationUsageLimit?: number;
+  generationUsageTextClass?: string;
   onLogEntryPulled?: (payload: { dates: string[]; index: number | null; groupedIndexes?: number[] }) => void;
   pendingLogPull?: number | null;
   onPendingLogPullConsumed?: () => void;
@@ -120,6 +124,10 @@ export default function GeneratorPanel({
   handleRepromptSplitBulletDraft,
   handleCommitSplitBulletDrafts,
   handleCommitBullet,
+  showGenerationCountInGenerator = false,
+  generationUsageCount = 0,
+  generationUsageLimit = 0,
+  generationUsageTextClass = "text-emerald-600",
   onLogEntryPulled,
   pendingLogPull,
   onPendingLogPullConsumed,
@@ -331,10 +339,6 @@ export default function GeneratorPanel({
         Mark Generator
       </h1>
 
-      <p className="text-center text-(--text-soft) mt-2">
-        Generate professional evaluation bullets.
-      </p>
-
       <div className="pull-log-box mt-6 rounded-lg border border-(--color-secondary) bg-(--color-secondary-soft) p-3 sm:p-4">
         <div className="flex items-center justify-between gap-3">
           <p className="text-sm font-semibold text-(--color-primary)">Pull From Daily Log</p>
@@ -488,7 +492,7 @@ export default function GeneratorPanel({
         value={input}
         onChange={(e) => setInput(e.target.value)}
         maxLength={ACTION_MAX_CHARS}
-        className="mt-2 h-36 w-full border rounded-md p-3"
+        className="mt-2 h-36 w-full border rounded-md p-3 placeholder:italic"
         placeholder={"What did you do? (Action or Task)\nExample: Led 06 airmen in physical fitness sessions."}
       />
 
@@ -508,31 +512,12 @@ export default function GeneratorPanel({
         value={missionImpact}
         onChange={(e) => setMissionImpact(e.target.value)}
         maxLength={IMPACT_MAX_CHARS}
-        className="mt-2 h-24 w-full border rounded-md p-3"
-        placeholder={"Optional (Highly Recommended): What was the result or mission impact?\nExample: 03 airmen graduated AST A-School"}
+        rows={3}
+        className="mt-2 w-full border rounded-md p-3 placeholder:italic"
+        placeholder={"What was the result or mission impact? If blank, AI will suggest an impact when generated.\nExample: 03 airmen graduated AST A-School"}
       />
-      <p className="mt-2 text-sm italic text-(--text-soft)">If blank, AI will suggest an impact when generated.</p>
 
-      <div className="mt-6 flex items-center justify-between gap-3 rounded-lg border border-(--border-muted) bg-(--surface-2) p-3">
-        <div>
-          <p className="text-sm font-semibold text-(--text-strong)">Abbreviations</p>
-          <p className="text-xs text-(--text-soft)">Controls whether generated marks use CG abbreviations.</p>
-        </div>
-        <button
-          type="button"
-          aria-pressed={useAbbreviations}
-          onClick={() => setUseAbbreviations(!useAbbreviations)}
-          className={`rounded-md px-4 py-2 text-sm font-semibold transition-colors ${
-            useAbbreviations
-              ? "btn-primary"
-              : "btn-secondary"
-          }`}
-        >
-          {useAbbreviations ? "Abbreviations: On" : "Abbreviations: Off"}
-        </button>
-      </div>
-
-      <label className="block mt-6 text-sm font-medium">Category (optional - AI will suggest if blank)</label>
+      <label className="block mt-6 text-sm font-medium">Category - (or select below)</label>
       <select
         value={category}
         onChange={(e) => setCategory(e.target.value)}
@@ -554,28 +539,37 @@ export default function GeneratorPanel({
         <option>Effective Communication</option>
       </select>
 
-      <div className="grid md:grid-cols-2 gap-4 mt-6">
-        <input
-          placeholder="People affected"
-          value={peopleAffected}
-          onChange={(e) => setPeopleAffected(e.target.value)}
-          className="border rounded-md p-3"
-        />
+      <details className="mt-6 rounded-lg border border-(--border-muted) bg-(--surface-2) p-3 sm:p-4">
+        <summary className="cursor-pointer list-none text-sm font-semibold text-(--text-strong)">
+          <span className="inline-flex items-center gap-2">
+            Advanced
+            <span className="text-xs font-medium text-(--text-soft)">(optional details)</span>
+          </span>
+        </summary>
 
-        <input
-          placeholder="Percent improved"
-          value={percentImproved}
-          onChange={(e) => setPercentImproved(e.target.value)}
-          className="border rounded-md p-3"
-        />
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <input
+            placeholder="People affected"
+            value={peopleAffected}
+            onChange={(e) => setPeopleAffected(e.target.value)}
+            className="border rounded-md p-3"
+          />
 
-        <input
-          placeholder="Hours saved"
-          value={hoursSaved}
-          onChange={(e) => setHoursSaved(e.target.value)}
-          className="border rounded-md p-3"
-        />
-      </div>
+          <input
+            placeholder="Percent improved"
+            value={percentImproved}
+            onChange={(e) => setPercentImproved(e.target.value)}
+            className="border rounded-md p-3"
+          />
+
+          <input
+            placeholder="Hours saved"
+            value={hoursSaved}
+            onChange={(e) => setHoursSaved(e.target.value)}
+            className="border rounded-md p-3"
+          />
+        </div>
+      </details>
 
       {error && <p className="text-(--color-danger) text-sm mt-2">{error}</p>}
 
@@ -594,6 +588,31 @@ export default function GeneratorPanel({
           className="btn-success px-6 py-2 rounded-md border border-(--color-success) disabled:cursor-not-allowed disabled:opacity-60"
         >
           {loading ? "Committing..." : "Generate Mark As Is"}
+        </button>
+      </div>
+
+      {showGenerationCountInGenerator ? (
+        <p className="mt-2 text-center text-xs font-medium text-slate-600">
+          Generations: <span className={`font-semibold ${generationUsageTextClass}`}>{generationUsageCount}/{generationUsageLimit}</span>
+        </p>
+      ) : null}
+
+      <div className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-(--border-muted) bg-(--surface-2) p-3">
+        <div>
+          <p className="text-sm font-semibold text-(--text-strong)">Abbreviations</p>
+          <p className="text-xs text-(--text-soft)">Controls whether generated marks use CG abbreviations.</p>
+        </div>
+        <button
+          type="button"
+          aria-pressed={useAbbreviations}
+          onClick={() => setUseAbbreviations(!useAbbreviations)}
+          className={`rounded-md px-4 py-2 text-sm font-semibold transition-colors ${
+            useAbbreviations
+              ? "btn-primary"
+              : "btn-secondary"
+          }`}
+        >
+          {useAbbreviations ? "Abbreviations: On" : "Abbreviations: Off"}
         </button>
       </div>
 

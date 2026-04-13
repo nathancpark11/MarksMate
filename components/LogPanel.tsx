@@ -426,7 +426,7 @@ export default function LogPanel({
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
-        className="mt-2 h-32 w-full rounded-md border p-3"
+        className="mt-2 h-32 w-full rounded-md border p-3 placeholder:italic"
         placeholder="Example: Led morning maintenance brief and coordinated tasking across two teams."
       />
 

@@ -1,3 +1,5 @@
+import { useEffect, useRef } from "react";
+
 type TabBarProps = {
   activeTab: string;
   setActiveTab: (tab: string) => void;
@@ -17,6 +19,30 @@ export default function TabBar({
     "min-w-[48%] flex-1 rounded-md border px-3 py-2 text-sm font-medium transition-colors sm:min-w-0 sm:text-base";
   const activeTabClass =
     "border-(--color-primary) bg-(--color-primary) text-white shadow-md";
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element) {
+      return;
+    }
+
+    const syncHeight = () => {
+      document.documentElement.style.setProperty("--tab-bar-height", `${element.offsetHeight}px`);
+    };
+
+    syncHeight();
+
+    const observer = new ResizeObserver(() => {
+      syncHeight();
+    });
+    observer.observe(element);
+
+    return () => {
+      observer.disconnect();
+      document.documentElement.style.setProperty("--tab-bar-height", "0px");
+    };
+  }, []);
 
   const getTabClass = (tabKey: string) => {
     return `${tabBaseClass} ${
@@ -28,11 +54,17 @@ export default function TabBar({
 
   return (
     <div
-      className="app-tabbar sticky top-(--tab-bar-top-offset) z-20 flex flex-wrap gap-2 rounded-xl border border-(--border-muted) p-2 shadow-lg backdrop-blur"
+      ref={containerRef}
+      className="app-tabbar fixed left-1/2 z-80 flex -translate-x-1/2 flex-wrap gap-2 rounded-xl border border-(--border-muted) p-2 shadow-lg backdrop-blur"
       style={{
-        backgroundColor: "color-mix(in srgb, var(--color-secondary-soft) 82%, var(--surface-3))",
+        top: "var(--tab-bar-top-offset)",
+        width: "calc(100% - 0.5rem)",
+        maxWidth: "calc(100vw - 0.5rem)",
+        backgroundColor: "color-mix(in srgb, var(--color-secondary-soft) 58%, transparent)",
         backgroundImage:
-          "linear-gradient(135deg, color-mix(in srgb, var(--color-secondary-soft) 72%, var(--surface-3)) 0%, color-mix(in srgb, var(--color-secondary-soft) 88%, var(--surface-3)) 100%)",
+          "linear-gradient(135deg, color-mix(in srgb, var(--color-secondary-soft) 52%, transparent) 0%, color-mix(in srgb, var(--surface-3) 40%, transparent) 100%)",
+        backdropFilter: "saturate(130%) blur(10px)",
+        WebkitBackdropFilter: "saturate(130%) blur(10px)",
       }}
     >
       <button

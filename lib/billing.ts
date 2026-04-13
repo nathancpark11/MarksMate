@@ -4,18 +4,25 @@ export type BillingStatus = "trialing" | "active" | "past_due" | "canceled" | nu
 export const FREE_DAILY_GENERATION_LIMIT = 30;
 export const FREE_SAVED_BULLETS_LIMIT = 10;
 
-const PREMIUM_BYPASS_USERNAMES = new Set(["nathancpark11"]);
-const PREMIUM_BYPASS_EMAILS = new Set(["newproductionsmusic@gmail.com"]);
+function getPremiumBypassUsernames(): Set<string> {
+  const raw = process.env.PREMIUM_BYPASS_USERNAMES ?? "";
+  return new Set(raw.split(",").map((u) => u.trim().toLowerCase()).filter(Boolean));
+}
+
+function getPremiumBypassEmails(): Set<string> {
+  const raw = process.env.PREMIUM_BYPASS_EMAILS ?? "";
+  return new Set(raw.split(",").map((e) => e.trim().toLowerCase()).filter(Boolean));
+}
 
 export function isPremiumBypassUser(
   username: string | null | undefined,
   email?: string | null,
 ) {
-  if (username && PREMIUM_BYPASS_USERNAMES.has(username.trim().toLowerCase())) {
+  if (username && getPremiumBypassUsernames().has(username.trim().toLowerCase())) {
     return true;
   }
 
-  if (email && PREMIUM_BYPASS_EMAILS.has(email.trim().toLowerCase())) {
+  if (email && getPremiumBypassEmails().has(email.trim().toLowerCase())) {
     return true;
   }
 

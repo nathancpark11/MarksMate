@@ -9,8 +9,21 @@ import {
 import { hashPassword, setSessionCookie } from "@/lib/auth";
 import { logApiError } from "@/lib/safeLogging";
 import { getStripeClient } from "@/lib/stripe";
+import { enforceRateLimits } from "@/lib/rateLimit";
 
 export async function POST(req: Request) {
+  const rateLimitResponse = enforceRateLimits(req, [
+    {
+      key: "signup-per-hour",
+      maxRequests: 8,
+      windowMs: 60 * 60_000,
+      errorMessage: "Too many account registrations from this IP. Try again later.",
+    },
+  ]);
+  if (rateLimitResponse) {
+    return rateLimitResponse;
+  }
+
   try {
     const body = (await req.json()) as {
       username?: string;

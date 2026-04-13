@@ -5,6 +5,9 @@
   --color-primary-hover: #082f73;
   --color-secondary: #4a90e2;
   --color-secondary-soft: #dbe9fb;
+  --color-beta-banner-bg: #1558b0;
+  --color-beta-banner-text: #ffffff;
+  --color-beta-banner-border: #0b3d91;
   --color-bg-app: #f7f9fc;
   --color-surface-1: #ffffff;
   --color-surface-2: #eef3fb;
@@ -34,7 +37,9 @@
   --elevation-tab: 0 2px 8px rgba(11, 61, 145, 0.2);
   --unclassified-bar-height: 2rem;
   --guest-global-bar-height: 0px;
-  --tab-bar-top-offset: calc(env(safe-area-inset-top) + var(--unclassified-bar-height) + var(--guest-global-bar-height) + 0.75rem);
+  --beta-global-bar-height: 0px;
+  --tab-bar-height: 0px;
+  --tab-bar-top-offset: calc(env(safe-area-inset-top) + var(--unclassified-bar-height) + var(--guest-global-bar-height) + var(--beta-global-bar-height) + 0.75rem);
 }
 
 @theme inline {
@@ -51,6 +56,9 @@ body.theme-dark {
   --color-primary-hover: #73a9ee;
   --color-secondary: #8bb8f0;
   --color-secondary-soft: #1b2d4f;
+  --color-beta-banner-bg: #8bb8f0;
+  --color-beta-banner-text: #08111f;
+  --color-beta-banner-border: #b8d4f7;
   --color-bg-app: #0b1324;
   --color-surface-1: #111d35;
   --color-surface-2: #162443;
@@ -86,6 +94,9 @@ body.theme-tactical {
   --color-primary-hover: #16a34a;
   --color-secondary: #15803d;
   --color-secondary-soft: #1b2a22;
+  --color-beta-banner-bg: #1f7a45;
+  --color-beta-banner-text: #f3f8f4;
+  --color-beta-banner-border: #4ade80;
   --color-bg-app: #0f172a;
   --color-surface-1: #1e293b;
   --color-surface-2: #273449;
@@ -121,6 +132,9 @@ body.theme-high-contrast:not(.theme-dark) {
   --color-primary-hover: #001f4f;
   --color-secondary: #0066c0;
   --color-secondary-soft: #d9ebff;
+  --color-beta-banner-bg: #002a6a;
+  --color-beta-banner-text: #ffffff;
+  --color-beta-banner-border: #000000;
   --color-bg-app: #ffffff;
   --color-surface-1: #ffffff;
   --color-surface-2: #ffffff;
@@ -154,6 +168,9 @@ body.theme-dark.theme-high-contrast {
   --color-primary-hover: #b5d0ff;
   --color-secondary: #8ac5ff;
   --color-secondary-soft: #0f2c52;
+  --color-beta-banner-bg: #ffffff;
+  --color-beta-banner-text: #000000;
+  --color-beta-banner-border: #93baff;
   --color-bg-app: #000000;
   --color-surface-1: #0b0b0b;
   --color-surface-2: #121212;
@@ -204,6 +221,12 @@ body.theme-dark .underrepresented-category-item {
 .app-classification-bar {
   background-color: var(--color-success);
   color: var(--color-text-on-strong);
+}
+
+.beta-trial-banner {
+  background-color: var(--color-beta-banner-bg);
+  color: var(--color-beta-banner-text);
+  border-bottom: 1px solid var(--color-beta-banner-border);
 }
 
 .app-footer {

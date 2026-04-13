@@ -16,6 +16,7 @@ import LogPanel from "../components/LogPanel";
 import TutorialModal from "../components/TutorialModal";
 import AdminAnalyticsPanel from "../components/AdminAnalyticsPanel";
 import { isGuidanceAdminUsername } from "@/lib/admin";
+import { FREE_DAILY_GENERATION_LIMIT } from "@/lib/billing";
 import {
   GENERATE_REQUEST_MAX_BYTES,
   getUtf8ByteLength,
@@ -334,18 +335,34 @@ export default function Home() {
   const canManageOfficialGuidance = isGuidanceAdminUsername(authUser?.username);
 
   const formattedLastLogin = authUser?.lastLoginAt
-    ? new Date(authUser.lastLoginAt).toLocaleString()
+    ? new Date(authUser.lastLoginAt).toLocaleDateString()
     : null;
   const isGuestSession = authUser?.isGuest === true;
   const betaTrialExpiryMs = authUser?.betaTrialExpiresAt
     ? new Date(authUser.betaTrialExpiresAt).getTime()
     : Number.NaN;
+  const betaTrialExpiryLabel = authUser?.betaTrialExpiresAt
+    ? new Date(authUser.betaTrialExpiresAt).toLocaleDateString()
+    : null;
   const isBetaTrialActive = Number.isFinite(betaTrialExpiryMs) && betaTrialExpiryMs > Date.now();
   const hasPremiumAccess = !isGuestSession && (authUser?.planTier === "premium" || isBetaTrialActive);
   const canManageBillingPortal = !isGuestSession && authUser?.planTier === "premium" && authUser?.hasBillingProfile === true;
   const usageCount = authUser?.dailyUsageCount ?? 0;
-  const usageLimit = Math.max(authUser?.dailyUsageLimit ?? 10, 10);
-  const isFreeUsageAtLimit = !hasPremiumAccess && usageCount >= usageLimit;
+  const usageLimit = isBetaTrialActive
+    ? FREE_DAILY_GENERATION_LIMIT
+    : Math.max(authUser?.dailyUsageLimit ?? 10, 10);
+  const shouldShowUsageTracking = !isGuestSession && (!hasPremiumAccess || isBetaTrialActive);
+  const usageRatio = usageLimit > 0 ? usageCount / usageLimit : 0;
+  const usageTextClass =
+    usageRatio >= 0.9
+      ? "text-red-600"
+      : usageRatio >= 0.7
+      ? "text-orange-600"
+      : usageRatio >= 0.45
+      ? "text-yellow-600"
+      : usageRatio >= 0.2
+      ? "text-lime-600"
+      : "text-emerald-600";
   const planLabel =
     isBetaTrialActive
       ? "Beta Trial"
@@ -581,7 +598,7 @@ export default function Home() {
         await refreshSession();
 
         const expiresAtLabel = payload.betaTrialExpiresAt
-          ? new Date(payload.betaTrialExpiresAt).toLocaleString()
+          ? new Date(payload.betaTrialExpiresAt).toLocaleDateString()
           : null;
 
         return {
@@ -1390,6 +1407,17 @@ export default function Home() {
       document.documentElement.style.setProperty("--guest-global-bar-height", "0px");
     };
   }, [isGuestSession]);
+
+  useEffect(() => {
+    document.documentElement.style.setProperty(
+      "--beta-global-bar-height",
+      isBetaTrialActive && betaTrialExpiryLabel ? "2rem" : "0px"
+    );
+
+    return () => {
+      document.documentElement.style.setProperty("--beta-global-bar-height", "0px");
+    };
+  }, [isBetaTrialActive, betaTrialExpiryLabel]);
 
   useEffect(() => {
     if (!mpMemberName && userName) {
@@ -3375,108 +3403,100 @@ export default function Home() {
           Guest Mode: Temporary session. Data is cleared when this browser session ends.
         </div>
       ) : null}
-      {isBetaTrialActive && authUser?.betaTrialExpiresAt ? (
-        <div className="fixed inset-x-0 z-90 flex h-8 items-center justify-center bg-sky-500 text-center text-xs font-semibold text-white shadow-sm" style={{
+      {isBetaTrialActive && betaTrialExpiryLabel ? (
+        <div className="beta-trial-banner fixed inset-x-0 z-90 flex h-8 items-center justify-center text-center text-xs font-semibold shadow-sm" style={{
           top: isGuestSession ? "calc(var(--unclassified-bar-height) + 2rem)" : "var(--unclassified-bar-height)",
         }}>
-          🎯 Beta Trial Active • Expires: {new Date(authUser.betaTrialExpiresAt).toLocaleString()}
+          🎯 Beta Trial Active • Expires: {betaTrialExpiryLabel}
         </div>
       ) : null}
     <main
-      className={`min-h-screen flex justify-center p-3 sm:p-6 ${
-        isGuestSession
-          ? "pt-[calc(var(--unclassified-bar-height)+2.5rem)] sm:pt-[calc(var(--unclassified-bar-height)+3.5rem)]"
-          : "pt-[calc(var(--unclassified-bar-height)+0.5rem)] sm:pt-12"
-      }`}
-      style={isBetaTrialActive ? { paddingTop: `calc(${isGuestSession ? "var(--unclassified-bar-height) + 2.5rem" : "var(--unclassified-bar-height) + 0.5rem"} + 2rem)` } : undefined}
+      className="min-h-screen flex justify-center p-3 sm:p-6"
+      style={{
+        paddingTop:
+          "calc(var(--unclassified-bar-height) + var(--guest-global-bar-height) + var(--beta-global-bar-height) + var(--tab-bar-height))",
+      }}
     >
-      <div className="w-full max-w-4xl space-y-6">
-        <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm font-medium text-slate-700">
-              Signed in as <span className="font-bold text-slate-900">{authUser.username}</span>
-            </p>
-            <p className="mt-1 text-xs font-medium text-slate-600">
-              Plan: <span className="font-semibold text-slate-900">{planLabel}</span>
-              {!hasPremiumAccess ? (
-                <>
-                  {" "}
-                  • Usage today:{" "}
-                  <span className={`font-semibold ${isFreeUsageAtLimit ? "text-red-600" : "text-slate-900"}`}>
-                    {usageCount}/{usageLimit}
-                  </span>
-                </>
-              ) : null}
-            </p>
-            {isBetaTrialActive && authUser?.betaTrialExpiresAt ? (
-              <p className="mt-1 text-xs font-medium text-emerald-700">
-                Beta access ends: {new Date(authUser.betaTrialExpiresAt).toLocaleString()}
-              </p>
-            ) : null}
-            {syncFailed ? (
-              <p className="mt-1 text-xs font-medium text-red-600">
-                ⚠ Data failed to sync.{" "}
-                <button
-                  onClick={handleRetrySave}
-                  className="underline hover:text-red-800"
-                >
-                  Retry
-                </button>
-              </p>
-            ) : null}
-            {loadFailed ? (
-              <p className="mt-1 text-xs font-medium text-red-600">
-                ⚠ Failed to load your data.{" "}
-                <button
-                  onClick={() => window.location.reload()}
-                  className="underline hover:text-red-800"
-                >
-                  Reload page
-                </button>
-              </p>
-            ) : null}
-          </div>
-          <div className="flex items-center gap-3">
-            {!isGuestSession && !hasPremiumAccess ? (
-              <button
-                onClick={() => openUpgradeModal("Choose a plan to upgrade your account.")}
-                disabled={billingBusy}
-                className="rounded-md bg-green-700 px-3 py-2 text-sm font-semibold text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {billingBusy ? "Starting..." : "Upgrade"}
-              </button>
-            ) : null}
-            {canManageBillingPortal ? (
-              <button
-                onClick={() => void handleManageSubscription()}
-                disabled={billingBusy}
-                className="rounded-md border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                Manage Subscription
-              </button>
-            ) : null}
-            {formattedLastLogin ? (
-              <span className="text-xs font-normal text-slate-500">
-                Last login: {formattedLastLogin}
+      <div className="w-full max-w-4xl space-y-4">
+        <div className="space-y-0">
+          <TabBar
+            activeTab={activeTab}
+            setActiveTab={handleTabChange}
+            dashboardRecommendationCount={dashboardRecommendationCount}
+            canManageOfficialGuidance={canManageOfficialGuidance}
+            hasPremiumAccess={hasPremiumAccess}
+          />
+          <div className="-mt-2 flex flex-col items-center justify-center gap-1 sm:-mt-1 sm:flex-row sm:flex-wrap sm:gap-3">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-center text-sm font-medium text-slate-700">
+              <span>
+                Signed in as <span className="font-bold text-slate-900">{authUser.username}</span>
               </span>
-            ) : null}
-            <button
-              onClick={() => void handleLogout()}
-              className="rounded-md border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
-            >
-              Log Out
-            </button>
+              <span className="text-xs font-medium text-slate-600">
+                • Plan: <span className="font-semibold text-slate-900">{planLabel}</span>
+                {shouldShowUsageTracking && !isBetaTrialActive ? (
+                  <>
+                    {" "}
+                    • Generations:{" "}
+                    <span className={`font-semibold ${usageTextClass}`}>
+                      {usageCount}/{usageLimit}
+                    </span>
+                  </>
+                ) : null}
+              </span>
+              {formattedLastLogin ? (
+                <span className="text-xs font-normal text-slate-500">
+                  • Last Login: {formattedLastLogin}
+                </span>
+              ) : null}
+              {syncFailed ? (
+                <span className="text-xs font-medium text-red-600">
+                  ⚠ Data failed to sync.{" "}
+                  <button
+                    onClick={handleRetrySave}
+                    className="underline hover:text-red-800"
+                  >
+                    Retry
+                  </button>
+                </span>
+              ) : null}
+              {loadFailed ? (
+                <span className="text-xs font-medium text-red-600">
+                  ⚠ Failed to load your data.{" "}
+                  <button
+                    onClick={() => window.location.reload()}
+                    className="underline hover:text-red-800"
+                  >
+                    Reload page
+                  </button>
+                </span>
+              ) : null}
+            </div>
+          </div>
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              {!isGuestSession && !hasPremiumAccess ? (
+                <button
+                  onClick={() => openUpgradeModal("Choose a plan to upgrade your account.")}
+                  disabled={billingBusy}
+                  className="rounded-md bg-green-700 px-3 py-2 text-sm font-semibold text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {billingBusy ? "Starting..." : "Upgrade"}
+                </button>
+              ) : null}
+              {canManageBillingPortal ? (
+                <button
+                  onClick={() => void handleManageSubscription()}
+                  disabled={billingBusy}
+                  className="rounded-md border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Manage Subscription
+                </button>
+              ) : null}
+            </div>
           </div>
         </div>
 
-        <TabBar
-          activeTab={activeTab}
-          setActiveTab={handleTabChange}
-          dashboardRecommendationCount={dashboardRecommendationCount}
-          canManageOfficialGuidance={canManageOfficialGuidance}
-          hasPremiumAccess={hasPremiumAccess}
-        />
-
+        <div className="space-y-4">
         {loadFailed ? (
           <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-900 shadow-sm" role="status" aria-live="polite">
             <p className="text-sm font-semibold">Read-only safe mode is active.</p>
@@ -3521,6 +3541,10 @@ export default function Home() {
               handleRepromptSplitBulletDraft={handleRepromptSplitBulletDraft}
               handleCommitSplitBulletDrafts={handleCommitSplitBulletDrafts}
               handleCommitBullet={handleCommitBullet}
+              showGenerationCountInGenerator={shouldShowUsageTracking && isBetaTrialActive}
+              generationUsageCount={usageCount}
+              generationUsageLimit={usageLimit}
+              generationUsageTextClass={usageTextClass}
               onLogEntryPulled={({ dates, index, groupedIndexes }) => {
                 const normalizedDates = normalizeDateList(dates);
                 setPulledLogDate(normalizedDates[0] ?? null);
@@ -3972,7 +3996,7 @@ export default function Home() {
           />
         )}
 
-        <div className="pb-2">
+        <div className="space-y-2 pb-2">
           <button
             id="settings-tutorial-anchor"
             onClick={() => setActiveTab("settings")}
@@ -3985,6 +4009,12 @@ export default function Home() {
             }`}
           >
             Settings
+          </button>
+          <button
+            onClick={() => void handleLogout()}
+            className="w-full rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-100 sm:text-base"
+          >
+            Log Out
           </button>
         </div>
 
@@ -4330,6 +4360,8 @@ export default function Home() {
           </div>
         </div>
       )}
+
+        </div>
 
       {showAddEmailPrompt && !showNoticeModal && !showGuestProfilePrompt && !showTutorialModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">

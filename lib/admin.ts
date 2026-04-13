@@ -1,5 +1,9 @@
-export const GUIDANCE_ADMIN_USERNAME = "nathancpark11";
+function getAdminUsername(): string {
+  return (process.env.ADMIN_USERNAME ?? "").trim().toLowerCase();
+}
 
 export function isGuidanceAdminUsername(username: string | null | undefined) {
-  return username?.trim().toLowerCase() === GUIDANCE_ADMIN_USERNAME;
+  const adminUsername = getAdminUsername();
+  if (!adminUsername) return false;
+  return username?.trim().toLowerCase() === adminUsername;
 }
