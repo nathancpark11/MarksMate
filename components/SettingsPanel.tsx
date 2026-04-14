@@ -138,7 +138,6 @@ export default function SettingsPanel({
     );
     setImportModalOpen(true);
   };
-
   const handleImportPeriodChange = (period: string) => {
     setSelectedImportPeriod(period);
     const nextArchive = archivedMarkingPeriods.find((entry) => entry.period === period);
@@ -173,12 +172,17 @@ export default function SettingsPanel({
   };
 
   return (
-    <div className="bg-(--surface-1) p-4 sm:p-8 rounded-xl shadow-md space-y-8">
-      <h2 className="text-2xl font-bold">Settings</h2>
+    <div className="space-y-3">
+      <div>
+        <h2 className="text-2xl font-semibold text-(--text-strong)">Settings</h2>
+        <p className="mt-1 text-sm text-supporting">Manage your defaults, AI behavior, appearance, and data controls.</p>
+      </div>
+      <div className="h-px bg-(--border-muted) opacity-60" />
+      <div className="bg-(--surface-1) p-4 sm:p-8 rounded-xl shadow-md space-y-8">
 
-      <section className="space-y-4 rounded-lg border border-(--border-muted) bg-(--surface-2) p-4 sm:p-5">
-        <h3 className="text-lg font-semibold text-(--text-strong)">User Profile</h3>
-        <p className="text-sm text-(--text-soft)">
+      <section className="space-y-4 rounded-lg bg-(--surface-2) p-4 sm:p-5">
+        <h3 className="section-title-tertiary">User Profile</h3>
+        <p className="text-sm text-supporting">
           Set defaults used across generators and marks package workflows.
         </p>
         {restrictToRankAndRate ? (
@@ -262,9 +266,9 @@ export default function SettingsPanel({
       </section>
 
       {!restrictToRankAndRate ? (
-        <section className="space-y-4 rounded-lg border border-(--border-muted) bg-(--surface-2) p-4 sm:p-5">
-          <h3 className="text-lg font-semibold text-(--text-strong)">Beta Access</h3>
-          <p className="text-sm text-(--text-soft)">
+        <section className="space-y-4 rounded-lg bg-(--surface-2) p-4 sm:p-5">
+          <h3 className="section-title-tertiary">Beta Access</h3>
+          <p className="text-sm text-supporting">
             Enter your invite code to enable Premium features for 14 days.
           </p>
 
@@ -294,18 +298,18 @@ export default function SettingsPanel({
           )}
 
           {betaMessage ? (
-            <p className="text-sm text-(--text-soft)">{betaMessage}</p>
+            <p className="text-sm text-supporting">{betaMessage}</p>
           ) : null}
         </section>
       ) : null}
 
-      <section className="rounded-lg border border-(--border-muted) bg-(--surface-2) p-4 sm:p-5">
+      <section className="rounded-lg bg-(--surface-2) p-4 sm:p-5">
         <button
           type="button"
           onClick={() => setAiSettingsOpen((o) => !o)}
           className="flex w-full items-center justify-between text-left"
         >
-          <h3 className="text-lg font-semibold text-(--text-strong)">AI Generation Settings</h3>
+          <h3 className="section-title-tertiary">AI Generation Settings</h3>
           <svg
             className={`h-5 w-5 shrink-0 text-(--text-soft) transition-transform duration-200 ${aiSettingsOpen ? "rotate-180" : ""}`}
             xmlns="http://www.w3.org/2000/svg"
@@ -326,7 +330,7 @@ export default function SettingsPanel({
                 <button
                   type="button"
                   onClick={onUpgradeToPremium}
-                  className="mt-2 rounded-md bg-green-700 px-3 py-2 text-xs font-semibold text-white hover:bg-green-800"
+                  className="mt-2 btn-primary rounded-md px-3 py-2 text-xs font-semibold"
                 >
                   Upgrade to Premium
                 </button>
@@ -360,7 +364,7 @@ export default function SettingsPanel({
           </div>
 
           <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
-          <div className="settings-option-card rounded-md border border-(--border-muted)">
+          <div className="settings-option-card rounded-md">
             <button
               type="button"
               onClick={() => setGeneratorTabAiOpen((o) => !o)}
@@ -382,8 +386,8 @@ export default function SettingsPanel({
             </button>
 
             {generatorTabAiOpen && (
-              <div className="settings-option-card space-y-2 border-t border-(--border-muted) p-3">
-                <label className="settings-option-card flex items-start gap-3 rounded-md border border-(--border-muted) p-3">
+              <div className="space-y-2 p-3">
+                <label className="flex items-start gap-3 rounded-md bg-(--surface-2) p-3">
                   <input
                     type="checkbox"
                     className="mt-1 h-4 w-4"
@@ -397,7 +401,7 @@ export default function SettingsPanel({
                   </span>
                 </label>
 
-                <label className="settings-option-card flex items-start gap-3 rounded-md border border-(--border-muted) p-3">
+                <label className="flex items-start gap-3 rounded-md bg-(--surface-2) p-3">
                   <input
                     type="checkbox"
                     className="mt-1 h-4 w-4"
@@ -411,7 +415,7 @@ export default function SettingsPanel({
                   </span>
                 </label>
 
-                <label className="settings-option-card flex items-start gap-3 rounded-md border border-(--border-muted) p-3">
+                <label className="flex items-start gap-3 rounded-md bg-(--surface-2) p-3">
                   <input
                     type="checkbox"
                     className="mt-1 h-4 w-4"
@@ -428,7 +432,7 @@ export default function SettingsPanel({
             )}
           </div>
 
-          <label className="settings-option-card flex items-start gap-3 rounded-md border border-(--border-muted) p-3">
+          <label className="flex items-start gap-3 rounded-md bg-(--surface-2) p-3">
             <input
               type="checkbox"
               className="mt-1 h-4 w-4"
@@ -442,7 +446,7 @@ export default function SettingsPanel({
             </span>
           </label>
 
-          <label className="settings-option-card flex items-start gap-3 rounded-md border border-(--border-muted) p-3">
+          <label className="flex items-start gap-3 rounded-md bg-(--surface-2) p-3">
             <input
               type="checkbox"
               className="mt-1 h-4 w-4"
@@ -456,7 +460,7 @@ export default function SettingsPanel({
             </span>
           </label>
 
-          <label className="settings-option-card flex items-start gap-3 rounded-md border border-(--border-muted) p-3">
+          <label className="flex items-start gap-3 rounded-md bg-(--surface-2) p-3">
             <input
               type="checkbox"
               className="mt-1 h-4 w-4"
@@ -474,13 +478,13 @@ export default function SettingsPanel({
         )}
       </section>
 
-      <section className="rounded-lg border border-(--border-muted) bg-(--surface-2) p-4 sm:p-5">
+      <section className="rounded-lg bg-(--surface-2) p-4 sm:p-5">
         <button
           type="button"
           onClick={() => setAppearanceOpen((o) => !o)}
           className="flex w-full items-center justify-between text-left"
         >
-          <h3 className="text-lg font-semibold text-(--text-strong)">Appearance</h3>
+          <h3 className="section-title-tertiary">Appearance</h3>
           <svg
             className={`h-5 w-5 shrink-0 text-(--text-soft) transition-transform duration-200 ${appearanceOpen ? "rotate-180" : ""}`}
             xmlns="http://www.w3.org/2000/svg"
@@ -498,7 +502,7 @@ export default function SettingsPanel({
         </p>
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <label className="settings-option-card flex items-start gap-3 rounded-md border border-(--border-muted) p-3">
+          <label className="flex items-start gap-3 rounded-md bg-(--surface-2) p-3">
             <input
               type="checkbox"
               className="mt-1 h-4 w-4"
@@ -518,7 +522,7 @@ export default function SettingsPanel({
             </span>
           </label>
 
-          <label className="settings-option-card flex items-start gap-3 rounded-md border border-(--border-muted) p-3">
+          <label className="flex items-start gap-3 rounded-md bg-(--surface-2) p-3">
             <input
               type="checkbox"
               className="mt-1 h-4 w-4"
@@ -538,7 +542,7 @@ export default function SettingsPanel({
             </span>
           </label>
 
-          <label className="settings-option-card flex items-start gap-3 rounded-md border border-(--border-muted) p-3">
+          <label className="flex items-start gap-3 rounded-md bg-(--surface-2) p-3">
             <input
               type="checkbox"
               className="mt-1 h-4 w-4"
@@ -556,16 +560,16 @@ export default function SettingsPanel({
         )}
       </section>
 
-      <section className="space-y-4 rounded-lg border border-(--border-muted) bg-(--surface-2) p-4 sm:p-5">
-        <h3 className="text-lg font-semibold text-(--text-strong)">Data Management</h3>
-        <p className="text-sm text-(--text-soft)">Saved bullets: {historyCount}</p>
-        <p className="text-sm text-(--text-soft)">Archived marking periods: {archivedMarkingPeriods.length}</p>
+      <section className="space-y-4 rounded-lg bg-(--surface-2) p-4 sm:p-5">
+        <h3 className="section-title-tertiary">Data Management</h3>
+        <p className="text-sm text-supporting">Saved bullets: {historyCount}</p>
+        <p className="text-sm text-supporting">Archived marking periods: {archivedMarkingPeriods.length}</p>
 
         <div className="flex flex-wrap gap-3">
           <button
             onClick={onExportBackup}
             disabled={restrictToRankAndRate}
-            className="btn-primary px-4 py-2 rounded-md text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60"
+            className="btn-secondary px-4 py-2 rounded-md text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60"
           >
             Export Backup
           </button>
@@ -612,7 +616,7 @@ export default function SettingsPanel({
 
         {settingsMessage && <p className="text-sm text-(--text-strong)">{settingsMessage}</p>}
 
-        <div className="rounded-lg border border-(--border-muted) bg-(--surface-1) p-4">
+        <div className="rounded-lg bg-(--surface-1) p-4">
           <div className="flex items-start justify-between gap-3">
             <div>
               <h4 className="text-sm font-semibold text-(--text-strong)">Archived Marking Periods</h4>
@@ -921,8 +925,8 @@ export default function SettingsPanel({
         </div>
       )}
 
-      <section className="space-y-4 rounded-lg border border-(--border-muted) bg-(--surface-2) p-4 sm:p-5">
-        <h3 className="text-lg font-semibold text-(--text-strong)">Help</h3>
+      <section className="space-y-4 rounded-lg bg-(--surface-2) p-4 sm:p-5">
+        <h3 className="section-title-tertiary">Help</h3>
         <p className="text-sm text-(--text-soft)">
           Reopen the quick tutorial for a refresher on how each tab is meant to be used.
         </p>
@@ -936,8 +940,8 @@ export default function SettingsPanel({
       </section>
 
       {!restrictToRankAndRate && (
-      <section className="space-y-4 rounded-lg border border-(--color-danger) bg-(--color-danger-soft) p-4 sm:p-5">
-        <h3 className="text-lg font-semibold text-(--color-danger)">Danger Zone</h3>
+      <section className="space-y-4 rounded-lg bg-(--color-danger-soft) p-4 sm:p-5">
+        <h3 className="section-title-tertiary" style={{color: 'var(--color-danger)'}}>Danger Zone</h3>
         <p className="text-sm text-(--color-danger)">
           Permanently delete your account. This cannot be undone. All saved data will be lost.
         </p>
@@ -949,6 +953,7 @@ export default function SettingsPanel({
         </button>
       </section>
       )}
+    </div>
     </div>
   );
 }

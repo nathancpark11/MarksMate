@@ -13,11 +13,13 @@ export async function POST() {
   return Response.json({
     user: {
       ...guestUser,
+      email: null,
       needsTutorial: false,
       needsEmail: false,
       lastLoginAt: null,
       planTier: "free",
       planStatus: null,
+      subscriptionCurrentPeriodEnd: null,
       dailyUsageCount: 0,
       dailyUsageLimit: 10,
     },

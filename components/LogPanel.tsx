@@ -33,6 +33,7 @@ export default function LogPanel({
 }: LogPanelProps) {
   const [text, setText] = useState("");
   const [error, setError] = useState("");
+  const [microFeedback, setMicroFeedback] = useState("");
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [sortOrder, setSortOrder] = useState("Date (Newest to Oldest)");
   const [importMode, setImportMode] = useState<"file" | "notes">("file");
@@ -45,6 +46,18 @@ export default function LogPanel({
   const [groupNameInput, setGroupNameInput] = useState("");
   const [groupActionError, setGroupActionError] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const microFeedbackTimerRef = useRef<number | null>(null);
+
+  const pushMicroFeedback = (message: string) => {
+    if (microFeedbackTimerRef.current) {
+      window.clearTimeout(microFeedbackTimerRef.current);
+    }
+    setMicroFeedback(message);
+    microFeedbackTimerRef.current = window.setTimeout(() => {
+      setMicroFeedback("");
+      microFeedbackTimerRef.current = null;
+    }, 2200);
+  };
 
   useEffect(() => {
     setSelectedEntryIndexes((prev) => {
@@ -66,6 +79,14 @@ export default function LogPanel({
     setGroupActionError("");
   }, [isManualGroupingOpen]);
 
+  useEffect(() => {
+    return () => {
+      if (microFeedbackTimerRef.current) {
+        window.clearTimeout(microFeedbackTimerRef.current);
+      }
+    };
+  }, []);
+
   const handleSave = () => {
     const trimmedText = text.trim();
 
@@ -77,6 +98,7 @@ export default function LogPanel({
     onSaveEntry({ text: trimmedText });
     setText("");
     setError("");
+    pushMicroFeedback("Entry saved. AI can now optimize it in Generator.");
   };
 
   const handleProcessUpload = async (file: File) => {
@@ -123,6 +145,8 @@ export default function LogPanel({
 
       if (parsedEntries.length === 0) {
         setImportError("No bullet-style actions were found in that file.");
+      } else {
+        pushMicroFeedback(`File parsed: ${parsedEntries.length} entr${parsedEntries.length === 1 ? "y" : "ies"} ready.`);
       }
     } catch {
       setImportError("Unable to read the file. Please try again.");
@@ -139,6 +163,8 @@ export default function LogPanel({
 
     if (parsedEntries.length === 0) {
       setImportError("No bullet-style actions found in pasted notes.");
+    } else {
+      pushMicroFeedback(`Notes parsed: ${parsedEntries.length} entr${parsedEntries.length === 1 ? "y" : "ies"} ready.`);
     }
   };
 
@@ -150,6 +176,7 @@ export default function LogPanel({
 
     setImportError("");
     onSaveImportedEntries(importedEntries.map((entry) => ({ text: entry.text, dates: entry.dates })));
+    pushMicroFeedback(`Imported ${importedEntries.length} entr${importedEntries.length === 1 ? "y" : "ies"} into Daily Log.`);
     setImportedEntries([]);
     setPastedNotes("");
     setImportError("");
@@ -299,17 +326,24 @@ export default function LogPanel({
   };
 
   return (
-    <div className="rounded-xl bg-(--surface-1) p-4 shadow-md sm:p-6">
-      <h2 className="text-xl font-semibold">Daily Log</h2>
-      <p className="mt-1 text-sm text-(--text-soft)">Capture work notes you can turn into bullets later.</p>
+    <div className="space-y-3">
+      <div className="text-center">
+        <h2 className="text-2xl font-semibold text-(--text-strong)">Daily Log</h2>
+        <p className="mt-1 text-sm text-supporting">Capture work notes you can turn into bullets later.</p>
+      </div>
+      <div className="h-px bg-(--border-muted) opacity-60" />
+      <div className="rounded-xl bg-(--surface-1) p-4 shadow-md sm:p-6">
+      {microFeedback && (
+        <p className="micro-feedback mt-3 text-sm" role="status" aria-live="polite">{microFeedback}</p>
+      )}
 
-      <div className="log-import-section mt-5 rounded-lg border border-(--color-secondary) bg-(--color-secondary-soft) p-3 sm:p-4">
-        <p className="text-sm font-semibold text-(--color-primary)">Import Notes Into Daily Log</p>
-        <p className="mt-1 text-xs text-(--color-primary)">
+      <div className="log-import-section mt-2 rounded-lg bg-(--color-secondary-soft) p-3 sm:p-4">
+        <p className="section-title-tertiary">Import Notes Into Daily Log</p>
+        <p className="mt-1 text-sm text-supporting">
           Upload a .docx or .pdf file, or paste notes, then save parsed entries directly into Daily Log.
         </p>
         {!aiEnabled && (
-          <p className="mt-1 text-xs text-(--color-warning)">
+          <p className="mt-1 text-sm text-supporting text-(--color-warning)">
             AI file import is disabled in Settings. You can still paste notes and parse locally.
           </p>
         )}
@@ -389,7 +423,7 @@ export default function LogPanel({
         {importError && <p className="mt-2 text-xs text-(--color-danger)">{importError}</p>}
 
         {importedEntries.length > 0 && (
-          <div className="log-import-results mt-3 rounded-md border border-(--color-secondary) bg-(--surface-1) p-3">
+            <div className="log-import-results mt-3 rounded-md bg-(--surface-2) p-3">
             <p className="text-xs font-semibold text-(--color-primary)">
               Parsed Entries ({importedEntries.length})
             </p>
@@ -429,6 +463,7 @@ export default function LogPanel({
         className="mt-2 h-32 w-full rounded-md border p-3 placeholder:italic"
         placeholder="Example: Led morning maintenance brief and coordinated tasking across two teams."
       />
+      <p className="mt-2 text-xs text-supporting">AI will organize and optimize this entry when you pull it into Mark Generator.</p>
 
       {error && <p className="mt-3 text-sm text-(--color-danger)">{error}</p>}
 
@@ -436,17 +471,17 @@ export default function LogPanel({
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => void handleSave()}
-            className="btn-primary rounded-md px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+            className="btn-primary rounded-md px-6 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60"
           >
             Save Entry
           </button>
           <button
             type="button"
             onClick={() => setIsManualGroupingOpen((prev) => !prev)}
-            className={`rounded-md px-4 py-2 text-sm font-semibold ${
+            className={`rounded-md px-4 py-2 text-sm font-semibold transition-colors ${
               isManualGroupingOpen
                 ? "bg-(--color-warning) text-(--color-text-on-strong) hover:brightness-95"
-                : "border border-(--color-warning) bg-(--surface-1) text-(--color-warning) hover:bg-(--color-warning-soft)"
+                : "btn-secondary"
             }`}
           >
             Edit Groups
@@ -457,7 +492,7 @@ export default function LogPanel({
           <button
             type="button"
             onClick={() => setShowFilterMenu((prev) => !prev)}
-            className="btn-secondary self-start rounded-md px-3 py-1.5 text-xs font-semibold"
+            className="btn-tertiary self-start rounded-md px-3 py-1.5 text-xs font-semibold"
           >
             Sort by
           </button>
@@ -513,7 +548,7 @@ export default function LogPanel({
       )}
 
       {groupedMarks.length > 0 && (
-        <div className="mt-4 rounded-lg border border-(--color-secondary) bg-(--color-secondary-soft) p-3 shadow-sm">
+        <div className="mt-4 rounded-lg bg-(--color-secondary-soft) p-3 shadow-sm">
           <p className="text-sm font-semibold text-(--color-primary)">Grouped Bullets</p>
           <p className="mt-1 text-xs text-(--color-primary)">
             Expand a group to view bullets assigned to it.
@@ -522,7 +557,7 @@ export default function LogPanel({
             {groupedMarks.map((group) => (
               <details
                 key={group.groupName}
-                className="overflow-hidden rounded-md border border-(--color-secondary) bg-(--surface-1)"
+                className="rounded-md bg-(--surface-2)"
               >
                 <summary className="cursor-pointer list-none px-3 py-2 text-sm font-semibold text-(--color-primary)">
                   <div className="flex items-center justify-between gap-2">
@@ -532,14 +567,14 @@ export default function LogPanel({
                     </span>
                   </div>
                 </summary>
-                <div className="space-y-2 border-t border-(--color-secondary) px-3 py-2">
+                <div className="space-y-2 border-t border-(--border-muted) px-3 py-2">
                   {group.marks.map(({ entry, index }) => (
                     <div
                       key={`${group.groupName}-${index}`}
-                      className={`flex items-start gap-2 rounded-md border px-3 py-2 ${
+                      className={`flex items-start gap-2 rounded-md px-3 py-2 ${
                         isManualGroupingOpen && selectedEntryIndexes.has(index)
-                          ? "border-(--color-warning) bg-(--color-warning-soft)"
-                          : "border-(--border-muted) bg-(--surface-2)"
+                          ? "bg-(--color-warning-soft)"
+                          : "bg-(--surface-2)"
                       }`}
                     >
                       <button
@@ -561,7 +596,7 @@ export default function LogPanel({
                         <button
                           type="button"
                           onClick={() => handleUngroupSingleEntry(index)}
-                          className="btn-secondary rounded-md px-2 py-1 text-xs font-semibold"
+                          className="btn-secondary btn-icon-action text-xs"
                           title="Remove from group"
                           aria-label="Remove from group"
                         >
@@ -585,10 +620,10 @@ export default function LogPanel({
         {activeEntries.map(({ entry, index }) => (
             <div
               key={`${entry.date || entry.dates?.join("|") || "no-date"}-${index}`}
-              className={`rounded-lg border p-3 transition-colors ${
+              className={`rounded-lg p-3 transition-colors ${
                 isManualGroupingOpen && selectedEntryIndexes.has(index)
-                  ? "border-(--color-warning) bg-(--color-warning-soft)"
-                  : "border-(--border-muted) hover:border-(--color-secondary) hover:bg-(--color-secondary-soft)"
+                  ? "bg-(--color-warning-soft)"
+                  : "hover:bg-(--color-secondary-soft)"
               }`}
             >
               <div className="flex items-start justify-between gap-3">
@@ -613,7 +648,7 @@ export default function LogPanel({
                     e.stopPropagation();
                     setDeleteConfirmIndex(index);
                   }}
-                  className="rounded-md px-2 py-1 text-sm font-semibold text-(--text-soft) hover:bg-(--surface-3) hover:text-(--color-danger)"
+                  className="btn-icon-action"
                   aria-label="Delete log entry"
                   title="Delete"
                 >
@@ -628,7 +663,7 @@ export default function LogPanel({
             <button
               type="button"
               onClick={() => setShowUsed((prev) => !prev)}
-              className="used-group-toggle btn-success flex w-full items-center justify-between rounded-lg border border-(--color-success) px-4 py-2 text-sm font-semibold"
+              className="used-group-toggle flex w-full items-center justify-between rounded-lg border border-(--color-success) bg-(--surface-1) px-4 py-2 text-sm font-semibold text-(--color-success) hover:bg-(--color-success-soft)"
             >
               <span>Used ({usedEntries.length})</span>
               <span>{showUsed ? "▲" : "▼"}</span>
@@ -639,10 +674,10 @@ export default function LogPanel({
                 {usedEntries.map(({ entry, index }) => (
                   <div
                     key={`${entry.date || entry.dates?.join("|") || "no-date"}-${index}`}
-                    className={`used-group-entry rounded-lg border p-3 ${
+                    className={`used-group-entry rounded-lg p-3 ${
                       isManualGroupingOpen && selectedEntryIndexes.has(index)
-                        ? "border-(--color-warning) bg-(--color-warning-soft)"
-                        : "border-(--color-success) bg-(--color-success-soft)"
+                        ? "bg-(--color-warning-soft)"
+                        : "bg-(--color-success-soft)"
                     }`}
                   >
                     <div className="flex items-start justify-between gap-3">
@@ -668,7 +703,7 @@ export default function LogPanel({
                           e.stopPropagation();
                           setDeleteConfirmIndex(index);
                         }}
-                        className="used-group-delete rounded-md px-2 py-1 text-sm font-semibold text-(--color-success) hover:bg-(--surface-3) hover:text-(--color-danger)"
+                        className="used-group-delete btn-icon-action"
                         aria-label="Delete log entry"
                         title="Delete"
                       >
@@ -697,7 +732,7 @@ export default function LogPanel({
               <button
                 type="button"
                 onClick={() => setReloadConfirmIndex(null)}
-                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-100"
+                className="btn-secondary rounded-xl px-4 py-2 text-sm font-semibold"
               >
                 Cancel
               </button>
@@ -716,7 +751,7 @@ export default function LogPanel({
                   }
                   setReloadConfirmIndex(null);
                 }}
-                className="btn-success rounded-md px-4 py-2 text-sm font-semibold"
+                className="btn-success rounded-xl px-4 py-2 text-sm font-semibold"
               >
                 Reload
               </button>
@@ -761,6 +796,7 @@ export default function LogPanel({
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

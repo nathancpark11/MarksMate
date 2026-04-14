@@ -660,8 +660,13 @@ export default function MarksPackageBuilderPanel({
   };
 
   return (
+        <div className="space-y-3">
+          <div>
+            <h2 className="text-2xl font-semibold text-(--text-strong)">Marks Package Builder</h2>
+            <p className="mt-1 text-sm text-supporting">Build a complete package from your saved official marks.</p>
+          </div>
+          <div className="h-px bg-(--border-muted) opacity-60" />
         <div className="rounded-xl bg-(--surface-1) p-6 shadow-md space-y-6">
-          <h2 className="text-xl font-semibold text-(--text-strong)">Marks Package Builder</h2>
 
           {/* ── Member Info ── */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -967,6 +972,7 @@ export default function MarksPackageBuilderPanel({
             </div>
           )}
 
+        </div>
         </div>
   );
 }

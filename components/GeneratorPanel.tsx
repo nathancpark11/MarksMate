@@ -134,12 +134,25 @@ export default function GeneratorPanel({
 }: GeneratorPanelProps) {
   const [isBulletModalOpen, setIsBulletModalOpen] = useState(false);
   const [isSplitDraftModalOpen, setIsSplitDraftModalOpen] = useState(false);
+  const [microFeedback, setMicroFeedback] = useState("");
   const [selectedSplitDraftIds, setSelectedSplitDraftIds] = useState<string[]>([]);
   const [selectedLogEntryId, setSelectedLogEntryId] = useState("");
   const [selectedGroupName, setSelectedGroupName] = useState("");
   const [selectedGroupedEntryIds, setSelectedGroupedEntryIds] = useState<string[]>([]);
   const [pullMode, setPullMode] = useState<"entry" | "group">("entry");
   const previousLoadingRef = useRef(loading);
+  const microFeedbackTimerRef = useRef<number | null>(null);
+
+  const pushMicroFeedback = (message: string) => {
+    if (microFeedbackTimerRef.current) {
+      window.clearTimeout(microFeedbackTimerRef.current);
+    }
+    setMicroFeedback(message);
+    microFeedbackTimerRef.current = window.setTimeout(() => {
+      setMicroFeedback("");
+      microFeedbackTimerRef.current = null;
+    }, 2200);
+  };
 
   const dailyLogItems = buildDailyLogItems(logEntries);
   const selectedLogEntryIndex = dailyLogItems.findIndex((entry) => entry.id === selectedLogEntryId);
@@ -174,6 +187,7 @@ export default function GeneratorPanel({
     if (onLogEntryPulled) {
       onLogEntryPulled({ dates: targetEntry.dates, index: targetEntry.sourceIndex });
     }
+    pushMicroFeedback("Entry loaded from Daily Log.");
   };
 
   const pullGroupedEntries = (entriesToPull: DailyLogItem[]) => {
@@ -190,6 +204,7 @@ export default function GeneratorPanel({
     setMissionImpact("");
     setInput(entries.join("\n"));
     onLogEntryPulled?.({ dates: [], index: null, groupedIndexes: entriesToPull.map((e) => e.sourceIndex) });
+    pushMicroFeedback(`Loaded ${entries.length} grouped entr${entries.length === 1 ? "y" : "ies"}.`);
   };
 
   const selectLogEntry = (nextId: string) => {
@@ -299,9 +314,18 @@ export default function GeneratorPanel({
     const generationJustFinished = previousLoadingRef.current && !loading;
     if (generationJustFinished && bullet?.text) {
       setIsBulletModalOpen(true);
+      pushMicroFeedback("Mark generated. Review and commit when ready.");
     }
     previousLoadingRef.current = loading;
   }, [loading, bullet]);
+
+  useEffect(() => {
+    return () => {
+      if (microFeedbackTimerRef.current) {
+        window.clearTimeout(microFeedbackTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (splitBulletDraftsLoading || splitBulletDrafts.length > 0) {
@@ -334,17 +358,23 @@ export default function GeneratorPanel({
   }, [pendingLogPull]);
 
   return (
-    <div className="bg-(--surface-1) p-4 sm:p-8 rounded-xl shadow-md">
-      <h1 className="text-2xl sm:text-3xl font-bold text-center leading-tight">
-        Mark Generator
-      </h1>
+    <div className="space-y-3">
+      <div className="text-center">
+        <h2 className="text-2xl font-semibold text-(--text-strong)">Mark Generator</h2>
+        <p className="mt-1 text-sm text-supporting">Turn work accomplishment into a powerful bullet point.</p>
+      </div>
+      <div className="h-px bg-(--border-muted) opacity-60" />
+      <div className="bg-(--surface-1) p-4 sm:p-8 rounded-xl shadow-md">
+      {microFeedback && (
+        <p className="micro-feedback mx-auto mt-3 max-w-2xl text-center text-sm" role="status" aria-live="polite">{microFeedback}</p>
+      )}
 
-      <div className="pull-log-box mt-6 rounded-lg border border-(--color-secondary) bg-(--color-secondary-soft) p-3 sm:p-4">
+      <div className="pull-log-box mt-6 rounded-lg bg-(--color-secondary-soft) p-3 sm:p-4">
         <div className="flex items-center justify-between gap-3">
-          <p className="text-sm font-semibold text-(--color-primary)">Pull From Daily Log</p>
+          <p className="section-title-tertiary">Pull From Daily Log</p>
 
           {/* Toggle switch */}
-          <div className="flex rounded-md border border-(--color-secondary) bg-(--surface-1) p-0.5 text-xs font-semibold">
+          <div className="flex rounded-md bg-(--surface-1) p-0.5 text-xs font-semibold">
             <button
               type="button"
               onClick={() => handleSwitchPullMode("entry")}
@@ -455,7 +485,7 @@ export default function GeneratorPanel({
             </div>
 
             {selectedGroupName && selectedGroupEntries.length > 0 && (
-              <div className="mt-2 max-h-36 space-y-1 overflow-y-auto rounded-md border border-(--color-secondary) bg-(--surface-1) p-2">
+                <div className="mt-2 max-h-36 space-y-1 overflow-y-auto rounded-md bg-(--surface-2) p-2">
                 {selectedGroupEntries.map((entry) => (
                   <label
                     key={entry.id}
@@ -495,6 +525,7 @@ export default function GeneratorPanel({
         className="mt-2 h-36 w-full border rounded-md p-3 placeholder:italic"
         placeholder={"What did you do? (Action or Task)\nExample: Led 06 airmen in physical fitness sessions."}
       />
+      <p className="mt-2 text-xs text-supporting">AI will sharpen wording, structure, and impact language from this action.</p>
 
       <div className="mt-6 flex items-center justify-between gap-3">
         <label className="text-sm font-medium">Impact:</label>
@@ -502,7 +533,7 @@ export default function GeneratorPanel({
           <button
             type="button"
             onClick={() => setMissionImpact("")}
-            className="btn-secondary rounded-md px-3 py-1 text-xs font-semibold"
+            className="btn-tertiary rounded-md px-3 py-1 text-xs font-semibold"
           >
             Clear
           </button>
@@ -516,6 +547,7 @@ export default function GeneratorPanel({
         className="mt-2 w-full border rounded-md p-3 placeholder:italic"
         placeholder={"What was the result or mission impact? If blank, AI will suggest an impact when generated.\nExample: 03 airmen graduated AST A-School"}
       />
+      <p className="mt-2 text-xs text-supporting">Optional: leave this blank and AI will suggest impact phrasing automatically.</p>
 
       <label className="block mt-6 text-sm font-medium">Category - (or select below)</label>
       <select
@@ -539,11 +571,11 @@ export default function GeneratorPanel({
         <option>Effective Communication</option>
       </select>
 
-      <details className="mt-6 rounded-lg border border-(--border-muted) bg-(--surface-2) p-3 sm:p-4">
+      <details className="mt-6 rounded-lg bg-(--surface-2) p-3 sm:p-4">
         <summary className="cursor-pointer list-none text-sm font-semibold text-(--text-strong)">
           <span className="inline-flex items-center gap-2">
             Advanced
-            <span className="text-xs font-medium text-(--text-soft)">(optional details)</span>
+            <span className="text-xs font-medium text-supporting">(optional details)</span>
           </span>
         </summary>
 
@@ -573,11 +605,11 @@ export default function GeneratorPanel({
 
       {error && <p className="text-(--color-danger) text-sm mt-2">{error}</p>}
 
-      <div className="mt-6 flex flex-col justify-center gap-2 sm:flex-row">
+      <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
         <button
           onClick={handleGenerate}
           disabled={loading}
-          className="btn-primary px-6 py-2 rounded-md disabled:opacity-60"
+          className="btn-primary px-8 py-3 rounded-md disabled:opacity-60 font-semibold text-base sm:flex-1"
         >
           {loading ? "Generating..." : "Generate Mark"}
         </button>
@@ -585,9 +617,9 @@ export default function GeneratorPanel({
           type="button"
           onClick={handleGenerateMarkAsIs}
           disabled={loading}
-          className="btn-success px-6 py-2 rounded-md border border-(--color-success) disabled:cursor-not-allowed disabled:opacity-60"
+          className="btn-secondary px-6 py-3 rounded-md border border-(--color-secondary) disabled:cursor-not-allowed disabled:opacity-60 font-semibold"
         >
-          {loading ? "Committing..." : "Generate Mark As Is"}
+          {loading ? "Committing..." : "Mark As Is"}
         </button>
       </div>
 
@@ -597,10 +629,10 @@ export default function GeneratorPanel({
         </p>
       ) : null}
 
-      <div className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-(--border-muted) bg-(--surface-2) p-3">
+      <div className="mt-4 flex items-center justify-between gap-3 rounded-lg bg-(--surface-2) p-3">
         <div>
           <p className="text-sm font-semibold text-(--text-strong)">Abbreviations</p>
-          <p className="text-xs text-(--text-soft)">Controls whether generated marks use CG abbreviations.</p>
+          <p className="text-xs text-supporting">Controls whether generated marks use CG abbreviations.</p>
         </div>
         <button
           type="button"
@@ -623,13 +655,13 @@ export default function GeneratorPanel({
               <h2 className="text-lg font-semibold text-(--text-strong)">Generated Bullet</h2>
               <button
                 onClick={() => setIsBulletModalOpen(false)}
-                className="btn-secondary rounded-md px-3 py-1 text-sm"
+                className="btn-tertiary rounded-md px-3 py-1 text-sm"
               >
                 Exit
               </button>
             </div>
 
-            <div className="generated-bullet-preview mt-4 rounded-md border border-(--border-muted) bg-(--surface-2) p-4">
+            <div className="generated-bullet-preview mt-4 rounded-md bg-(--surface-2) p-4">
               <p className="generated-bullet-preview-text text-sm text-(--text-strong)">{bullet.text}</p>
               {!wasCategoryUserSelected && bullet.category && (
                 <p className="generated-bullet-preview-category mt-3 text-sm font-medium text-(--color-primary)">
@@ -694,7 +726,7 @@ export default function GeneratorPanel({
               <button
                 onClick={handleGenerate}
                 disabled={loading}
-                className="btn-primary rounded-md px-4 py-2 disabled:opacity-60"
+                className="btn-secondary rounded-md px-6 py-2 disabled:opacity-60 font-semibold"
               >
                 {loading ? "Reprompting..." : "Reprompt"}
               </button>
@@ -706,7 +738,7 @@ export default function GeneratorPanel({
                     handleCommitBullet();
                   }, 0);
                 }}
-                className="btn-success rounded-md px-4 py-2"
+                className="btn-success rounded-md px-6 py-2 font-semibold"
               >
                 Commit as Mark
               </button>
@@ -725,7 +757,7 @@ export default function GeneratorPanel({
                   setIsSplitDraftModalOpen(false);
                   handleClearSplitBulletDrafts();
                 }}
-                className="btn-secondary rounded-md px-3 py-1 text-sm"
+                className="btn-tertiary rounded-md px-3 py-1 text-sm"
               >
                 Exit
               </button>
@@ -781,7 +813,7 @@ export default function GeneratorPanel({
                                 type="button"
                                 onClick={() => void handleRepromptSplitBulletDraft(draft.id)}
                                 disabled={isReprompting}
-                                className="rounded-md border border-blue-300 px-3 py-1 text-xs font-semibold text-(--color-primary) hover:bg-(--color-secondary-soft) disabled:cursor-not-allowed disabled:opacity-60"
+                                className="btn-tertiary rounded-md px-3 py-1 text-xs font-semibold"
                               >
                                 {isReprompting ? "Reprompting..." : "Reprompt"}
                               </button>
@@ -821,6 +853,7 @@ export default function GeneratorPanel({
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

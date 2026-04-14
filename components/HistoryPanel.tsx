@@ -333,20 +333,22 @@ export default function HistoryPanel({
   };
 
   return (
-    <div className="bg-(--surface-1) p-4 sm:p-6 rounded-xl shadow-md">
-      <div className="mb-4">
-        <h2 className="text-xl font-semibold">Official Marks</h2>
-        <p className="mt-1 text-sm text-(--text-soft)">
+    <div className="space-y-3">
+      <div>
+        <h2 className="text-2xl font-semibold text-(--text-strong)">Official Marks</h2>
+        <p className="mt-1 text-sm text-supporting">
           This is where your official marks are stored. These are the bullets that will be displayed when exported.
         </p>
         {archivedMarkingPeriods.length > 0 && (
-          <p className="mt-2 text-xs font-medium uppercase tracking-wide text-(--text-soft)">
+          <p className="mt-2 text-xs font-medium uppercase tracking-wide text-supporting">
             Archived periods available in Settings: {archivedMarkingPeriods.length}
           </p>
         )}
       </div>
+      <div className="h-px bg-(--border-muted) opacity-60" />
+      <div className="bg-(--surface-1) p-4 sm:p-6 rounded-xl shadow-md">
 
-      <div className="mb-5 grid grid-cols-1 gap-4 rounded-lg border border-(--color-secondary) bg-(--color-secondary-soft) p-4 text-center sm:grid-cols-3">
+      <div className="mb-5 grid grid-cols-1 gap-4 rounded-lg bg-(--color-secondary-soft) p-4 text-center sm:grid-cols-3">
         <div className="flex flex-col items-center text-center">
           <p className="text-xs font-medium uppercase tracking-wide text-(--text-soft)">Current Marking Period</p>
           <p className="mt-1 font-semibold text-(--text-strong)">{currentPeriod}</p>
@@ -461,7 +463,7 @@ export default function HistoryPanel({
                           event.stopPropagation();
                           setDeleteTargetPeriod(period);
                         }}
-                        className="rounded-md border border-(--color-danger) px-3 py-2 text-xs font-semibold text-(--color-danger) transition hover:bg-(--color-danger-soft)"
+                        className="btn-inline-action btn-inline-danger px-3 py-2 text-xs"
                       >
                         Delete
                       </button>
@@ -473,7 +475,7 @@ export default function HistoryPanel({
                           event.stopPropagation();
                           setArchiveTargetPeriod(period);
                         }}
-                        className="rounded-md border border-(--color-danger) px-3 py-2 text-xs font-semibold text-(--color-danger) transition hover:bg-(--color-danger-soft)"
+                        className="btn-inline-action btn-inline-danger px-3 py-2 text-xs"
                       >
                         Archive Marking Period
                       </button>
@@ -656,7 +658,7 @@ export default function HistoryPanel({
                                             onClick={() => {
                                               cancelEditingMark(index, item);
                                             }}
-                                            className="text-(--text-soft) text-sm"
+                                            className="btn-inline-action"
                                           >
                                             Cancel
                                           </button>
@@ -679,7 +681,7 @@ export default function HistoryPanel({
                                                 });
                                               }
                                             }}
-                                            className="text-(--color-success) text-sm font-medium"
+                                            className="btn-inline-action btn-inline-success"
                                           >
                                             Save
                                           </button>
@@ -695,19 +697,19 @@ export default function HistoryPanel({
                                         )}
                                         <div className="flex items-center justify-between mt-2">
                                           <div className="flex gap-3">
-                                            <button onClick={() => handleCopy(item.text)} className="text-(--color-primary) text-sm">
+                                            <button onClick={() => handleCopy(item.text)} className="btn-inline-action">
                                               Copy
                                             </button>
-                                            <button onClick={() => handleDelete(index)} className="text-(--color-danger) text-sm">
+                                            <button onClick={() => handleDelete(index)} className="btn-inline-action btn-inline-danger">
                                               Delete
                                             </button>
-                                            <button onClick={() => handleReprompt(index)} className="text-(--text-strong) text-sm">
+                                            <button onClick={() => handleReprompt(index)} className="btn-inline-action">
                                               Reprompt
                                             </button>
                                           </div>
                                           <button
                                             onClick={() => startEditingMark(index, item)}
-                                            className="text-(--color-primary) text-sm"
+                                            className="btn-inline-action"
                                           >
                                             Edit
                                           </button>
@@ -734,6 +736,8 @@ export default function HistoryPanel({
             </div>
           );
         })}
+      </div>
+
       </div>
 
       {archiveTargetPeriod && typeof document !== "undefined" &&

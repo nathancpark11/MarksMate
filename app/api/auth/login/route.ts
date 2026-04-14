@@ -76,11 +76,14 @@ export async function POST(req: Request) {
       user: {
         id: user.id,
         username: user.username,
+        email: user.email,
         needsTutorial: !user.hasCompletedTutorial,
         needsEmail: !user.emailLower,
         lastLoginAt,
         planTier: usageSummary?.planTier ?? "free",
         planStatus: usageSummary?.planStatus ?? null,
+        subscriptionCurrentPeriodEnd:
+          usageSummary?.subscriptionCurrentPeriodEnd ?? user.subscriptionCurrentPeriodEnd ?? null,
         betaTrialExpiresAt: usageSummary?.betaTrialExpiresAt ?? user.betaTrialExpiresAt ?? null,
         betaTrialRedeemedAt: user.betaTrialRedeemedAt ?? null,
         hasBillingProfile: !!user.stripeCustomerId,

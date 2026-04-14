@@ -286,12 +286,14 @@ export default function Home() {
   type SessionUser = {
     id: string;
     username: string;
+    email?: string | null;
     isGuest?: boolean;
     needsTutorial?: boolean;
     needsEmail?: boolean;
     lastLoginAt?: string | null;
     planTier?: "free" | "premium";
     planStatus?: "trialing" | "active" | "past_due" | "canceled" | null;
+    subscriptionCurrentPeriodEnd?: string | null;
     betaTrialExpiresAt?: string | null;
     betaTrialRedeemedAt?: string | null;
     hasBillingProfile?: boolean;
@@ -345,6 +347,7 @@ export default function Home() {
     ? new Date(authUser.betaTrialExpiresAt).toLocaleDateString()
     : null;
   const isBetaTrialActive = Number.isFinite(betaTrialExpiryMs) && betaTrialExpiryMs > Date.now();
+  const tabBarPinTopPx = isBetaTrialActive ? (isGuestSession ? 80 : 48) : 32;
   const hasPremiumAccess = !isGuestSession && (authUser?.planTier === "premium" || isBetaTrialActive);
   const canManageBillingPortal = !isGuestSession && authUser?.planTier === "premium" && authUser?.hasBillingProfile === true;
   const usageCount = authUser?.dailyUsageCount ?? 0;
@@ -371,6 +374,19 @@ export default function Home() {
       : hasPremiumAccess
         ? "Premium"
         : "Free";
+  const userLastName = userName
+    .trim()
+    .split(/\s+/)
+    .filter((part) => part.length > 0)
+    .at(-1);
+  const userMenuNameBase = (userLastName || authUser?.username || "User").trim();
+  const userMenuNamePrefix = rankLevel === "E7" ? "Chief" : rankLevel === "E4" || rankLevel === "E5" || rankLevel === "E6" ? "PO" : "";
+  const userMenuDisplayName = `${userMenuNamePrefix ? `${userMenuNamePrefix} ` : ""}${userMenuNameBase}`.trim();
+  const planExpirationLabel = isBetaTrialActive
+    ? betaTrialExpiryLabel
+    : authUser?.subscriptionCurrentPeriodEnd
+      ? new Date(authUser.subscriptionCurrentPeriodEnd).toLocaleDateString()
+      : null;
   const showAddEmailPrompt =
     !!authUser && !isGuestSession && authUser.needsEmail === true && !emailPromptDismissed;
   const rankLevelRef = useRef(rankLevel);
@@ -1411,13 +1427,30 @@ export default function Home() {
   useEffect(() => {
     document.documentElement.style.setProperty(
       "--beta-global-bar-height",
-      isBetaTrialActive && betaTrialExpiryLabel ? "2rem" : "0px"
+      isBetaTrialActive && betaTrialExpiryLabel ? "1rem" : "0px"
     );
 
     return () => {
       document.documentElement.style.setProperty("--beta-global-bar-height", "0px");
     };
   }, [isBetaTrialActive, betaTrialExpiryLabel]);
+
+  useEffect(() => {
+    const stickyTop = isBetaTrialActive && betaTrialExpiryLabel
+      ? isGuestSession
+        ? "calc(env(safe-area-inset-top) + var(--unclassified-bar-height) + 2rem + 1rem)"
+        : "calc(env(safe-area-inset-top) + var(--unclassified-bar-height) + 1rem)"
+      : "calc(env(safe-area-inset-top) + var(--unclassified-bar-height))";
+
+    document.documentElement.style.setProperty("--tab-bar-sticky-top", stickyTop);
+
+    return () => {
+      document.documentElement.style.setProperty(
+        "--tab-bar-sticky-top",
+        "calc(env(safe-area-inset-top) + var(--unclassified-bar-height))"
+      );
+    };
+  }, [isBetaTrialActive, betaTrialExpiryLabel, isGuestSession]);
 
   useEffect(() => {
     if (!mpMemberName && userName) {
@@ -3404,7 +3437,7 @@ export default function Home() {
         </div>
       ) : null}
       {isBetaTrialActive && betaTrialExpiryLabel ? (
-        <div className="beta-trial-banner fixed inset-x-0 z-90 flex h-8 items-center justify-center text-center text-xs font-semibold shadow-sm" style={{
+        <div className="beta-trial-banner fixed inset-x-0 z-90 flex h-4 items-center justify-center text-center text-[10px] font-semibold leading-none shadow-sm" style={{
           top: isGuestSession ? "calc(var(--unclassified-bar-height) + 2rem)" : "var(--unclassified-bar-height)",
         }}>
           🎯 Beta Trial Active • Expires: {betaTrialExpiryLabel}
@@ -3413,40 +3446,74 @@ export default function Home() {
     <main
       className="min-h-screen flex justify-center p-3 sm:p-6"
       style={{
-        paddingTop:
-          "calc(var(--unclassified-bar-height) + var(--guest-global-bar-height) + var(--beta-global-bar-height) + var(--tab-bar-height))",
+        paddingTop: "var(--tab-bar-top-offset)",
       }}
     >
       <div className="w-full max-w-4xl space-y-4">
-        <div className="space-y-0">
+        <div
+          className="space-y-0"
+          style={{
+            paddingTop: "var(--space-sm)",
+          }}
+        >
           <TabBar
             activeTab={activeTab}
             setActiveTab={handleTabChange}
             dashboardRecommendationCount={dashboardRecommendationCount}
             canManageOfficialGuidance={canManageOfficialGuidance}
             hasPremiumAccess={hasPremiumAccess}
+            stickyTopPx={tabBarPinTopPx}
+            userMenu={
+              <details className="account-menu relative">
+                <summary className="account-menu-summary list-none cursor-pointer rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition-all hover:bg-slate-50 hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 sm:text-sm">
+                  <span className="inline-flex max-w-44 items-center gap-1.5 sm:max-w-56">
+                    <span className="truncate">{userMenuDisplayName}</span>
+                    <span aria-hidden="true" className="account-menu-caret text-[10px] text-slate-500">▼</span>
+                  </span>
+                </summary>
+                <div className="account-menu-panel absolute right-0 top-full z-90 mt-2 w-[min(22rem,calc(100vw-1rem))] rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-700 shadow-lg sm:text-sm">
+                  <div className="space-y-2.5">
+                    <div className="rounded-md bg-slate-50 px-2 py-1.5">
+                      <p className="text-[11px] uppercase tracking-wide text-slate-500">Signed In As</p>
+                      <p className="font-semibold text-slate-900">{userMenuDisplayName}</p>
+                    </div>
+                    <div>
+                      <p className="text-[11px] uppercase tracking-wide text-slate-500">Username</p>
+                      <p className="font-semibold text-slate-900">{authUser.username}</p>
+                    </div>
+                    <div>
+                      <p className="text-[11px] uppercase tracking-wide text-slate-500">Email</p>
+                      <p className="break-all text-slate-800">{authUser.email || "Not provided"}</p>
+                    </div>
+                    <div>
+                      <p className="text-[11px] uppercase tracking-wide text-slate-500">Last Login</p>
+                      <p className="text-slate-800">{formattedLastLogin || "Not available"}</p>
+                    </div>
+                    <div className="h-px bg-slate-200" />
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <p className="text-[11px] uppercase tracking-wide text-slate-500">Plan</p>
+                        <p className="font-semibold text-slate-900">{planLabel}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] uppercase tracking-wide text-slate-500">Expiration</p>
+                        <p className="text-slate-800">{planExpirationLabel || "Not set"}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </details>
+            }
           />
-          <div className="-mt-2 flex flex-col items-center justify-center gap-1 sm:-mt-1 sm:flex-row sm:flex-wrap sm:gap-3">
+          <div className="mt-2 flex flex-col items-center justify-center gap-1 sm:mt-2 sm:flex-row sm:flex-wrap sm:gap-3">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-center text-sm font-medium text-slate-700">
-              <span>
-                Signed in as <span className="font-bold text-slate-900">{authUser.username}</span>
-              </span>
-              <span className="text-xs font-medium text-slate-600">
-                • Plan: <span className="font-semibold text-slate-900">{planLabel}</span>
-                {shouldShowUsageTracking && !isBetaTrialActive ? (
-                  <>
-                    {" "}
-                    • Generations:{" "}
-                    <span className={`font-semibold ${usageTextClass}`}>
-                      {usageCount}/{usageLimit}
-                    </span>
-                  </>
-                ) : null}
-              </span>
-              {formattedLastLogin ? (
-                <span className="text-xs font-normal text-slate-500">
-                  • Last Login: {formattedLastLogin}
+              {shouldShowUsageTracking && !isBetaTrialActive ? (
+                <span className="text-xs font-medium text-slate-600">
+                  Generations:{" "}
+                  <span className={`font-semibold ${usageTextClass}`}>
+                    {usageCount}/{usageLimit}
+                  </span>
                 </span>
               ) : null}
               {syncFailed ? (

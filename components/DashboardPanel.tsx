@@ -313,6 +313,13 @@ export default function DashboardPanel({
     ],
   };
 
+  const primaryCategoryGroupMinimums: Record<string, number> = {
+    Military: 7,
+    Performance: 11,
+    "Professional Qualities": 15,
+    Leadership: 15,
+  };
+
   const [evaluations, setEvaluations] = useState<Record<string, CategoryEvaluation>>({});
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [evaluationError, setEvaluationError] = useState("");
@@ -2005,9 +2012,13 @@ export default function DashboardPanel({
 
   return (
     <div className="space-y-4">
+      <div>
+        <h2 className="text-left text-2xl font-semibold text-(--text-strong)">Dashboard</h2>
+        <p className="mt-1 text-sm text-supporting">Review mark quality signals, estimates, and AI insights.</p>
+      </div>
+      <div className="h-px bg-(--border-muted) opacity-60" />
       <div className="rounded-xl bg-(--surface-1) p-4 shadow-md">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="text-left text-xl font-semibold text-(--text-strong)">Dashboard</h2>
+        <div className="flex flex-col gap-3 sm:items-end">
           <div className="text-center sm:text-right">
             <p className="text-xl">
               <span className="font-bold">Total Marking Estimate:</span>{" "}
@@ -2041,7 +2052,7 @@ export default function DashboardPanel({
               type="button"
               onClick={() => void analyzeDashboard()}
               disabled={!hasCategoryBullets || isAnalyzingDashboard || !aiEnabled || !hasPremiumAccess}
-              className="analyze-dashboard-button btn-secondary rounded-md px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+              className="analyze-dashboard-button btn-primary rounded-md px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isAnalyzingDashboard ? "Analyzing..." : "Analyze Dashboard"}
             </button>
@@ -2367,7 +2378,7 @@ export default function DashboardPanel({
               {openInsightSections.repetition && (
                 <div className="px-4 pb-4">
                   {visibleCrossCategorySimilarityCount > 0 && (
-                    <div className="insight-card mb-4 rounded-lg border border-(--color-secondary) bg-(--surface-1) p-3">
+                    <div className="insight-card mb-4 rounded-lg bg-(--surface-2) p-3">
                       <div className="mb-2 flex items-center justify-between gap-2">
                         <p className="text-xs font-semibold uppercase tracking-wide text-(--color-secondary)">
                           Cross-Category Similarity Dialogue
@@ -2397,7 +2408,7 @@ export default function DashboardPanel({
                                   <button
                                     type="button"
                                     onClick={() => setDismissedCrossCategoryPairs((prev) => new Set(prev).add(pair.key))}
-                                    className="rounded border border-(--color-secondary) bg-(--surface-1) px-1.5 py-0.5 text-xs font-semibold text-(--color-secondary) hover:bg-(--color-secondary-soft) transition-colors"
+                                    className="btn-inline-action"
                                     title="Dismiss similarity dialogue"
                                     aria-label="Dismiss similarity dialogue"
                                   >
@@ -2550,7 +2561,7 @@ export default function DashboardPanel({
                                   suppressGroupCategoryComparisons(group);
                                   setDismissedRepetitionGroups((prev) => new Set(prev).add(groupKey));
                                 }}
-                                className="rounded border border-(--color-secondary) bg-(--surface-1) px-1.5 py-0.5 text-xs font-semibold text-(--color-secondary) hover:bg-(--color-secondary-soft) transition-colors"
+                                className="btn-inline-action"
                                 title="Dismiss suggestion"
                                 aria-label="Dismiss suggestion"
                               >
@@ -2630,14 +2641,14 @@ export default function DashboardPanel({
                                         type="button"
                                         onClick={() => void generateRepetitionBulletReword(bullet.text, bullet.category)}
                                         disabled={isRewording}
-                                        className="rounded border border-(--color-secondary) bg-(--surface-1) px-2.5 py-1 text-[10px] font-semibold text-(--color-secondary) hover:bg-(--color-secondary-soft) transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                        className="btn-inline-action disabled:opacity-50 disabled:cursor-not-allowed"
                                       >
                                         Retry
                                       </button>
                                       <button
                                         type="button"
                                         onClick={() => setRepBulletRewordDrafts((prev) => { const n = { ...prev }; delete n[bullet.text]; return n; })}
-                                        className="ml-auto rounded border border-(--border-muted) bg-transparent px-2.5 py-1 text-[10px] font-semibold text-(--text-soft) hover:bg-(--surface-2) transition-colors"
+                                        className="btn-inline-action ml-auto"
                                       >
                                         Dismiss
                                       </button>
@@ -2664,7 +2675,7 @@ export default function DashboardPanel({
                                       <button
                                         type="button"
                                         onClick={() => { setRepBulletEditingKey(null); setRepBulletEditValues((prev) => { const n = { ...prev }; delete n[bullet.text]; return n; }); }}
-                                        className="rounded border border-(--border-muted) bg-transparent px-2.5 py-1 text-[10px] font-semibold text-(--text-soft) hover:bg-(--surface-2) transition-colors"
+                                        className="btn-inline-action"
                                       >
                                         Cancel
                                       </button>
@@ -2891,9 +2902,15 @@ export default function DashboardPanel({
             {columnGroups.map((primaryCategory) => {
               const subCategories = primaryCategoryGroups[primaryCategory] || [];
               const groupMaxScore = subCategories.length * MAX_MARK;
+              const groupMinimumScore = primaryCategoryGroupMinimums[primaryCategory] ?? 0;
               const groupRecommendedScore = subCategories.reduce((sum, cat) => {
                 return sum + getRecommendedScore(cat);
               }, 0);
+              const groupRange = Math.max(1, groupMaxScore - groupMinimumScore);
+              const groupProgressPercent = Math.min(
+                100,
+                Math.max(0, ((groupRecommendedScore - groupMinimumScore) / groupRange) * 100)
+              );
 
               return (
                 <div key={primaryCategory} className="rounded-xl border border-(--border-muted) bg-(--surface-2)">
@@ -2901,7 +2918,15 @@ export default function DashboardPanel({
                     onClick={() => toggleGroup(primaryCategory)}
                     className="flex w-full items-center justify-between px-4 py-3 text-left"
                   >
-                    <h3 className="text-base font-semibold text-(--text-strong)">{primaryCategory}</h3>
+                    <div className="mr-3 min-w-0 flex-1 flex items-center gap-3">
+                      <h3 className="shrink-0 text-base font-semibold text-(--text-strong)">{primaryCategory}</h3>
+                      <div className="h-1.5 min-w-20 flex-1 rounded-full bg-(--surface-3)">
+                        <div
+                          className="h-1.5 rounded-full bg-(--color-primary) transition-all duration-300"
+                          style={{ width: `${groupProgressPercent}%` }}
+                        />
+                      </div>
+                    </div>
                     <div className="flex items-center gap-2">
                       <p className="text-sm font-medium text-(--text-soft)">
                         {groupRecommendedScore}/{groupMaxScore}
@@ -2937,7 +2962,7 @@ export default function DashboardPanel({
                       };
 
                       return (
-                        <div key={cat} className="w-full rounded-lg border border-(--border-muted) bg-(--surface-1) p-4 shadow-sm">
+                        <div key={cat} className="w-full rounded-lg bg-(--surface-2) p-4 shadow-sm">
                           <div className="mb-1 text-center">
                             <p className="text-sm font-semibold text-(--text-strong)">{cat}</p>
                           </div>
@@ -3021,7 +3046,7 @@ export default function DashboardPanel({
       </div>
 
       <div className="rounded-xl bg-(--surface-1) p-6 shadow-md">
-        <div className="bulletproof-seven-panel rounded-xl border border-(--color-secondary) bg-(--color-secondary-soft) p-4">
+        <div className="bulletproof-seven-panel rounded-xl border border-(--color-success) bg-(--surface-1) p-4">
           <div className="flex items-center justify-between gap-3">
             <button
               type="button"
@@ -3031,7 +3056,7 @@ export default function DashboardPanel({
               aria-controls="bulletproof-seven-content"
             >
               <svg
-                className={`h-4 w-4 shrink-0 text-(--color-secondary) transition-transform duration-200 ${
+                className={`h-4 w-4 shrink-0 text-(--color-success) transition-transform duration-200 ${
                   isBulletproofSectionOpen ? "rotate-180" : ""
                 }`}
                 fill="none"
@@ -3044,14 +3069,14 @@ export default function DashboardPanel({
               <h3 className="text-base font-semibold text-(--text-strong)">Your Bulletproof &quot;7&quot;</h3>
             </button>
             <div className="flex items-center gap-2">
-              <span className="rounded-full bg-(--color-secondary-soft) px-2 py-0.5 text-xs font-semibold text-(--color-secondary)">
+              <span className="rounded-full bg-(--color-success-soft) px-2 py-0.5 text-xs font-semibold text-(--color-success)">
                 {bulletproofSevenCategories.length} {bulletproofSevenCategories.length === 1 ? "Category" : "Categories"}
               </span>
               <button
                 type="button"
                 onClick={() => void analyzeBulletproofSeven()}
                 disabled={!hasCategoryBullets || isAnalyzingBulletproof || isAnalyzingDashboard || !aiEnabled || !hasPremiumAccess}
-                className="btn-secondary rounded-md px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                className="btn-success rounded-md border border-(--color-success-hover) px-3 py-1.5 text-xs font-semibold shadow-sm transition-colors disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {isAnalyzingBulletproof ? "Analyzing..." : "Generate 7's"}
               </button>
@@ -3061,13 +3086,13 @@ export default function DashboardPanel({
           {isBulletproofSectionOpen && (
           <div id="bulletproof-seven-content" className="mt-3">
           {!hasCategoryBullets ? (
-            <p className="text-sm text-(--text-soft)">Add bullets to analyze Bulletproof 7 recommendations.</p>
+            <p className="text-sm text-supporting">Add bullets to analyze Bulletproof 7 recommendations.</p>
           ) : !hasPremiumAccess ? (
-            <p className="text-sm text-(--text-soft)">Your Bulletproof &quot;7&quot; is a <span className="font-semibold text-(--color-primary)">Premium</span> feature. Upgrade to access.</p>
+            <p className="text-sm text-supporting">Your Bulletproof &quot;7&quot; is a <span className="font-semibold text-(--color-primary)">Premium</span> feature. Upgrade to access.</p>
           ) : !aiEnabled ? (
-            <p className="text-sm text-(--text-soft)">Dashboard AI is disabled in Settings.</p>
+            <p className="text-sm text-supporting">Dashboard AI is disabled in Settings.</p>
           ) : isAnalyzingBulletproof || isLoadingBulletproofSummaries ? (
-            <p className="text-sm text-(--text-soft)">Building consolidated 7-level summaries...</p>
+            <p className="text-sm text-supporting">Building consolidated 7-level summaries...</p>
           ) : bulletproofSummaryError ? (
             <p className="text-sm text-(--color-danger)">{bulletproofSummaryError}</p>
           ) : (
@@ -3328,9 +3353,9 @@ export default function DashboardPanel({
                         return (
                           <li
                             key={categoryName}
-                            className="flex items-center justify-between rounded-lg border border-(--border-muted) bg-(--surface-1) px-3 py-2"
+                            className="used-group-entry flex items-center justify-between rounded-lg border border-(--color-success) bg-(--color-success-soft) px-4 py-2"
                           >
-                            <span className="text-sm text-(--text-strong)">{categoryName}</span>
+                            <span className="used-group-text text-sm font-medium text-(--text-strong)">{categoryName}</span>
                             <button
                               type="button"
                               onClick={() => void generateForcedSeven(categoryName)}

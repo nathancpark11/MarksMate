@@ -914,8 +914,13 @@ export default function ExportPanel({
 
   return (
     <>
+    <div className="space-y-3">
+      <div>
+        <h2 className="text-2xl font-semibold text-(--text-strong)">Export Official Marks</h2>
+        <p className="mt-1 text-sm text-supporting">Choose categories and export your official marks output.</p>
+      </div>
+      <div className="h-px bg-(--border-muted) opacity-60" />
     <div className="bg-white p-6 rounded-xl shadow-md space-y-6">
-      <h2 className="text-xl font-semibold">Export Official Marks</h2>
 
       {/* ── Category Selector ── */}
       <div>
@@ -1007,6 +1012,7 @@ export default function ExportPanel({
           </div>
         </div>
       )}
+    </div>
     </div>
 
       {isExporting && (

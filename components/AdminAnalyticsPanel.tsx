@@ -239,14 +239,16 @@ export default function AdminAnalyticsPanel({
   }, [data]);
 
   return (
-    <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="space-y-3">
+      <div>
+        <h2 className="text-2xl font-semibold text-slate-900">Admin Analytics</h2>
+        <p className="mt-1 text-sm text-slate-600">
+          Metrics and cost estimates are generated from server-side data and protected admin APIs.
+        </p>
+      </div>
+      <div className="h-px bg-slate-300/70" />
+      <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold text-slate-900">Admin Analytics</h2>
-          <p className="text-sm text-slate-600">
-            Metrics and cost estimates are generated from server-side data and protected admin APIs.
-          </p>
-        </div>
         <div className="flex items-center gap-2">
           <button
             onClick={() => void loadAnalytics()}
@@ -417,7 +419,6 @@ export default function AdminAnalyticsPanel({
           Upload rank-specific PDF guidance so AI can reference the correct source for E3-E7. Keep PDFs at 3 MB or smaller for deployed uploads.
         </p>
 
-        <div>
           <label className="block text-sm font-medium text-(--color-primary)">Ranks</label>
           <div className="mt-2 flex flex-wrap gap-2">
             {rankOptions.map((rank) => {
@@ -436,7 +437,6 @@ export default function AdminAnalyticsPanel({
               );
             })}
           </div>
-        </div>
 
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-start">
           <button
@@ -518,6 +518,7 @@ export default function AdminAnalyticsPanel({
         </div>
         )}
       </section>
-    </section>
+      </section>
+    </div>
   );
 }

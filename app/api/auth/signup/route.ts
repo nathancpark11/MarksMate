@@ -91,10 +91,12 @@ export async function POST(req: Request) {
       user: {
         id: user.id,
         username: user.username,
+        email: user.email,
         needsTutorial: !user.hasCompletedTutorial,
         needsEmail: !user.emailLower,
         planTier: "free",
         planStatus: null,
+        subscriptionCurrentPeriodEnd: null,
         dailyUsageCount: 0,
         dailyUsageLimit: 10,
       },

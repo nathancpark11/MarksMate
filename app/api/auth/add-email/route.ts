@@ -44,9 +44,18 @@ export async function POST(req: Request) {
       user: {
         id: updated.id,
         username: updated.username,
+        email: updated.email,
         needsTutorial: !updated.hasCompletedTutorial,
         needsEmail: !updated.emailLower,
         lastLoginAt: updated.lastLoginAt,
+        planTier: updated.planTier,
+        planStatus: updated.planStatus,
+        subscriptionCurrentPeriodEnd: updated.subscriptionCurrentPeriodEnd,
+        betaTrialExpiresAt: updated.betaTrialExpiresAt,
+        betaTrialRedeemedAt: updated.betaTrialRedeemedAt,
+        hasBillingProfile: !!updated.stripeCustomerId,
+        dailyUsageCount: updated.dailyUsageCount,
+        dailyUsageLimit: 10,
       },
     });
   } catch (error: unknown) {

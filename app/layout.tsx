@@ -13,8 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Bullet Proof",
-  description: "Your personal AI marks assistant",
+  title: "BulletProof – AI Military Performance Mark Generator",
+  description:
+    "AI-powered platform to create, track, and improve military performance bullets. Built for Coast Guard members to strengthen marks, save time, and boost advancement potential.",
 };
 
 export default function RootLayout({
