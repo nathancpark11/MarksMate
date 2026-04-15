@@ -2012,18 +2012,19 @@ export default function DashboardPanel({
 
   return (
     <div className="space-y-4">
-      <div>
+      <div className="sm:hidden">
         <h2 className="text-left text-2xl font-semibold text-(--text-strong)">Dashboard</h2>
-        <p className="mt-1 text-sm text-supporting">Review mark quality signals, estimates, and AI insights.</p>
+        <p className="text-left mt-1 text-sm text-supporting">Review mark quality signals, estimates, and AI insights.</p>
       </div>
-      <div className="h-px bg-(--border-muted) opacity-60" />
-      <div className="rounded-xl bg-(--surface-1) p-4 shadow-md">
-        <div className="flex flex-col gap-3 sm:items-end">
+      <div className="h-px bg-(--border-muted) opacity-60 sm:hidden" />
+      <div className="mx-auto w-full max-w-68 rounded-xl bg-(--surface-1) bg-linear-to-br from-(--surface-1) to-(--surface-2) p-4 shadow-md sm:mx-0 sm:max-w-none">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="hidden sm:block text-left text-2xl font-semibold text-(--text-strong)">Dashboard</h2>
           <div className="text-center sm:text-right">
-            <p className="text-xl">
-              <span className="font-bold">Total Marking Estimate:</span>{" "}
+            <p className="text-xs text-gray-500">Total Marking Estimate</p>
+            <p className="mt-1">
               <span
-                className="font-semibold"
+                className="text-4xl font-bold leading-none"
                 style={{ color: `hsl(${totalEstimateHue}, 78%, 38%)` }}
               >
                 {displayedTotalEstimate}/{maxTotalEstimate}
@@ -2035,51 +2036,66 @@ export default function DashboardPanel({
           </div>
         </div>
       </div>
-
       {/* ── AI Smart Insights Section ── */}
       <div className="dashboard-smart-insights mt-6 border-t border-(--border-muted) pt-6">
         <div className="space-y-5">
-        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h3 className="text-base font-semibold text-(--text-strong)">AI Smart Insights</h3>
-          <div className="flex flex-col items-start gap-2 sm:items-end">
-            {hasAnalyzedDashboard && (
-              <p className="text-xs text-(--text-soft)">
-                Analysis is saved between sessions. Click Analyze Dashboard to refresh.
+        <div className="rounded-xl bg-(--surface-1) p-4 shadow-md">
+        <div className="mb-0 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          {/* Mobile layout */}
+          <div className="sm:hidden">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="whitespace-nowrap text-sm font-semibold text-(--text-strong)">AI Smart Insights (Premium Only)</h3>
+              <button
+                type="button"
+                onClick={() => void analyzeDashboard()}
+                disabled={!hasCategoryBullets || isAnalyzingDashboard || !aiEnabled || !hasPremiumAccess}
+                className={`analyze-dashboard-button ${hasAnalyzedDashboard ? "btn-secondary" : "btn-primary"} shrink-0 rounded-l px-3 py-1 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60`}
+              >
+                {isAnalyzingDashboard ? "Analyzing..." : "Analyze Marks"}
+              </button>
+            </div>
+            {!hasAnalyzedDashboard && (
+              <p className="mt-1 whitespace-nowrap text-[10px] text-gray-500">
+                Run <span className="font-semibold">Analyze Marks</span> to review quality, gaps, and recommendations.
               </p>
             )}
-            <div className="flex items-center gap-2">
+          </div>
+          {/* Desktop layout */}
+          <h3 className="hidden sm:block text-base font-semibold text-(--text-strong)">AI Smart Insights (Premium Only)</h3>
+          <div className="hidden sm:flex sm:items-center">
             <button
               type="button"
               onClick={() => void analyzeDashboard()}
               disabled={!hasCategoryBullets || isAnalyzingDashboard || !aiEnabled || !hasPremiumAccess}
-              className="analyze-dashboard-button btn-primary rounded-md px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+              className={`analyze-dashboard-button ${hasAnalyzedDashboard ? "btn-secondary" : "btn-primary"} rounded-md px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60`}
             >
-              {isAnalyzingDashboard ? "Analyzing..." : "Analyze Dashboard"}
+              {isAnalyzingDashboard ? "Analyzing..." : "Analyze Marks"}
             </button>
-            </div>
           </div>
         </div>
+        {!hasAnalyzedDashboard && (
+          <p className="hidden sm:block mt-1 text-xs text-gray-500 text-right">
+            Run <span className="font-semibold">Analyze Marks</span> to review quality, gaps, and recommendations.
+          </p>
+        )}
+        </div>
         {!aiEnabled && (
-          <p className="text-xs text-amber-700">Dashboard AI is disabled in Settings.</p>
+          <p className="whitespace-nowrap text-[11px] text-amber-700 sm:text-xs">Dashboard AI is disabled in Settings.</p>
         )}
         {!hasPremiumAccess && (
-          <p className="py-4 text-center text-sm text-(--text-soft)">
-            AI Smart Insights is a <span className="font-semibold text-(--color-primary)">Premium</span> feature. Upgrade to access.
+          <p className="whitespace-nowrap py-4 text-center text-[11px] text-(--text-soft) sm:text-sm">
+            Upgrade to access this section.
           </p>
         )}
 
         {hasPremiumAccess && (!hasCategoryBullets ? (
-          <p className="py-4 text-center text-sm text-(--text-soft)">
+          <p className="whitespace-nowrap py-4 text-center text-[11px] text-(--text-soft) sm:text-sm">
             Add bullets to generate AI smart insights.
           </p>
-        ) : !hasAnalyzedDashboard ? (
-          <p className="py-4 text-center text-sm text-(--text-soft)">
-            Press Analyze Dashboard to run AI Smart Insights.
-          </p>
-        ) : isLoadingInsights || isEvaluating ? (
-          <p className="py-4 text-center text-sm text-(--text-soft)">Analyzing your bullets&#8230;</p>
+        ) : !hasAnalyzedDashboard ? null : isLoadingInsights || isEvaluating ? (
+          <p className="whitespace-nowrap py-4 text-center text-[11px] text-(--text-soft) sm:text-sm">Analyzing your bullets&#8230;</p>
         ) : insightsError ? (
-          <p className="text-sm text-(--color-danger) text-center py-4">{insightsError}</p>
+          <p className="whitespace-nowrap text-center py-4 text-[11px] text-(--color-danger) sm:text-sm">{insightsError}</p>
         ) : insights ? (
           <div className="space-y-5">
 
@@ -2097,19 +2113,25 @@ export default function DashboardPanel({
                   <h4 className="underrepresented-categories-title text-sm font-semibold text-(--color-warning)">
                     Underrepresented Categories
                     {visibleUnderrepresentedCount > 0 && (
-                      <span className="underrepresented-categories-count ml-2 inline-flex items-center rounded-full bg-(--color-warning-soft) px-2 py-0.5 text-xs font-medium text-(--color-warning)">
+                      <span className="underrepresented-categories-count ml-2 hidden sm:inline-flex items-center justify-center align-middle rounded-full bg-(--color-warning-soft) px-2 py-0.5 text-xs font-medium leading-none text-(--color-warning)">
                         {visibleUnderrepresentedCount}
                       </span>
                     )}
                   </h4>
                 </button>
+                {visibleUnderrepresentedCount > 0 && (
+                  <span className="underrepresented-categories-count inline-flex items-center justify-center align-middle rounded-full bg-(--color-warning-soft) px-2 py-0.5 text-xs font-medium leading-none text-(--color-warning) sm:hidden">
+                    {visibleUnderrepresentedCount}
+                  </span>
+                )}
                 <button
                   type="button"
                   onClick={() => setDismissedUnderrepresentedCategories(true)}
                   disabled={visibleUnderrepresentedCount === 0}
-                  className="btn-secondary shrink-0 rounded-md px-2.5 py-1 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                  className="shrink-0 rounded-md border border-(--color-warning) bg-(--surface-1) px-2.5 py-1 text-xs font-semibold text-(--color-warning) hover:bg-(--color-warning-soft) transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  Dismiss All
+                  <span className="sm:hidden">X</span>
+                  <span className="hidden sm:inline">Dismiss All</span>
                 </button>
                 <button
                   type="button"
@@ -2177,13 +2199,18 @@ export default function DashboardPanel({
                         <h4 className="text-sm font-semibold text-(--color-warning)">
                           Bullets Missing Measurable Results
                           {visible.length > 0 && (
-                            <span className="ml-2 inline-flex items-center rounded-full bg-(--color-warning-soft) px-2 py-0.5 text-xs font-medium text-(--color-warning)">
+                            <span className="ml-2 hidden sm:inline-flex items-center justify-center rounded-full bg-(--color-warning-soft) px-2 py-0.5 text-xs font-medium leading-none text-(--color-warning)">
                               {visible.length}
                             </span>
                           )}
                         </h4>
                       </div>
                     </button>
+                    {visible.length > 0 && (
+                      <span className="inline-flex items-center justify-center rounded-full bg-(--color-warning-soft) px-2 py-0.5 text-xs font-medium leading-none text-(--color-warning) sm:hidden">
+                        {visible.length}
+                      </span>
+                    )}
                     <button
                       type="button"
                       onClick={() => void refreshInsightSection("missingResults")}
@@ -2200,7 +2227,8 @@ export default function DashboardPanel({
                       disabled={visibleMissingResultsCount === 0}
                       className="shrink-0 rounded-md border border-(--color-warning) bg-(--surface-1) px-2.5 py-1 text-xs font-semibold text-(--color-warning) hover:bg-(--color-warning-soft) transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      Dismiss All
+                      <span className="sm:hidden">X</span>
+                      <span className="hidden sm:inline">Dismiss All</span>
                     </button>
                     <button
                       type="button"
@@ -2330,13 +2358,18 @@ export default function DashboardPanel({
                     <h4 className="text-sm font-semibold text-(--color-secondary)">
                       Repetition Detected
                       {visibleRepetitionInsightCount > 0 && (
-                        <span className="ml-2 inline-flex items-center rounded-full bg-(--color-secondary-soft) px-2 py-0.5 text-xs font-medium text-(--color-secondary)">
-                          {visibleRepetitionInsightCount} {visibleRepetitionInsightCount === 1 ? "item" : "items"}
+                        <span className="ml-2 hidden sm:inline-flex items-center justify-center align-middle rounded-full bg-(--color-secondary-soft) px-2 py-0.5 text-xs font-medium leading-none text-(--color-secondary)">
+                          {visibleRepetitionInsightCount}
                         </span>
                       )}
                     </h4>
                   </div>
                 </button>
+                {visibleRepetitionInsightCount > 0 && (
+                  <span className="inline-flex items-center justify-center align-middle rounded-full bg-(--color-secondary-soft) px-2 py-0.5 text-xs font-medium leading-none text-(--color-secondary) sm:hidden">
+                    {visibleRepetitionInsightCount}
+                  </span>
+                )}
                 <button
                   type="button"
                   onClick={() => void refreshInsightSection("repetition")}
@@ -2358,7 +2391,8 @@ export default function DashboardPanel({
                   disabled={visibleRepetitionInsightCount === 0}
                   className="shrink-0 rounded-md border border-(--color-secondary) bg-(--surface-1) px-2.5 py-1 text-xs font-semibold text-(--color-secondary) hover:bg-(--color-secondary-soft) transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  Dismiss All
+                  <span className="sm:hidden">X</span>
+                  <span className="hidden sm:inline">Dismiss All</span>
                 </button>
                 <button
                   type="button"
@@ -2834,7 +2868,8 @@ export default function DashboardPanel({
                   disabled={visiblePreCloseCount === 0}
                   className="shrink-0 rounded-md border border-(--color-success) bg-(--surface-1) px-2.5 py-1 text-xs font-semibold text-(--color-success) hover:bg-(--color-success-soft) transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  Dismiss All
+                  <span className="sm:hidden">X</span>
+                  <span className="hidden sm:inline">Dismiss All</span>
                 </button>
                 <button
                   type="button"
@@ -2911,19 +2946,23 @@ export default function DashboardPanel({
                 100,
                 Math.max(0, ((groupRecommendedScore - groupMinimumScore) / groupRange) * 100)
               );
+              const groupProgressHue = Math.round((groupProgressPercent / 100) * 120);
 
               return (
                 <div key={primaryCategory} className="rounded-xl border border-(--border-muted) bg-(--surface-2)">
                   <button
                     onClick={() => toggleGroup(primaryCategory)}
-                    className="flex w-full items-center justify-between px-4 py-3 text-left"
+                    className="flex w-full items-start sm:items-center justify-between px-4 py-3 text-left"
                   >
-                    <div className="mr-3 min-w-0 flex-1 flex items-center gap-3">
+                    <div className="mr-3 min-w-0 flex-1 flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3">
                       <h3 className="shrink-0 text-base font-semibold text-(--text-strong)">{primaryCategory}</h3>
-                      <div className="h-1.5 min-w-20 flex-1 rounded-full bg-(--surface-3)">
+                      <div className="h-2 w-full sm:min-w-20 sm:flex-1 rounded-full bg-(--border-muted)">
                         <div
-                          className="h-1.5 rounded-full bg-(--color-primary) transition-all duration-300"
-                          style={{ width: `${groupProgressPercent}%` }}
+                          className="h-2 rounded-full transition-all duration-300"
+                          style={{
+                            width: `${groupProgressPercent}%`,
+                            backgroundColor: `hsl(${groupProgressHue}, 78%, 42%)`,
+                          }}
                         />
                       </div>
                     </div>
@@ -2986,41 +3025,41 @@ export default function DashboardPanel({
                               </p>
                             </div>
 
-                            {/* AI Quality Score */}
-                            <div className="rounded-lg border border-(--border-muted) bg-(--surface-2) p-2 text-center sm:p-2.5">
-                              <p className="text-xs font-semibold leading-tight text-(--text-soft)">AI Quality</p>
-                              <p className="mt-1 text-lg font-bold text-(--color-secondary)">
-                                {count === 0
-                                  ? "N/A"
-                                  : isEvaluating && !evaluation
-                                    ? "…"
-                                    : evaluation
-                                      ? `${evaluation.compiledScore}/7`
-                                      : "—"}
-                              </p>
-                            </div>
-
-                            {/* Bullet-based marking score */}
-                            <div className="rounded-lg border border-(--border-muted) bg-(--surface-2) p-2 text-center sm:p-2.5">
-                              <p className="text-xs font-semibold leading-tight text-(--text-soft)">Bullet Score</p>
-                              <p className="mt-1 text-lg font-bold text-(--text-strong)">{mark}/7</p>
+                            {/* Combined AI Quality + Bullet Score */}
+                            <div className="grid grid-cols-2 rounded-lg border border-(--border-muted) bg-(--surface-2)">
+                              <div className="p-2 text-center sm:p-2.5">
+                                <p className="text-xs font-semibold leading-tight text-(--text-soft)">AI Quality</p>
+                                <p className="mt-1 text-lg font-bold text-(--color-secondary)">
+                                  {count === 0
+                                    ? "N/A"
+                                    : isEvaluating && !evaluation
+                                      ? "…"
+                                      : evaluation
+                                        ? `${evaluation.compiledScore}/7`
+                                        : "—"}
+                                </p>
+                              </div>
+                              <div className="border-l border-(--border-muted) p-2 text-center sm:p-2.5">
+                                <p className="text-xs font-semibold leading-tight text-(--text-soft)">Bullet Score</p>
+                                <p className="mt-1 text-lg font-bold text-(--text-strong)">{mark}/7</p>
+                              </div>
                             </div>
                           </div>
 
                           {/* AI explanation */}
                           {count === 0 ? (
-                            <p className="mt-2 text-sm text-(--text-soft)">
+                            <p className="mt-2 text-xs italic text-(--text-soft) opacity-75">
                               Add bullets to this category to generate an AI quality score.
                             </p>
                           ) : evaluation ? (
-                            <p className="mt-2 text-sm text-(--text-strong) break-normal">
+                            <p className="mt-2 text-xs italic text-(--text-strong) opacity-75 break-normal">
                               {evaluation.aiExplanation.replace(
                                 /^Recommended\s+\d+:/i,
                                 `Recommended ${recommendedScore}:`
                               )}
                             </p>
                           ) : !isEvaluating ? (
-                            <p className="mt-2 text-sm text-(--text-soft)">
+                            <p className="mt-2 text-xs italic text-(--text-soft) opacity-75">
                               AI quality score unavailable for this category right now.
                             </p>
                           ) : null}
@@ -3036,7 +3075,7 @@ export default function DashboardPanel({
         ))}
       </div>
 
-        <p className="mt-4 text-base text-(--text-soft)">
+        <p className="mt-4 text-xs italic text-(--text-soft) opacity-75">
           AI Quality Score - category analysis based on bullet strength and impact.
           <br />
           Bullet Score - the total number of bullets per category.
@@ -3047,7 +3086,7 @@ export default function DashboardPanel({
 
       <div className="rounded-xl bg-(--surface-1) p-6 shadow-md">
         <div className="bulletproof-seven-panel rounded-xl border border-(--color-success) bg-(--surface-1) p-4">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <button
               type="button"
               onClick={() => setIsBulletproofSectionOpen((prev) => !prev)}
@@ -3066,9 +3105,9 @@ export default function DashboardPanel({
               >
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
               </svg>
-              <h3 className="text-base font-semibold text-(--text-strong)">Your Bulletproof &quot;7&quot;</h3>
+              <h3 className="text-sm font-semibold leading-tight text-(--text-strong) sm:text-base">Your Bulletproof &quot;7&quot;</h3>
             </button>
-            <div className="flex items-center gap-2">
+            <div className="flex w-full items-center justify-between gap-2 sm:w-auto sm:justify-end">
               <span className="rounded-full bg-(--color-success-soft) px-2 py-0.5 text-xs font-semibold text-(--color-success)">
                 {bulletproofSevenCategories.length} {bulletproofSevenCategories.length === 1 ? "Category" : "Categories"}
               </span>

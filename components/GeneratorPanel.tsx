@@ -359,9 +359,9 @@ export default function GeneratorPanel({
 
   return (
     <div className="space-y-3">
-      <div className="text-center">
-        <h2 className="text-2xl font-semibold text-(--text-strong)">Mark Generator</h2>
-        <p className="mt-1 text-sm text-supporting">Turn work accomplishment into a powerful bullet point.</p>
+      <div>
+        <h2 className="text-left sm:text-center text-2xl font-semibold text-(--text-strong)">Mark Generator</h2>
+        <p className="text-left sm:text-center mt-1 text-sm text-supporting">Turn work accomplishment into a powerful bullet point.</p>
       </div>
       <div className="h-px bg-(--border-muted) opacity-60" />
       <div className="bg-(--surface-1) p-4 sm:p-8 rounded-xl shadow-md">
@@ -369,16 +369,16 @@ export default function GeneratorPanel({
         <p className="micro-feedback mx-auto mt-3 max-w-2xl text-center text-sm" role="status" aria-live="polite">{microFeedback}</p>
       )}
 
-      <div className="pull-log-box mt-6 rounded-lg bg-(--color-secondary-soft) p-3 sm:p-4">
+      <div className="pull-log-box mt-6 space-y-4 rounded-lg border border-(--border-muted) bg-[color-mix(in_srgb,var(--color-secondary-soft)_82%,var(--surface-1))] p-3 sm:p-4">
         <div className="flex items-center justify-between gap-3">
           <p className="section-title-tertiary">Pull From Daily Log</p>
 
           {/* Toggle switch */}
-          <div className="flex rounded-md bg-(--surface-1) p-0.5 text-xs font-semibold">
+          <div className="flex gap-0.5 rounded-md bg-(--surface-1) p-0.5 text-xs font-semibold">
             <button
               type="button"
               onClick={() => handleSwitchPullMode("entry")}
-              className={`rounded px-3 py-1.5 transition-colors ${
+              className={`rounded px-2.5 py-1 transition-colors ${
                 pullMode === "entry"
                   ? "btn-primary"
                   : "text-(--color-primary) hover:bg-(--color-secondary-soft)"
@@ -389,7 +389,7 @@ export default function GeneratorPanel({
             <button
               type="button"
               onClick={() => handleSwitchPullMode("group")}
-              className={`rounded px-3 py-1.5 transition-colors ${
+              className={`rounded px-2.5 py-1 transition-colors ${
                 pullMode === "group"
                   ? "btn-primary"
                   : "text-(--color-primary) hover:bg-(--color-secondary-soft)"
@@ -402,10 +402,10 @@ export default function GeneratorPanel({
 
         {pullMode === "entry" && (
           <>
-            <p className="mt-1 text-xs text-(--color-primary)">
+            <p className="text-xs text-(--color-primary)">
               Pick a Daily Log entry and it will be pulled into Action automatically.
             </p>
-            <div className="mt-3 flex w-full items-center gap-2">
+            <div className="flex w-full items-center gap-2">
               <button
                 type="button"
                 onClick={() => handleStepLogEntry(-1)}
@@ -420,11 +420,17 @@ export default function GeneratorPanel({
               <select
                 value={selectedLogEntryId}
                 onChange={(e) => selectLogEntry(e.target.value)}
-                className="w-full rounded-md border p-2 text-sm"
+                className={`w-full rounded-md border p-2 ${
+                  dailyLogItems.length === 0 ? "text-xs italic opacity-60" : "text-sm"
+                }`}
                 disabled={dailyLogItems.length === 0}
               >
                 {dailyLogItems.length > 0 && <option value="">Daily Log Entry</option>}
-                {dailyLogItems.length === 0 && <option value="">No Daily Log entries available</option>}
+                {dailyLogItems.length === 0 && (
+                  <option value="" className="text-xs italic opacity-60">
+                    No Daily Log Entries
+                  </option>
+                )}
                 {dailyLogItems.map((entry) => (
                   <option key={entry.id} value={entry.id}>
                     {entry.preview}
@@ -448,10 +454,10 @@ export default function GeneratorPanel({
 
         {pullMode === "group" && (
           <>
-            <p className="mt-1 text-xs text-(--color-primary)">
+            <p className="text-xs text-(--color-primary)">
               Select a custom group and pull all entries or only the ones you choose.
             </p>
-            <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center">
+            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center">
               <select
                 value={selectedGroupName}
                 onChange={(e) => handleSelectGroup(e.target.value)}
@@ -485,7 +491,7 @@ export default function GeneratorPanel({
             </div>
 
             {selectedGroupName && selectedGroupEntries.length > 0 && (
-                <div className="mt-2 max-h-36 space-y-1 overflow-y-auto rounded-md bg-(--surface-2) p-2">
+                <div className="max-h-36 space-y-1 overflow-y-auto rounded-md bg-(--surface-2) p-2">
                 {selectedGroupEntries.map((entry) => (
                   <label
                     key={entry.id}
@@ -513,7 +519,7 @@ export default function GeneratorPanel({
             setInput("");
             setMissionImpact("");
           }}
-          className="btn-secondary rounded-md px-3 py-1 text-xs font-semibold"
+          className="btn-secondary rounded-md px-2 py-0.5 text-[11px] font-semibold"
         >
           Clear
         </button>
@@ -522,7 +528,7 @@ export default function GeneratorPanel({
         value={input}
         onChange={(e) => setInput(e.target.value)}
         maxLength={ACTION_MAX_CHARS}
-        className="mt-2 h-36 w-full border rounded-md p-3 placeholder:italic"
+        className="mt-2 h-36 w-full rounded-md border p-3 placeholder:text-xs placeholder:italic placeholder:opacity-60"
         placeholder={"What did you do? (Action or Task)\nExample: Led 06 airmen in physical fitness sessions."}
       />
       <p className="mt-2 text-xs text-supporting">AI will sharpen wording, structure, and impact language from this action.</p>
@@ -533,7 +539,7 @@ export default function GeneratorPanel({
           <button
             type="button"
             onClick={() => setMissionImpact("")}
-            className="btn-tertiary rounded-md px-3 py-1 text-xs font-semibold"
+            className="btn-tertiary rounded-md px-2 py-0.5 text-[11px] font-semibold"
           >
             Clear
           </button>
@@ -544,7 +550,7 @@ export default function GeneratorPanel({
         onChange={(e) => setMissionImpact(e.target.value)}
         maxLength={IMPACT_MAX_CHARS}
         rows={3}
-        className="mt-2 w-full border rounded-md p-3 placeholder:italic"
+        className="mt-2 w-full rounded-md border p-3 placeholder:text-xs placeholder:italic placeholder:opacity-60"
         placeholder={"What was the result or mission impact? If blank, AI will suggest an impact when generated.\nExample: 03 airmen graduated AST A-School"}
       />
       <p className="mt-2 text-xs text-supporting">Optional: leave this blank and AI will suggest impact phrasing automatically.</p>

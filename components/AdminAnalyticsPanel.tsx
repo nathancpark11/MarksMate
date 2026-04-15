@@ -241,8 +241,8 @@ export default function AdminAnalyticsPanel({
   return (
     <div className="space-y-3">
       <div>
-        <h2 className="text-2xl font-semibold text-slate-900">Admin Analytics</h2>
-        <p className="mt-1 text-sm text-slate-600">
+        <h2 className="text-left sm:text-center text-2xl font-semibold text-slate-900">Admin Analytics</h2>
+        <p className="text-left sm:text-center mt-1 text-sm text-slate-600">
           Metrics and cost estimates are generated from server-side data and protected admin APIs.
         </p>
       </div>

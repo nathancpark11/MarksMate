@@ -174,8 +174,8 @@ export default function SettingsPanel({
   return (
     <div className="space-y-3">
       <div>
-        <h2 className="text-2xl font-semibold text-(--text-strong)">Settings</h2>
-        <p className="mt-1 text-sm text-supporting">Manage your defaults, AI behavior, appearance, and data controls.</p>
+        <h2 className="text-left sm:text-center text-2xl font-semibold text-(--text-strong)">Settings</h2>
+        <p className="text-left sm:text-center mt-1 text-sm text-supporting">Manage your defaults, AI behavior, appearance, and data controls.</p>
       </div>
       <div className="h-px bg-(--border-muted) opacity-60" />
       <div className="bg-(--surface-1) p-4 sm:p-8 rounded-xl shadow-md space-y-8">
@@ -197,7 +197,7 @@ export default function SettingsPanel({
             <select
               value={rankLevel}
               onChange={(e) => setRankLevel(e.target.value)}
-              className="settings-control mt-2 w-full border rounded-md p-3"
+              className="settings-control mt-2 w-full border rounded-md bg-white p-3"
             >
               <option>E2</option>
               <option>E3</option>
@@ -213,7 +213,7 @@ export default function SettingsPanel({
             <select
               value={rating}
               onChange={(e) => setRating(e.target.value)}
-              className="settings-control mt-2 w-full border rounded-md p-3"
+              className="settings-control mt-2 w-full border rounded-md bg-white p-3"
             >
               <option>AET - Aviation Electrical Technician</option>
               <option>AMT - Aviation Maintenance Technician</option>
@@ -246,7 +246,7 @@ export default function SettingsPanel({
               onChange={(e) => setUserName(e.target.value)}
               placeholder="Last, First, MI"
               disabled={restrictToRankAndRate}
-              className="settings-control mt-2 w-full border rounded-md p-3"
+              className="settings-control mt-2 w-full border rounded-md bg-white p-3 disabled:bg-white disabled:opacity-100"
             />
             <p className="mt-1 text-xs text-(--text-soft)">Format: Last, First, MI</p>
           </div>
@@ -259,7 +259,7 @@ export default function SettingsPanel({
               onChange={(e) => setUserUnit(e.target.value)}
               placeholder="e.g. Sector Boston"
               disabled={restrictToRankAndRate}
-              className="settings-control mt-2 w-full border rounded-md p-3"
+              className="settings-control mt-2 w-full border rounded-md bg-white p-3 disabled:bg-white disabled:opacity-100"
             />
           </div>
         </div>

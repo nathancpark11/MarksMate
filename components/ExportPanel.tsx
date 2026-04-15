@@ -916,8 +916,8 @@ export default function ExportPanel({
     <>
     <div className="space-y-3">
       <div>
-        <h2 className="text-2xl font-semibold text-(--text-strong)">Export Official Marks</h2>
-        <p className="mt-1 text-sm text-supporting">Choose categories and export your official marks output.</p>
+        <h2 className="text-left sm:text-center text-2xl font-semibold text-(--text-strong)">Export Official Marks</h2>
+        <p className="text-left sm:text-center mt-1 text-sm text-supporting">Choose categories and export your official marks output (Premium Only).</p>
       </div>
       <div className="h-px bg-(--border-muted) opacity-60" />
     <div className="bg-white p-6 rounded-xl shadow-md space-y-6">
@@ -953,7 +953,7 @@ export default function ExportPanel({
           ) : null}
           {!isGuestSession && !isPremiumPlan ? (
             <div className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
-              <p className="font-semibold">Export is a Premium feature.</p>
+              <p className="font-semibold">(Premium Only)</p>
               <p className="mt-1">Upgrade to Premium to export formatted output.</p>
               {onUpgradeToPremium ? (
                 <button
@@ -969,7 +969,7 @@ export default function ExportPanel({
           <p className="text-sm text-gray-600">
             {exportReadyHistory.length} mark{exportReadyHistory.length !== 1 ? 's' : ''} will be exported. {exportSevenCount} saved 7{exportSevenCount !== 1 ? 's' : ''} will be exported.
           </p>
-          <div className="flex flex-wrap gap-3">
+          <div className="flex flex-wrap justify-center gap-3">
             <button
               onClick={() =>
                 requestExport(

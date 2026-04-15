@@ -52,6 +52,7 @@ export default function HistoryPanel({
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [expandedPeriods, setExpandedPeriods] = useState<Record<string, boolean>>({});
   const [expandedMonths, setExpandedMonths] = useState<Record<string, boolean>>({});
+  const [periodFilterDropdownOpen, setPeriodFilterDropdownOpen] = useState<Record<string, boolean>>({});
   const [periodCategoryFilters, setPeriodCategoryFilters] = useState<Record<string, string[]>>({});
   const [editableMarks, setEditableMarks] = useState<Record<number, string>>({});
   const [editableCategories, setEditableCategories] = useState<Record<number, string>>({});
@@ -284,6 +285,41 @@ export default function HistoryPanel({
     getPeriodSortKey(b).localeCompare(getPeriodSortKey(a))
   );
 
+  const currentMonthLabel = getMonthLabel(new Date().toISOString());
+
+  useEffect(() => {
+    if (sortedPeriods.length === 0) {
+      return;
+    }
+
+    // Initialize collapsed state once; open only the current month (if present).
+    if (Object.keys(expandedPeriods).length > 0 || Object.keys(expandedMonths).length > 0) {
+      return;
+    }
+
+    const nextExpandedPeriods: Record<string, boolean> = {};
+    const nextExpandedMonths: Record<string, boolean> = {};
+    let openedCurrentMonth = false;
+
+    sortedPeriods.forEach((period) => {
+      nextExpandedPeriods[period] = false;
+      const months = Object.keys(grouped[period]);
+
+      months.forEach((month) => {
+        nextExpandedMonths[`${period}__${month}`] = false;
+      });
+
+      if (!openedCurrentMonth && months.includes(currentMonthLabel)) {
+        nextExpandedPeriods[period] = true;
+        nextExpandedMonths[`${period}__${currentMonthLabel}`] = true;
+        openedCurrentMonth = true;
+      }
+    });
+
+    setExpandedPeriods(nextExpandedPeriods);
+    setExpandedMonths(nextExpandedMonths);
+  }, [sortedPeriods, grouped, currentMonthLabel, expandedPeriods, expandedMonths]);
+
   const getCurrentPeriodInfo = () => {
     const now = new Date();
     const currentPeriod = currentPeriodOverride?.trim() || getMarkingPeriod(now.toISOString());
@@ -333,20 +369,15 @@ export default function HistoryPanel({
   };
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-semibold text-(--text-strong)">Official Marks</h2>
-        <p className="mt-1 text-sm text-supporting">
+        <h2 className="text-left sm:text-center text-2xl font-semibold text-(--text-strong)">Official Marks</h2>
+        <p className="text-left sm:text-center mt-1 text-sm text-supporting">
           This is where your official marks are stored. These are the bullets that will be displayed when exported.
         </p>
-        {archivedMarkingPeriods.length > 0 && (
-          <p className="mt-2 text-xs font-medium uppercase tracking-wide text-supporting">
-            Archived periods available in Settings: {archivedMarkingPeriods.length}
-          </p>
-        )}
       </div>
       <div className="h-px bg-(--border-muted) opacity-60" />
-      <div className="bg-(--surface-1) p-4 sm:p-6 rounded-xl shadow-md">
+      <div className="bg-(--surface-1) p-4 pb-24 sm:p-6 sm:pb-24 rounded-xl shadow-md space-y-6">
 
       <div className="mb-5 grid grid-cols-1 gap-4 rounded-lg bg-(--color-secondary-soft) p-4 text-center sm:grid-cols-3">
         <div className="flex flex-col items-center text-center">
@@ -404,9 +435,9 @@ export default function HistoryPanel({
         <p className="text-(--text-soft)">No saved marks match your search.</p>
       )}
 
-      <div className="space-y-4">
+      <div className="space-y-6">
         {sortedPeriods.map((period) => {
-          const isPeriodOpen = expandedPeriods[period] !== false;
+          const isPeriodOpen = expandedPeriods[period] === true;
           const sortedMonths = Object.keys(grouped[period]).sort((a, b) =>
             getMonthSortKey(b).localeCompare(getMonthSortKey(a))
           );
@@ -423,9 +454,10 @@ export default function HistoryPanel({
             }, {});
           const periodCategories = Object.keys(periodCategoryCounts).sort((a, b) => a.localeCompare(b));
           const selectedPeriodCategoryFilters = periodCategoryFilters[period] || [];
-          const isPeriodAlreadyArchived = archivedMarkingPeriods.some(
-            (archive) => archive.period === period
-          );
+          const isPeriodFilterDropdownOpen = periodFilterDropdownOpen[period] === true;
+          const isPeriodAlreadyArchived =
+            period !== currentPeriod &&
+            archivedMarkingPeriods.some((archive) => archive.period === period);
 
           const isCategorySelected = (category: string) =>
             selectedPeriodCategoryFilters.some(
@@ -446,99 +478,147 @@ export default function HistoryPanel({
           return (
             <div key={period} className="overflow-hidden rounded-lg border border-(--border-muted)">
               <div className="bg-(--surface-2) px-4 py-3">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                {/* ── Mobile header: single row ── */}
+                <div className="flex items-center gap-2 sm:hidden">
+                  <button
+                    className="flex min-w-0 flex-1 items-center gap-1.5 text-left hover:text-(--text-strong)"
+                    onClick={() => setExpandedPeriods((prev) => ({ ...prev, [period]: !isPeriodOpen }))}
+                  >
+                    <span className="text-sm font-semibold text-(--text-strong) leading-tight">Period: {period}</span>
+                    <span className="shrink-0 text-xs text-(--text-soft)">{isPeriodOpen ? '▼' : '▶'}</span>
+                  </button>
+                  {isPeriodAlreadyArchived ? (
+                    <button
+                      type="button"
+                      onClick={(event) => { event.preventDefault(); event.stopPropagation(); setDeleteTargetPeriod(period); }}
+                      className="btn-inline-action shrink-0 px-2 py-1 text-xs hover:text-(--color-danger)"
+                    >
+                      Delete
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={(event) => { event.preventDefault(); event.stopPropagation(); setArchiveTargetPeriod(period); }}
+                      className="btn-inline-action btn-inline-danger shrink-0 px-2 py-1 text-xs"
+                    >
+                      Archive
+                    </button>
+                  )}
+                </div>
+
+                {/* ── Desktop header: original two-column layout ── */}
+                <div className="hidden sm:flex sm:flex-row sm:items-center sm:justify-between">
                   <button
                     className="flex min-w-0 flex-1 items-center justify-between text-left hover:text-(--text-strong)"
                     onClick={() => setExpandedPeriods((prev) => ({ ...prev, [period]: !isPeriodOpen }))}
                   >
                     <span className="font-semibold text-(--text-strong)">Marking Period: {period}</span>
-                    <span className="ml-3 text-sm text-(--text-soft)">{isPeriodOpen ? '▼' : '▶'}</span>
                   </button>
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-2">
                     {isPeriodAlreadyArchived ? (
                       <button
                         type="button"
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          setDeleteTargetPeriod(period);
-                        }}
-                        className="btn-inline-action btn-inline-danger px-3 py-2 text-xs"
+                        onClick={(event) => { event.preventDefault(); event.stopPropagation(); setDeleteTargetPeriod(period); }}
+                        className="btn-inline-action px-3 py-2 text-xs hover:text-(--color-danger)"
                       >
                         Delete
                       </button>
                     ) : (
                       <button
                         type="button"
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          setArchiveTargetPeriod(period);
-                        }}
+                        onClick={(event) => { event.preventDefault(); event.stopPropagation(); setArchiveTargetPeriod(period); }}
                         className="btn-inline-action btn-inline-danger px-3 py-2 text-xs"
                       >
                         Archive Marking Period
                       </button>
                     )}
+                    <button
+                      className="text-sm text-(--text-soft) hover:text-(--text-strong)"
+                      onClick={() => setExpandedPeriods((prev) => ({ ...prev, [period]: !isPeriodOpen }))}
+                      aria-label={isPeriodOpen ? "Collapse period" : "Expand period"}
+                    >
+                      {isPeriodOpen ? '▼' : '▶'}
+                    </button>
                   </div>
                 </div>
 
-                <div className="mt-3">
-                  <p className="block text-xs font-semibold uppercase tracking-wide text-(--text-soft)">
-                    Filter this period by category
-                  </p>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setPeriodCategoryFilters((prev) => ({ ...prev, [period]: [] }))}
-                      className={`rounded-full border px-3 py-1 text-xs font-medium ${
-                        selectedPeriodCategoryFilters.length === 0
-                          ? "btn-primary"
-                          : "btn-secondary"
-                      }`}
-                    >
-                      {selectedPeriodCategoryFilters.length === 0 ? "✓ " : ""}
-                      All Categories
-                    </button>
-                    {periodCategories.map((category) => {
-                      const selected = isCategorySelected(category);
-                      const categoryCount = periodCategoryCounts[category] ?? 0;
-                      return (
-                        <button
-                          key={category}
-                          type="button"
-                          onClick={() => {
-                            setPeriodCategoryFilters((prev) => {
-                              const current = prev[period] || [];
-                              const exists = current.some(
-                                (selectedCategory) => selectedCategory.toLowerCase() === category.toLowerCase()
-                              );
+                <div className="mt-3 rounded-md border border-(--border-muted) bg-(--surface-1) p-3">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPeriodFilterDropdownOpen((prev) => ({
+                        ...prev,
+                        [period]: !isPeriodFilterDropdownOpen,
+                      }))
+                    }
+                    className="flex w-full items-center justify-between text-left"
+                  >
+                    <span className="block text-xs font-semibold uppercase tracking-wide text-(--text-soft)">
+                      <span className="sm:hidden">Filter this Period</span>
+                      <span className="hidden sm:inline">Filter this period by category</span>
+                    </span>
+                    <span className="text-xs font-medium text-(--text-soft)">
+                      {selectedPeriodCategoryFilters.length === 0
+                        ? "All Categories"
+                        : `${selectedPeriodCategoryFilters.length} selected`}
+                      {" "}{isPeriodFilterDropdownOpen ? "▲" : "▼"}
+                    </span>
+                  </button>
 
-                              if (exists) {
-                                return {
-                                  ...prev,
-                                  [period]: current.filter(
-                                    (selectedCategory) =>
-                                      selectedCategory.toLowerCase() !== category.toLowerCase()
-                                  ),
-                                };
-                              }
+                  {isPeriodFilterDropdownOpen && (
+                    <div className="mt-3 flex flex-wrap gap-x-2 gap-y-3">
+                      <button
+                        type="button"
+                        onClick={() => setPeriodCategoryFilters((prev) => ({ ...prev, [period]: [] }))}
+                        className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${
+                          selectedPeriodCategoryFilters.length === 0
+                            ? "btn-primary"
+                            : "btn-secondary"
+                        }`}
+                      >
+                        {selectedPeriodCategoryFilters.length === 0 ? "✓ " : ""}
+                        All Categories
+                      </button>
+                      {periodCategories.map((category) => {
+                        const selected = isCategorySelected(category);
+                        const categoryCount = periodCategoryCounts[category] ?? 0;
+                        return (
+                          <button
+                            key={category}
+                            type="button"
+                            onClick={() => {
+                              setPeriodCategoryFilters((prev) => {
+                                const current = prev[period] || [];
+                                const exists = current.some(
+                                  (selectedCategory) => selectedCategory.toLowerCase() === category.toLowerCase()
+                                );
 
-                              return { ...prev, [period]: [...current, category] };
-                            });
-                          }}
-                          className={`rounded-full border px-3 py-1 text-xs font-medium ${
-                            selected
-                              ? "btn-primary"
-                              : "btn-secondary"
-                          }`}
-                        >
-                          {selected ? "✓ " : ""}
-                          {category} ({categoryCount})
-                        </button>
-                      );
-                    })}
-                  </div>
+                                if (exists) {
+                                  return {
+                                    ...prev,
+                                    [period]: current.filter(
+                                      (selectedCategory) =>
+                                        selectedCategory.toLowerCase() !== category.toLowerCase()
+                                    ),
+                                  };
+                                }
+
+                                return { ...prev, [period]: [...current, category] };
+                              });
+                            }}
+                            className={`line-clamp-2 max-w-[16rem] rounded-full border px-2.5 py-0.5 text-xs font-medium ${
+                              selected
+                                ? "btn-primary"
+                                : "btn-secondary"
+                            }`}
+                          >
+                            {selected ? "✓ " : ""}
+                            {category} ({categoryCount})
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -546,7 +626,7 @@ export default function HistoryPanel({
                 <div className="divide-y divide-(--border-muted)">
                   {sortedMonths.map((month) => {
                     const monthKey = `${period}__${month}`;
-                    const isMonthOpen = expandedMonths[monthKey] !== false;
+                    const isMonthOpen = expandedMonths[monthKey] === true;
                     const monthItems = grouped[period][month].filter(({ item }) => {
                       if (selectedPeriodCategoryFilters.length === 0) return true;
                       const itemCategory = item.category;
@@ -564,7 +644,7 @@ export default function HistoryPanel({
                           className="flex w-full items-center justify-between bg-(--surface-2) px-4 py-2 text-left hover:bg-(--surface-3)"
                           onClick={() => setExpandedMonths((prev) => ({ ...prev, [monthKey]: !isMonthOpen }))}
                         >
-                          <span className="text-sm font-medium text-(--text-soft)">{month}</span>
+                          <span className="text-sm text-gray-500">{month}</span>
                           <span className="text-xs text-(--text-soft)">{isMonthOpen ? '▼' : '▶'}</span>
                         </button>
 
@@ -594,7 +674,7 @@ export default function HistoryPanel({
                                         setEditableCategories((prev) => ({ ...prev, [index]: nextCategory }));
                                         handleUpdateMark(index, item.text, nextCategory || undefined);
                                       }}
-                                      className="official-mark-category-select official-mark-category-select-inline w-full rounded-md border border-(--color-secondary) bg-(--color-secondary-soft) px-2 py-1 text-xs font-medium text-(--color-primary) sm:w-44"
+                                      className="official-mark-category-select official-mark-category-select-inline w-full rounded-md border border-(--color-secondary) bg-(--color-secondary-soft) px-2 py-1 text-xs font-medium text-(--color-primary) sm:w-auto sm:min-w-68"
                                       aria-label="Change official mark category"
                                       title="Change category"
                                     >
@@ -739,6 +819,12 @@ export default function HistoryPanel({
       </div>
 
       </div>
+
+      {archivedMarkingPeriods.length > 0 && (
+        <p className="text-xs font-medium uppercase tracking-wide text-supporting sm:text-center">
+          Archived periods available in Settings: {archivedMarkingPeriods.length}
+        </p>
+      )}
 
       {archiveTargetPeriod && typeof document !== "undefined" &&
         createPortal(

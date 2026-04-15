@@ -327,9 +327,9 @@ export default function LogPanel({
 
   return (
     <div className="space-y-3">
-      <div className="text-center">
-        <h2 className="text-2xl font-semibold text-(--text-strong)">Daily Log</h2>
-        <p className="mt-1 text-sm text-supporting">Capture work notes you can turn into bullets later.</p>
+      <div>
+        <h2 className="text-left sm:text-center text-2xl font-semibold text-(--text-strong)">Daily Log</h2>
+        <p className="text-left sm:text-center mt-1 text-sm text-supporting">Capture work notes you can turn into bullets later.</p>
       </div>
       <div className="h-px bg-(--border-muted) opacity-60" />
       <div className="rounded-xl bg-(--surface-1) p-4 shadow-md sm:p-6">
@@ -405,7 +405,7 @@ export default function LogPanel({
             <textarea
               value={pastedNotes}
               onChange={(e) => setPastedNotes(e.target.value)}
-              className="h-28 w-full rounded-md border p-3 text-sm"
+              className="h-28 w-full rounded-md border p-3 text-sm placeholder:text-xs placeholder:opacity-60"
               placeholder="Paste your notes or bullets here, one item per line."
             />
             <div className="mt-2 flex justify-end">
@@ -460,7 +460,7 @@ export default function LogPanel({
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
-        className="mt-2 h-32 w-full rounded-md border p-3 placeholder:italic"
+        className="mt-2 h-32 w-full rounded-md border p-3 placeholder:text-xs placeholder:italic placeholder:opacity-60"
         placeholder="Example: Led morning maintenance brief and coordinated tasking across two teams."
       />
       <p className="mt-2 text-xs text-supporting">AI will organize and optimize this entry when you pull it into Mark Generator.</p>
@@ -519,7 +519,7 @@ export default function LogPanel({
               value={groupNameInput}
               onChange={(e) => setGroupNameInput(e.target.value)}
               placeholder="Group name (e.g. SAR, PT, Training)"
-              className="log-edit-groups-input w-64 rounded-md border border-(--color-warning) bg-(--surface-1) px-3 py-2 text-sm"
+              className="log-edit-groups-input w-64 rounded-md border border-(--color-warning) bg-(--surface-1) px-3 py-2 text-sm placeholder:text-xs placeholder:opacity-60"
             />
             <button
               type="button"

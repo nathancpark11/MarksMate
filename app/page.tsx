@@ -376,17 +376,102 @@ export default function Home() {
         : "Free";
   const userLastName = userName
     .trim()
-    .split(/\s+/)
-    .filter((part) => part.length > 0)
-    .at(-1);
+    .split(",")[0]
+    .trim();
   const userMenuNameBase = (userLastName || authUser?.username || "User").trim();
-  const userMenuNamePrefix = rankLevel === "E7" ? "Chief" : rankLevel === "E4" || rankLevel === "E5" || rankLevel === "E6" ? "PO" : "";
+  const rateAbbreviation = rating
+    .trim()
+    .split("-")[0]
+    .trim();
+  const pettyOfficerRateNumberByRank: Record<string, string> = {
+    E4: "3",
+    E5: "2",
+    E6: "1",
+  };
+  const userMenuNamePrefix = rankLevel === "E7"
+    ? "Chief"
+    : pettyOfficerRateNumberByRank[rankLevel]
+      ? `${rateAbbreviation}${pettyOfficerRateNumberByRank[rankLevel]}`
+      : rateAbbreviation;
   const userMenuDisplayName = `${userMenuNamePrefix ? `${userMenuNamePrefix} ` : ""}${userMenuNameBase}`.trim();
   const planExpirationLabel = isBetaTrialActive
     ? betaTrialExpiryLabel
     : authUser?.subscriptionCurrentPeriodEnd
       ? new Date(authUser.subscriptionCurrentPeriodEnd).toLocaleDateString()
       : null;
+  const renderAccountMenu = (className = "") => {
+    if (!authUser) {
+      return null;
+    }
+
+    return (
+    <details className={`account-menu relative ${className}`.trim()}>
+      <summary className="account-menu-summary list-none cursor-pointer rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 sm:text-sm">
+        <span className="inline-flex max-w-44 items-center gap-1.5 sm:max-w-56">
+          <span className="truncate">{userMenuDisplayName}</span>
+          <span aria-hidden="true" className="account-menu-caret text-[10px] text-slate-500">▼</span>
+        </span>
+      </summary>
+      <div className="account-menu-panel absolute right-0 top-full z-90 mt-2 w-[min(22rem,calc(100vw-1rem))] rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-700 shadow-lg sm:text-sm">
+        <div className="space-y-2.5">
+          <div className="rounded-md bg-slate-50 px-2 py-1.5">
+            <p className="text-[11px] uppercase tracking-wide text-slate-500">Signed In As</p>
+            <p className="font-semibold text-slate-900">{userMenuDisplayName}</p>
+          </div>
+          <div>
+            <p className="text-[11px] uppercase tracking-wide text-slate-500">Username</p>
+            <p className="font-semibold text-slate-900">{authUser.username}</p>
+          </div>
+          <div>
+            <p className="text-[11px] uppercase tracking-wide text-slate-500">Email</p>
+            <p className="break-all text-slate-800">{authUser.email || "Not provided"}</p>
+          </div>
+          <div>
+            <p className="text-[11px] uppercase tracking-wide text-slate-500">Last Login</p>
+            <p className="text-slate-800">{formattedLastLogin || "Not available"}</p>
+          </div>
+          <div className="h-px bg-slate-200" />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-slate-500">Plan</p>
+              <p className="font-semibold text-slate-900">{planLabel}</p>
+            </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-wide text-slate-500">Expiration</p>
+              <p className="text-slate-800">{planExpirationLabel || "Not set"}</p>
+            </div>
+          </div>
+          <div className="h-px bg-slate-200" />
+          <div className="space-y-2">
+            <button
+              id="settings-tutorial-anchor"
+              onClick={(event) => {
+                const menu = event.currentTarget.closest("details");
+                if (menu instanceof HTMLDetailsElement) {
+                  menu.open = false;
+                }
+                setActiveTab("settings");
+              }}
+              className={`w-full rounded-md border px-3 py-2 text-center text-sm font-medium transition-colors ${
+                activeTab === "settings"
+                  ? "border-blue-700 bg-blue-700 text-white shadow-sm"
+                  : "border-slate-300 bg-slate-50 text-white hover:border-blue-300 hover:bg-blue-50"
+              }`}
+            >
+              Settings
+            </button>
+            <button
+              onClick={() => void handleLogout()}
+              className="w-full rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-center text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-100"
+            >
+              Log Out
+            </button>
+          </div>
+        </div>
+      </div>
+    </details>
+    );
+  };
   const showAddEmailPrompt =
     !!authUser && !isGuestSession && authUser.needsEmail === true && !emailPromptDismissed;
   const rankLevelRef = useRef(rankLevel);
@@ -1377,6 +1462,14 @@ export default function Home() {
   }, [highContrastEnabled]);
 
   useEffect(() => {
+    document.body.classList.add("page-uses-fixed-classification-bar");
+
+    return () => {
+      document.body.classList.remove("page-uses-fixed-classification-bar");
+    };
+  }, []);
+
+  useEffect(() => {
     if (aiGeneratorSplitRecommendationsEnabled) {
       return;
     }
@@ -2110,7 +2203,7 @@ export default function Home() {
           date: itemDate,
           dates: sourceDates.length > 0 ? sourceDates : undefined,
           category: categoryName,
-          markingPeriod: itemDate ? computeMarkingPeriod(itemDate, rankLevel) : "",
+          markingPeriod: currentMarkingPeriodOverride.trim() || (itemDate ? computeMarkingPeriod(itemDate, rankLevel) : ""),
           title: draftEntry.title,
           originalAction,
         },
@@ -2181,7 +2274,7 @@ export default function Home() {
           date: splitItemDate,
           dates: splitItemDates.length > 0 ? splitItemDates : undefined,
           category: draft.category,
-          markingPeriod: splitItemDate ? computeMarkingPeriod(splitItemDate, rankLevel) : "",
+          markingPeriod: currentMarkingPeriodOverride.trim() || (splitItemDate ? computeMarkingPeriod(splitItemDate, rankLevel) : ""),
           title: draft.title,
           originalAction: draft.action.trim(),
           sourceLogEntryId,
@@ -2352,7 +2445,7 @@ export default function Home() {
         date: itemDate,
         dates: itemDates.length > 0 ? itemDates : undefined,
         category: bullet.category,
-        markingPeriod: itemDate ? computeMarkingPeriod(itemDate, rankLevel) : "",
+        markingPeriod: currentMarkingPeriodOverride.trim() || (itemDate ? computeMarkingPeriod(itemDate, rankLevel) : ""),
         title: bullet.title,
         originalAction: trimmedInput,
         sourceLogEntryId,
@@ -3443,18 +3536,21 @@ export default function Home() {
           🎯 Beta Trial Active • Expires: {betaTrialExpiryLabel}
         </div>
       ) : null}
-    <main
-      className="min-h-screen flex justify-center p-3 sm:p-6"
+    <div
+      className="fixed right-3 z-90 sm:hidden"
       style={{
-        paddingTop: "var(--tab-bar-top-offset)",
+        top: "calc(env(safe-area-inset-top) + var(--unclassified-bar-height) + var(--guest-global-bar-height) + var(--beta-global-bar-height) + 0.5rem)",
       }}
     >
-      <div className="w-full max-w-4xl space-y-4">
+      {renderAccountMenu()}
+    </div>
+    <main
+      className="min-h-screen flex justify-center px-3 pb-20 sm:p-6"
+    >
+      <div className="-mt-1 w-full max-w-4xl space-y-4 sm:mt-0">
+        {isBetaTrialActive && betaTrialExpiryLabel ? <div className="h-0 sm:hidden" aria-hidden="true" /> : null}
         <div
-          className="space-y-0"
-          style={{
-            paddingTop: "var(--space-sm)",
-          }}
+          className="space-y-0 pt-0 sm:pt-2"
         >
           <TabBar
             activeTab={activeTab}
@@ -3463,51 +3559,12 @@ export default function Home() {
             canManageOfficialGuidance={canManageOfficialGuidance}
             hasPremiumAccess={hasPremiumAccess}
             stickyTopPx={tabBarPinTopPx}
-            userMenu={
-              <details className="account-menu relative">
-                <summary className="account-menu-summary list-none cursor-pointer rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition-all hover:bg-slate-50 hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 sm:text-sm">
-                  <span className="inline-flex max-w-44 items-center gap-1.5 sm:max-w-56">
-                    <span className="truncate">{userMenuDisplayName}</span>
-                    <span aria-hidden="true" className="account-menu-caret text-[10px] text-slate-500">▼</span>
-                  </span>
-                </summary>
-                <div className="account-menu-panel absolute right-0 top-full z-90 mt-2 w-[min(22rem,calc(100vw-1rem))] rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-700 shadow-lg sm:text-sm">
-                  <div className="space-y-2.5">
-                    <div className="rounded-md bg-slate-50 px-2 py-1.5">
-                      <p className="text-[11px] uppercase tracking-wide text-slate-500">Signed In As</p>
-                      <p className="font-semibold text-slate-900">{userMenuDisplayName}</p>
-                    </div>
-                    <div>
-                      <p className="text-[11px] uppercase tracking-wide text-slate-500">Username</p>
-                      <p className="font-semibold text-slate-900">{authUser.username}</p>
-                    </div>
-                    <div>
-                      <p className="text-[11px] uppercase tracking-wide text-slate-500">Email</p>
-                      <p className="break-all text-slate-800">{authUser.email || "Not provided"}</p>
-                    </div>
-                    <div>
-                      <p className="text-[11px] uppercase tracking-wide text-slate-500">Last Login</p>
-                      <p className="text-slate-800">{formattedLastLogin || "Not available"}</p>
-                    </div>
-                    <div className="h-px bg-slate-200" />
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <p className="text-[11px] uppercase tracking-wide text-slate-500">Plan</p>
-                        <p className="font-semibold text-slate-900">{planLabel}</p>
-                      </div>
-                      <div>
-                        <p className="text-[11px] uppercase tracking-wide text-slate-500">Expiration</p>
-                        <p className="text-slate-800">{planExpirationLabel || "Not set"}</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </details>
-            }
+            fixedOnBottomOnMobile
+            userMenu={renderAccountMenu("hidden sm:block")}
           />
-          <div className="mt-2 flex flex-col items-center justify-center gap-1 sm:mt-2 sm:flex-row sm:flex-wrap sm:gap-3">
+          <div className="mt-0 flex flex-row items-center justify-start gap-1 sm:mt-2 sm:flex-row sm:flex-wrap sm:gap-3">
             <div className="min-w-0">
-              <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-center text-sm font-medium text-slate-700">
+              <div className="flex flex-wrap items-center justify-start gap-x-3 gap-y-1 text-left text-sm font-medium text-slate-700">
               {shouldShowUsageTracking && !isBetaTrialActive ? (
                 <span className="text-xs font-medium text-slate-600">
                   Generations:{" "}
@@ -3540,7 +3597,7 @@ export default function Home() {
               ) : null}
             </div>
           </div>
-            <div className="flex flex-wrap items-center justify-center gap-3">
+            <div className="flex flex-wrap items-center justify-start gap-3">
               {!isGuestSession && !hasPremiumAccess ? (
                 <button
                   onClick={() => openUpgradeModal("Choose a plan to upgrade your account.")}
@@ -3563,7 +3620,7 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="space-y-4">
+        <div className="space-y-0 sm:space-y-4">
         {loadFailed ? (
           <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-900 shadow-sm" role="status" aria-live="polite">
             <p className="text-sm font-semibold">Read-only safe mode is active.</p>
@@ -4063,34 +4120,12 @@ export default function Home() {
           />
         )}
 
-        <div className="space-y-2 pb-2">
-          <button
-            id="settings-tutorial-anchor"
-            onClick={() => setActiveTab("settings")}
-            className={`w-full rounded-md border px-3 py-2 text-sm font-medium transition-colors sm:text-base ${
-              activeTab === "settings"
-                ? "border-blue-700 bg-blue-700 text-white shadow-sm"
-                : darkModeEnabled
-                  ? "border-slate-300 bg-slate-50 text-(--text-strong) hover:border-blue-300 hover:bg-blue-50"
-                  : "border-slate-300 bg-slate-50 text-white hover:border-blue-300 hover:bg-blue-50"
-            }`}
-          >
-            Settings
-          </button>
-          <button
-            onClick={() => void handleLogout()}
-            className="w-full rounded-md border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-100 sm:text-base"
-          >
-            Log Out
-          </button>
-        </div>
-
         {showBottomScrollButton && (
           <button
             type="button"
             onClick={handleScrollToBottom}
             aria-label="Scroll to bottom"
-            className={`fixed right-4 bottom-4 z-40 rounded-full px-4 py-3 text-sm font-semibold shadow-lg transition focus:outline-none focus:ring-2 focus:ring-offset-2 sm:right-6 sm:bottom-6 ${bottomScrollButtonClass}`}
+            className={`hidden fixed right-4 bottom-4 z-40 rounded-full px-4 py-3 text-sm font-semibold shadow-lg transition focus:outline-none focus:ring-2 focus:ring-offset-2 sm:block sm:right-6 sm:bottom-6 ${bottomScrollButtonClass}`}
           >
             Bottom
           </button>
@@ -4239,10 +4274,10 @@ export default function Home() {
       )}
 
       {showNoticeModal && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4 sm:items-center">
-          <div className="my-4 w-full max-w-3xl overflow-y-auto rounded-xl bg-white p-5 shadow-2xl [WebkitOverflowScrolling:touch] max-h-[calc(100dvh-2rem)] sm:p-6">
-            <h2 className="text-xl font-bold text-gray-900">Important Notice</h2>
-            <div className="mt-4 space-y-3 text-sm text-gray-700">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-4">
+          <div className="w-full max-w-3xl rounded-xl bg-white p-4 shadow-2xl sm:p-6">
+            <h2 className="text-lg font-bold text-gray-900 sm:text-xl">Important Notice</h2>
+            <div className="mt-2 space-y-1.5 text-xs text-gray-700 sm:mt-4 sm:space-y-3 sm:text-sm">
               <p>
                 This application is an independent, personal productivity Tool designed to help users organize accomplishments and draft evaluation bullets.
               </p>
@@ -4259,14 +4294,14 @@ export default function Home() {
                 This Tool should only be used for personal note-taking and drafting purposes. All generated content should be reviewed, verified, and approved through the official evaluation process before use.
               </p>
               <p>By continuing, you acknowledge that:</p>
-              <ul className="list-disc space-y-1 pl-5">
+              <ul className="list-disc space-y-0.5 pl-5 sm:space-y-1">
                 <li>You will not enter classified, CUI, or sensitive operational information</li>
                 <li>You understand this is not an official government system</li>
                 <li>You are responsible for verifying the accuracy of generated content</li>
               </ul>
             </div>
 
-            <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="mt-3 flex flex-col gap-2 sm:mt-6 sm:flex-row sm:items-center sm:justify-between">
               {isGuestSession ? (
                 <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                   Guest mode: nothing will be saved outside this browser session.
@@ -4483,6 +4518,10 @@ export default function Home() {
           activeStep={tutorialStep}
           onSelectStep={handleSelectTutorialStep}
           onClose={handleCloseTutorial}
+          onFinish={async () => {
+            await handleCloseTutorial();
+            setActiveTab("log");
+          }}
         />
       )}
     </main>

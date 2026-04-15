@@ -662,8 +662,8 @@ export default function MarksPackageBuilderPanel({
   return (
         <div className="space-y-3">
           <div>
-            <h2 className="text-2xl font-semibold text-(--text-strong)">Marks Package Builder</h2>
-            <p className="mt-1 text-sm text-supporting">Build a complete package from your saved official marks.</p>
+            <h2 className="text-left sm:text-center text-2xl font-semibold text-(--text-strong)">Marks Package Builder</h2>
+            <p className="text-left sm:text-center mt-1 text-sm text-supporting">Build a complete package from your saved official marks (Premium Only).</p>
           </div>
           <div className="h-px bg-(--border-muted) opacity-60" />
         <div className="rounded-xl bg-(--surface-1) p-6 shadow-md space-y-6">
@@ -819,8 +819,10 @@ export default function MarksPackageBuilderPanel({
                     className="w-full flex items-center justify-between bg-gray-50 px-4 py-3 text-left"
                   >
                     <h4 className="text-base font-bold text-gray-800">Category Summaries</h4>
-                    <span className="text-xs text-gray-500">
-                      {openDocumentSections.categorySummaries ? "▼" : "▶"}
+                    <span
+                      className={`inline-block text-xs text-gray-500 transition-transform ${openDocumentSections.categorySummaries ? "rotate-0" : "-rotate-90"}`}
+                    >
+                      ▼
                     </span>
                   </button>
                   {openDocumentSections.categorySummaries && (
@@ -865,8 +867,10 @@ export default function MarksPackageBuilderPanel({
                     className="w-full flex items-center justify-between bg-gray-50 px-4 py-3 text-left"
                   >
                     <h4 className="text-base font-bold text-gray-800">Top Accomplishments</h4>
-                    <span className="text-xs text-gray-500">
-                      {openDocumentSections.topAccomplishments ? "▼" : "▶"}
+                    <span
+                      className={`inline-block text-xs text-gray-500 transition-transform ${openDocumentSections.topAccomplishments ? "rotate-0" : "-rotate-90"}`}
+                    >
+                      ▼
                     </span>
                   </button>
                   {openDocumentSections.topAccomplishments && (
@@ -896,8 +900,10 @@ export default function MarksPackageBuilderPanel({
                     className="w-full flex items-center justify-between bg-gray-50 px-4 py-3 text-left"
                   >
                     <h4 className="text-base font-bold text-gray-800">Chronological Achievement Log</h4>
-                    <span className="text-xs text-gray-500">
-                      {openDocumentSections.achievementLog ? "▼" : "▶"}
+                    <span
+                      className={`inline-block text-xs text-gray-500 transition-transform ${openDocumentSections.achievementLog ? "rotate-0" : "-rotate-90"}`}
+                    >
+                      ▼
                     </span>
                   </button>
                   {openDocumentSections.achievementLog && (
@@ -934,8 +940,10 @@ export default function MarksPackageBuilderPanel({
                     className="w-full flex items-center justify-between bg-gray-50 px-4 py-3 text-left"
                   >
                     <h4 className="text-base font-bold text-gray-800">Supervisor Notes</h4>
-                    <span className="text-xs text-gray-500">
-                      {openDocumentSections.supervisorNotes ? "▼" : "▶"}
+                    <span
+                      className={`inline-block text-xs text-gray-500 transition-transform ${openDocumentSections.supervisorNotes ? "rotate-0" : "-rotate-90"}`}
+                    >
+                      ▼
                     </span>
                   </button>
                   {openDocumentSections.supervisorNotes && (
