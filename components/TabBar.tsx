@@ -22,9 +22,7 @@ export default function TabBar({
   fixedOnBottomOnMobile = false,
 }: TabBarProps) {
   const tabBaseClass =
-    "inline-flex items-center justify-center border-b-2 border-transparent px-1.5 py-3 text-center text-xs font-medium transition-all sm:px-4 sm:py-3 sm:text-sm hover:text-(--color-primary-hover)";
-  const inactiveTabClass =
-    "app-tab-inactive border-b-transparent text-(--text-soft) hover:text-(--color-primary)";
+    "inline-flex flex-1 min-h-[4rem] items-center justify-center border-b-2 border-transparent px-1.5 py-3 text-center text-xs font-semibold transition-all sm:flex-none sm:min-h-0 sm:px-4 sm:py-3 sm:text-sm sm:font-medium hover:text-(--color-primary-hover)";
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const moreMenuRef = useRef<HTMLDivElement | null>(null);
@@ -32,8 +30,11 @@ export default function TabBar({
   const [isMobileViewport, setIsMobileViewport] = useState(false);
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const [tabBarHeight, setTabBarHeight] = useState(0);
+  const inactiveTabClass = isMobileViewport
+    ? "border-b-transparent text-white hover:text-white"
+    : "app-tab-inactive border-b-transparent text-(--text-soft) hover:text-(--color-primary)";
   const activeTabClass = isMobileViewport
-    ? "!text-blue-600 !font-semibold !rounded-md !bg-blue-50/70 !border-b-blue-600"
+    ? "!text-white !font-bold !rounded-none !bg-white/35 !border-b-0 !border-t-[3px] !border-t-white !shadow-[inset_0_3px_0_rgba(255,255,255,1),0_0_12px_rgba(255,255,255,0.2)]"
     : "app-tab-active border-b-transparent text-(--color-primary) font-semibold";
   const isCompactMobileLabels = isMobileViewport;
   const shouldPin = fixedOnBottomOnMobile ? isMobileViewport || isPinned : isPinned;
@@ -162,22 +163,29 @@ export default function TabBar({
               ? "fixed inset-x-0 bottom-0 z-80 sm:bottom-auto"
               : "fixed left-0 right-0 z-80"
             : "relative z-30"
-        } flex items-center justify-around gap-1 sm:justify-between sm:gap-2 border-b border-(--border-muted) bg-(--surface-1) px-1 sm:px-3 ${
+        } flex items-center justify-around gap-1 sm:justify-between sm:gap-2 sm:py-0 border-b border-(--border-muted) bg-(--surface-1) px-1 sm:px-3 ${
           fixedOnBottomOnMobile && shouldPin
             ? "border-t border-gray-200 pb-[calc(env(safe-area-inset-bottom)+0.25rem)] shadow-sm sm:border-t-0 sm:pb-0 sm:shadow-none"
             : ""
         }`}
-        style={
-          shouldPin
+        style={{
+          ...(shouldPin
             ? fixedOnBottomOnMobile
               ? isMobileViewport
                 ? { top: undefined, bottom: "0px" }
                 : { top: `${stickyTopPx}px`, bottom: undefined }
               : { top: `${stickyTopPx}px` }
-            : undefined
-        }
+            : {}),
+          ...(isMobileViewport
+            ? {
+                backgroundColor: "#0b3d91",
+                borderColor: "#082f73",
+                boxShadow: "0 -4px 16px rgba(0, 0, 0, 0.45), 0 -1px 4px rgba(0, 0, 0, 0.3)",
+              }
+            : {}),
+        }}
       >
-      <div className="flex min-w-0 flex-1 items-center justify-around gap-0 overflow-x-auto sm:justify-center sm:overflow-x-auto whitespace-nowrap sm:pr-1">
+      <div className="app-tab-row flex min-w-0 flex-1 items-stretch sm:items-center justify-around gap-0 overflow-x-auto sm:justify-center sm:overflow-x-auto whitespace-nowrap sm:pr-1">
         <button
           onClick={() => setActiveTab("log")}
           className={`app-tab sm:flex-none ${getTabClass("log")}`}
@@ -217,12 +225,12 @@ export default function TabBar({
         </button>
 
         {isMobileViewport && (
-          <div ref={moreMenuRef} className="relative">
+          <div ref={moreMenuRef} className="relative flex-1 flex items-stretch">
             <button
               type="button"
               onClick={() => setIsMoreMenuOpen((prev) => !prev)}
               aria-expanded={isMoreMenuOpen}
-              className={`app-tab ${getTabClass(isMoreTabActive ? activeTab : "__mobile-more")}`}
+              className={`app-tab flex-1 !flex !items-center !justify-center ${getTabClass(isMoreTabActive ? activeTab : "__mobile-more")}`}
             >
               More
             </button>

@@ -570,8 +570,14 @@ body.theme-high-contrast .settings-control {
   display: none;
 }
 
+@media (min-width: 640px) {
+  .app-tab-row > * + * {
+    border-left: none;
+  }
+}
+
 .app-tab {
-  border-radius: 0.5rem;
+  border-radius: 0;
   transition: background-color 160ms ease, color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
 }
 

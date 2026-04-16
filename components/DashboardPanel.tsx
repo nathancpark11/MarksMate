@@ -2044,7 +2044,7 @@ export default function DashboardPanel({
           {/* Mobile layout */}
           <div className="sm:hidden">
             <div className="flex items-center justify-between gap-3">
-              <h3 className="whitespace-nowrap text-sm font-semibold text-(--text-strong)">AI Smart Insights (Premium Only)</h3>
+              <h3 className="whitespace-nowrap text-sm font-semibold text-(--text-strong)">AI Smart Insights</h3>
               <button
                 type="button"
                 onClick={() => void analyzeDashboard()}
@@ -2061,7 +2061,7 @@ export default function DashboardPanel({
             )}
           </div>
           {/* Desktop layout */}
-          <h3 className="hidden sm:block text-base font-semibold text-(--text-strong)">AI Smart Insights (Premium Only)</h3>
+          <h3 className="hidden sm:block text-base font-semibold text-(--text-strong)">AI Smart Insights</h3>
           <div className="hidden sm:flex sm:items-center">
             <button
               type="button"
