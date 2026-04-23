@@ -30,15 +30,30 @@ export default function TabBar({
   const [isMobileViewport, setIsMobileViewport] = useState(false);
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const [tabBarHeight, setTabBarHeight] = useState(0);
+  const [isDarkMode, setIsDarkMode] = useState(false);
   const inactiveTabClass = isMobileViewport
-    ? "border-b-transparent text-white hover:text-white"
+    ? isDarkMode
+      ? "border-b-transparent text-(--text-soft) hover:text-(--color-primary)"
+      : "border-b-transparent text-white hover:text-white"
     : "app-tab-inactive border-b-transparent text-(--text-soft) hover:text-(--color-primary)";
   const activeTabClass = isMobileViewport
-    ? "!text-white !font-bold !rounded-none !bg-white/35 !border-b-0 !border-t-[3px] !border-t-white !shadow-[inset_0_3px_0_rgba(255,255,255,1),0_0_12px_rgba(255,255,255,0.2)]"
+    ? isDarkMode
+      ? "!text-(--color-primary) !font-bold !rounded-none !bg-(--surface-2) !border-b-0 !border-t-[3px] !border-t-(--color-primary)"
+      : "!text-white !font-bold !rounded-none !bg-white/35 !border-b-0 !border-t-[3px] !border-t-white !shadow-[inset_0_3px_0_rgba(255,255,255,1),0_0_12px_rgba(255,255,255,0.2)]"
     : "app-tab-active border-b-transparent text-(--color-primary) font-semibold";
   const isCompactMobileLabels = isMobileViewport;
   const shouldPin = fixedOnBottomOnMobile ? isMobileViewport || isPinned : isPinned;
-  const isMoreTabActive = activeTab === "export" || activeTab === "marks-package";
+  const isMoreTabActive = activeTab === "export" || activeTab === "marks-package" || (canManageOfficialGuidance && activeTab === "admin-analytics");
+
+  useEffect(() => {
+    const syncDarkMode = () => {
+      setIsDarkMode(document.documentElement.getAttribute("data-theme") === "dark");
+    };
+    syncDarkMode();
+    const observer = new MutationObserver(syncDarkMode);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     if (!fixedOnBottomOnMobile) {
@@ -177,11 +192,16 @@ export default function TabBar({
               : { top: `${stickyTopPx}px` }
             : {}),
           ...(isMobileViewport
-            ? {
-                backgroundColor: "#0b3d91",
-                borderColor: "#082f73",
-                boxShadow: "0 -4px 16px rgba(0, 0, 0, 0.45), 0 -1px 4px rgba(0, 0, 0, 0.3)",
-              }
+            ? isDarkMode
+              ? {
+                  borderColor: "var(--border-muted)",
+                  boxShadow: "0 -4px 16px rgba(0, 0, 0, 0.45), 0 -1px 4px rgba(0, 0, 0, 0.3)",
+                }
+              : {
+                  backgroundColor: "#0b3d91",
+                  borderColor: "#082f73",
+                  boxShadow: "0 -4px 16px rgba(0, 0, 0, 0.45), 0 -1px 4px rgba(0, 0, 0, 0.3)",
+                }
             : {}),
         }}
       >
@@ -230,7 +250,7 @@ export default function TabBar({
               type="button"
               onClick={() => setIsMoreMenuOpen((prev) => !prev)}
               aria-expanded={isMoreMenuOpen}
-              className={`app-tab flex-1 !flex !items-center !justify-center ${getTabClass(isMoreTabActive ? activeTab : "__mobile-more")}`}
+              className={`app-tab flex-1 flex! items-center! justify-center! ${getTabClass(isMoreTabActive ? activeTab : "__mobile-more")}`}
             >
               More
             </button>
@@ -267,6 +287,19 @@ export default function TabBar({
                     Marks Package Builder
                   </button>
                 )}
+                {canManageOfficialGuidance && (
+                  <button
+                    type="button"
+                    onClick={() => handleMoreTabSelection("admin-analytics")}
+                    className={`px-4 py-3 text-left text-sm transition-colors ${
+                      activeTab === "admin-analytics"
+                        ? "bg-(--surface-3) font-semibold text-(--color-primary)"
+                        : "text-(--text-soft) hover:bg-(--surface-2) hover:text-(--color-primary)"
+                    }`}
+                  >
+                    Admin Analytics
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -292,7 +325,7 @@ export default function TabBar({
           </>
         ) : null}
 
-        {canManageOfficialGuidance && (
+        {!isMobileViewport && canManageOfficialGuidance && (
           <button
             onClick={() => setActiveTab("admin-analytics")}
             className={`app-tab ${getTabClass("admin-analytics")}`}

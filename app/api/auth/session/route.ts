@@ -1,4 +1,5 @@
 import { getSessionUserFromCookies } from "@/lib/auth";
+import { isGuidanceAdminUsername } from "@/lib/admin";
 import { findUserById } from "@/lib/userStore";
 import { getUsageSummary } from "@/lib/usageLimits";
 
@@ -51,6 +52,7 @@ export async function GET() {
       hasBillingProfile: !!storedUser?.stripeCustomerId,
       dailyUsageCount: usageSummary?.dailyUsageCount ?? 0,
       dailyUsageLimit: usageSummary ? usageSummary.dailyUsageLimit : 10,
+      isAdmin: isGuidanceAdminUsername(storedUser?.username ?? user.username),
     },
   });
 }

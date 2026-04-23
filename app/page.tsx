@@ -15,7 +15,6 @@ import SettingsPanel from "../components/SettingsPanel";
 import LogPanel from "../components/LogPanel";
 import TutorialModal from "../components/TutorialModal";
 import AdminAnalyticsPanel from "../components/AdminAnalyticsPanel";
-import { isGuidanceAdminUsername } from "@/lib/admin";
 import { FREE_DAILY_GENERATION_LIMIT } from "@/lib/billing";
 import {
   GENERATE_REQUEST_MAX_BYTES,
@@ -299,6 +298,7 @@ export default function Home() {
     hasBillingProfile?: boolean;
     dailyUsageCount?: number;
     dailyUsageLimit?: number | null;
+    isAdmin?: boolean;
   };
   const [authLoading, setAuthLoading] = useState(true);
   const [authUser, setAuthUser] = useState<SessionUser | null>(null);
@@ -334,7 +334,7 @@ export default function Home() {
   const [upgradeModalMessage, setUpgradeModalMessage] = useState(
     "You've reached your daily limit. Upgrade to Premium for unlimited bullets."
   );
-  const canManageOfficialGuidance = isGuidanceAdminUsername(authUser?.username);
+  const canManageOfficialGuidance = authUser?.isAdmin === true;
 
   const formattedLastLogin = authUser?.lastLoginAt
     ? new Date(authUser.lastLoginAt).toLocaleDateString()
